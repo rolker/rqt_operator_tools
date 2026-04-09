@@ -245,25 +245,28 @@ entry_points={
 },
 ```
 
-## Open Questions
+## Design Decisions (Resolved)
 
-1. **Threshold expression safety**: The issue specifies threshold expressions like
-   `"value > 12.5"`. Phase 1 will use a restricted AST-based evaluator (comparison
-   operators only, no function calls). Is this sufficient, or should we use a
-   declarative format instead (e.g., `{operator: ">", value: 12.5}`)?
+1. **Threshold expressions**: Python expressions (`"value > 12.5"`) evaluated
+   via a restricted AST evaluator (comparisons and boolean ops only, no function
+   calls or imports). The config dialog provides live validation and preview
+   with the current value so the user gets immediate feedback when writing
+   expressions. `ast.parse` for syntax checking, inline error messages for
+   invalid expressions.
 
-2. **Diagnostics key matching**: Should `diagnostic_name` match against the
-   `DiagnosticStatus.name` field exactly, or support substring/regex matching?
-   Exact match is simpler and more predictable; starting there.
+2. **Diagnostics name matching**: Default to **substring** match (most convenient).
+   Per-indicator dropdown to switch to **exact** or **regex** when needed. Covers
+   the common case without sacrificing flexibility.
 
-3. **Multiple diagnostics topics**: Some systems publish diagnostics on namespaced
-   topics (e.g., `/robot1/diagnostics`). Should we support configuring the
-   diagnostics topic per indicator or globally? Global config with per-indicator
-   override seems reasonable.
+3. **Diagnostics topic**: **Global `/diagnostics` only** for Phase 1. Architecture
+   supports easy upgrade to per-indicator topic override later (move subscription
+   to indicator or manage a dict of subscribers keyed by topic). Also supports
+   subscribing to `/diagnostics_agg` if the user changes the global topic — works
+   with or without `diagnostic_aggregator` running.
 
-4. **Color scheme customization**: The dark-until-problem palette (dim gray / amber /
-   red) is hardcoded in Phase 1. Should colors be configurable per-indicator or
-   globally? Defer to Phase 2 unless needed sooner.
+4. **Color scheme**: **Hardcoded** dark-until-problem palette (dim gray OK, amber
+   WARN, red ERROR, muted gray STALE). Colors centralized in one place in the code
+   for easy future customization.
 
 ## Risk / Complexity Notes
 
