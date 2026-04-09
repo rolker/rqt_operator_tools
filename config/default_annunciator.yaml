@@ -1,0 +1,26 @@
+diagnostics_topic: /diagnostics
+indicators:
+  - name: NTP Sync
+    source: diagnostics
+    diagnostic_name: NTP offset
+    format: "{}"
+
+  - name: GPS
+    source: diagnostics
+    diagnostic_name: GPS
+    format: "{}"
+
+  - name: Battery
+    source: topic
+    topic: /battery/voltage
+    msg_type: std_msgs/msg/Float64
+    value_field: data
+    format: "{:.1f}V"
+    thresholds:
+      warn: "value < 12.5"
+      error: "value < 11.5"
+
+  - name: Heartbeat
+    source: diagnostics
+    diagnostic_name: Heartbeat
+    format: "{}"
