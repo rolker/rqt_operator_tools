@@ -167,7 +167,6 @@ class _IndicatorEditor(QWidget):
             msg_type=self._msg_type_edit.text(),
             value_field=self._value_field_edit.text() or 'data',
             format=fmt or '{}',
-            threshold_ok='',
             threshold_warn=self._thresh_warn_edit.text(),
             threshold_error=self._thresh_error_edit.text(),
             diagnostic_name=self._diag_name_edit.text(),
@@ -262,7 +261,14 @@ class ConfigDialog(QDialog):
             self._editor.load_config(self._configs[row])
 
     def _add_indicator(self):
-        new_config = IndicatorConfig(name='New Indicator')
+        base_name = 'New Indicator'
+        existing = {c.name for c in self._configs}
+        name = base_name
+        counter = 2
+        while name in existing:
+            name = f'{base_name} {counter}'
+            counter += 1
+        new_config = IndicatorConfig(name=name)
         self._configs.append(new_config)
         self._list_widget.addItem(new_config.name)
         self._list_widget.setCurrentRow(len(self._configs) - 1)

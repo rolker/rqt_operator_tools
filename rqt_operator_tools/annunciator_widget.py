@@ -36,6 +36,8 @@ def _diagnostic_level_to_indicator(level: int) -> IndicatorLevel:
         return IndicatorLevel.OK
     if level == DiagnosticStatus.WARN:
         return IndicatorLevel.WARN
+    if level == DiagnosticStatus.STALE:
+        return IndicatorLevel.STALE
     return IndicatorLevel.ERROR
 
 
@@ -86,10 +88,15 @@ class AnnunciatorWidget(QWidget):
         self._config = config
 
         for ind_config in config.indicators:
-            widget = IndicatorWidget(ind_config.name, self)
-            self._indicators[ind_config.name] = widget
-            self._indicator_configs[ind_config.name] = ind_config
-            self._last_update[ind_config.name] = 0.0
+            name = ind_config.name
+            if name in self._indicators:
+                self._node.get_logger().warn(
+                    f'Duplicate indicator name "{name}" — skipping')
+                continue
+            widget = IndicatorWidget(name, self)
+            self._indicators[name] = widget
+            self._indicator_configs[name] = ind_config
+            self._last_update[name] = 0.0
 
         self._rebuild_layout()
         self._setup_subscriptions()
@@ -262,6 +269,7 @@ class AnnunciatorWidget(QWidget):
             value = _extract_value(msg, config.value_field)
         except AttributeError:
             widget.set_status(IndicatorLevel.ERROR, 'BAD FIELD')
+            self._last_update[indicator_name] = time.monotonic()
             return
 
         level = config.evaluate_level(value)

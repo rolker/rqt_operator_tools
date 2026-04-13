@@ -73,8 +73,9 @@ def _eval_node(node: ast.AST, value):
         op_type = type(node.op)
         if op_type not in _SAFE_BOOL_OPS:
             raise ValueError(f'Unsupported boolean operator: {ast.dump(node.op)}')
-        results = [_eval_node(v, value) for v in node.values]
-        return _SAFE_BOOL_OPS[op_type](results)
+        if op_type is ast.And:
+            return all(_eval_node(v, value) for v in node.values)
+        return any(_eval_node(v, value) for v in node.values)
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
         return not _eval_node(node.operand, value)
     if isinstance(node, ast.Name) and node.id == 'value':
@@ -133,7 +134,7 @@ def _check_safe(node: ast.AST):
 def preview_expression(expression: str, current_value) -> str:
     """Return a human-readable preview of evaluating *expression*.
 
-    Returns a string like ``"Current: 12.8 → OK"`` or an error message.
+    Returns a string like ``"Current: 12.8 → PASS"`` or an error message.
     """
     err = validate_expression(expression)
     if err is not None:
@@ -159,7 +160,6 @@ class IndicatorConfig:
     format: str = '{}'
 
     # Threshold expressions (Python expressions with ``value`` in scope).
-    threshold_ok: str = ''
     threshold_warn: str = ''
     threshold_error: str = ''
 
@@ -175,7 +175,10 @@ class IndicatorConfig:
         if self.match_mode == MatchMode.EXACT:
             return status_name == self.diagnostic_name
         if self.match_mode == MatchMode.REGEX:
-            return bool(re.search(self.diagnostic_name, status_name))
+            try:
+                return bool(re.search(self.diagnostic_name, status_name))
+            except re.error:
+                return False
         # Default: substring.
         return self.diagnostic_name in status_name
 
@@ -210,8 +213,6 @@ class IndicatorConfig:
                 d['value_field'] = self.value_field
             d['format'] = self.format
             thresholds = {}
-            if self.threshold_ok:
-                thresholds['ok'] = self.threshold_ok
             if self.threshold_warn:
                 thresholds['warn'] = self.threshold_warn
             if self.threshold_error:
@@ -238,7 +239,6 @@ class IndicatorConfig:
             msg_type=d.get('msg_type', ''),
             value_field=d.get('value_field', 'data'),
             format=d.get('format', '{}'),
-            threshold_ok=thresholds.get('ok', ''),
             threshold_warn=thresholds.get('warn', ''),
             threshold_error=thresholds.get('error', ''),
             diagnostic_name=d.get('diagnostic_name', ''),

@@ -1,11 +1,10 @@
 """rqt plugin wrapper for the annunciator panel."""
 
-from python_qt_binding.QtWidgets import QFileDialog
 from rqt_gui_py.plugin import Plugin
 
 from .annunciator_widget import AnnunciatorWidget
 from .config_dialog import ConfigDialog
-from .config_model import AnnunciatorConfig, IndicatorConfig
+from .config_model import AnnunciatorConfig
 
 
 class AnnunciatorPlugin(Plugin):
