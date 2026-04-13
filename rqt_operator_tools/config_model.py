@@ -172,6 +172,8 @@ class IndicatorConfig:
 
     def matches_diagnostic(self, status_name: str) -> bool:
         """Check if *status_name* matches this indicator's diagnostic filter."""
+        if not self.diagnostic_name:
+            return False
         if self.match_mode == MatchMode.EXACT:
             return status_name == self.diagnostic_name
         if self.match_mode == MatchMode.REGEX:
@@ -185,8 +187,8 @@ class IndicatorConfig:
     def evaluate_level(self, value) -> IndicatorLevel:
         """Determine the indicator level from a raw value using thresholds.
 
-        Evaluates error first, then warn, then ok.  If no thresholds are
-        configured, returns OK.
+        Evaluates error first, then warn.  If no thresholds match or none
+        are configured, returns OK.
         """
         try:
             if self.threshold_error and evaluate_threshold(self.threshold_error, value):
