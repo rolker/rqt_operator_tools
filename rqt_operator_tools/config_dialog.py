@@ -13,10 +13,7 @@ from python_qt_binding.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
-    QListWidgetItem,
     QPushButton,
-    QSizePolicy,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -69,7 +66,7 @@ class _IndicatorEditor(QWidget):
         self._thresh_warn_edit = QLineEdit()
         self._thresh_warn_edit.setPlaceholderText('e.g. value < 12.5')
         self._thresh_warn_edit.textChanged.connect(
-            lambda: self._validate_threshold(self._thresh_warn_edit, self._warn_status))
+            lambda text: self._validate_threshold(self._thresh_warn_edit, self._warn_status))
         self._warn_status = QLabel()
         warn_row = QHBoxLayout()
         warn_row.addWidget(self._thresh_warn_edit)
@@ -79,7 +76,7 @@ class _IndicatorEditor(QWidget):
         self._thresh_error_edit = QLineEdit()
         self._thresh_error_edit.setPlaceholderText('e.g. value < 11.5')
         self._thresh_error_edit.textChanged.connect(
-            lambda: self._validate_threshold(self._thresh_error_edit, self._error_status))
+            lambda text: self._validate_threshold(self._thresh_error_edit, self._error_status))
         self._error_status = QLabel()
         error_row = QHBoxLayout()
         error_row.addWidget(self._thresh_error_edit)
