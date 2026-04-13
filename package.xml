@@ -9,8 +9,6 @@
   <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
   <license>BSD-3-Clause</license>
 
-  <buildtool_depend>ament_python</buildtool_depend>
-
   <exec_depend>python_qt_binding</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>rqt_gui</exec_depend>
