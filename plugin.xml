@@ -1,0 +1,17 @@
+<library path="rqt_operator_tools">
+  <class name="rqt_operator_tools/AnnunciatorPlugin"
+         type="rqt_operator_tools.annunciator_plugin.AnnunciatorPlugin"
+         base_class_type="rqt_gui_py::Plugin">
+    <description>
+      Dark-until-problem annunciator panel for operator station status monitoring.
+    </description>
+    <qtgui>
+      <group>
+        <label>Robot Tools</label>
+      </group>
+      <label>Annunciator Panel</label>
+      <icon type="theme">dialog-warning</icon>
+      <statustip>Status indicators that light up only when something needs attention.</statustip>
+    </qtgui>
+  </class>
+</library>
