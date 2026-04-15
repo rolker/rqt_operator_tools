@@ -4,11 +4,11 @@
 # license that can be found in the LICENSE file or at
 # https://developers.google.com/open-source/licenses/bsd
 
-"""Publish synthetic diagnostics that cycle through OK/WARN/ERROR states.
+"""Publish synthetic diagnostics that cycle through staggered status states.
 
 Useful for testing the annunciator panel without any real ROS system.
-Each indicator cycles through the three levels on a staggered schedule
-so the annunciator always shows a mix of states.
+Each indicator cycles through a four-step sequence (OK, OK, WARN, ERROR)
+on a staggered schedule so the annunciator always shows a mix of states.
 """
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
@@ -23,13 +23,13 @@ _INDICATORS = [
         'gps.test',
         [
             (DiagnosticStatus.OK, '3D Fix, 12 sats',
-             [('fix_type', '3'), ('satellites', '12')]),
+             [('status', '3D Fix'), ('fix_type', '3'), ('satellites', '12')]),
             (DiagnosticStatus.OK, '3D Fix, 8 sats',
-             [('fix_type', '3'), ('satellites', '8')]),
+             [('status', '3D Fix'), ('fix_type', '3'), ('satellites', '8')]),
             (DiagnosticStatus.WARN, '2D Fix, 4 sats',
-             [('fix_type', '2'), ('satellites', '4')]),
+             [('status', '2D Fix'), ('fix_type', '2'), ('satellites', '4')]),
             (DiagnosticStatus.ERROR, 'No Fix',
-             [('fix_type', '0'), ('satellites', '0')]),
+             [('status', 'No Fix'), ('fix_type', '0'), ('satellites', '0')]),
         ],
     ),
     (
@@ -83,10 +83,10 @@ class DiagnosticTestPublisher(Node):
         super().__init__('diagnostic_test_publisher')
 
         self.declare_parameter('publish_interval', 2.0)
-        self.declare_parameter('hardware_id_prefix', 'test')
+        self.declare_parameter('name_prefix', 'test')
 
         self._interval = self.get_parameter('publish_interval').value
-        self._prefix = self.get_parameter('hardware_id_prefix').value
+        self._prefix = self.get_parameter('name_prefix').value
 
         self._pub = self.create_publisher(
             DiagnosticArray, '/diagnostics', 10
