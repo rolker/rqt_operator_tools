@@ -1,0 +1,27 @@
+# Self-contained annunciator test config.
+# Matches diagnostics from diagnostic_test_publisher (this package).
+# Launch publisher:  ros2 run rqt_operator_tools diagnostic_test_publisher
+# Launch annunciator: rqt --standalone rqt_operator_tools
+#   then load this config via File dialog.
+diagnostics_topic: /diagnostics
+indicators:
+  - name: GPS
+    source: diagnostics
+    diagnostic_name: "test: GPS"
+    stale_timeout: 10.0
+
+  - name: Battery
+    source: diagnostics
+    diagnostic_name: "test: Battery"
+    format: "{}"
+    stale_timeout: 10.0
+
+  - name: Comms
+    source: diagnostics
+    diagnostic_name: "test: Comms"
+    stale_timeout: 10.0
+
+  - name: Heartbeat
+    source: diagnostics
+    diagnostic_name: "test: Heartbeat"
+    stale_timeout: 10.0

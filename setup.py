@@ -10,7 +10,11 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml', 'plugin.xml']),
-        ('share/' + package_name + '/config', ['config/default_annunciator.yaml']),
+        ('share/' + package_name + '/config', [
+            'config/default_annunciator.yaml',
+            'config/test_annunciator.yaml',
+            'config/test_ping_annunciator.yaml',
+        ]),
     ],
     install_requires=['setuptools'],
     tests_require=['pytest'],
@@ -22,6 +26,7 @@ setup(
     entry_points={
         'console_scripts': [
             'annunciator = rqt_operator_tools.annunciator_standalone:main',
+            'diagnostic_test_publisher = rqt_operator_tools.diagnostic_test_publisher:main',
         ],
     },
 )
