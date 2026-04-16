@@ -1,15 +1,11 @@
 """Core annunciator widget — manages indicators, subscriptions, and layout."""
 
+import math
 import time
 
 from python_qt_binding.QtCore import QTimer, Signal
 from python_qt_binding.QtGui import QColor
-from python_qt_binding.QtWidgets import (
-    QGridLayout,
-    QHBoxLayout,
-    QVBoxLayout,
-    QWidget,
-)
+from python_qt_binding.QtWidgets import QGridLayout, QWidget
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 from rosidl_runtime_py.utilities import get_message
@@ -44,8 +40,9 @@ def _diagnostic_level_to_indicator(level: int) -> IndicatorLevel:
 class AnnunciatorWidget(QWidget):
     """Container widget for a set of annunciator indicators.
 
-    Handles adaptive layout (horizontal/vertical/grid based on aspect ratio),
-    ROS subscriptions, and stale detection.
+    Uses a single QGridLayout for the widget lifetime.  On resize the
+    indicators are reflowed into a different number of columns/rows
+    based on the window aspect ratio.
     """
 
     # Signals for thread-safe UI updates from ROS callbacks.
@@ -61,14 +58,14 @@ class AnnunciatorWidget(QWidget):
         self._last_update: dict[str, float] = {}
         self._subscriptions: dict[str, object] = {}
         self._diag_sub = None
-        self._layout = None
+        self._current_cols = 0
 
         self.setAutoFillBackground(True)
         palette = self.palette()
         palette.setColor(self.backgroundRole(), QColor(30, 30, 30))
         self.setPalette(palette)
 
-        self._layout = QHBoxLayout(self)
+        self._layout = QGridLayout(self)
         self._layout.setContentsMargins(4, 4, 4, 4)
         self._layout.setSpacing(4)
 
@@ -98,6 +95,7 @@ class AnnunciatorWidget(QWidget):
             self._indicator_configs[name] = ind_config
             self._last_update[name] = 0.0
 
+        self._current_cols = 0  # force reflow
         self._rebuild_layout()
         self._setup_subscriptions()
 
@@ -117,63 +115,46 @@ class AnnunciatorWidget(QWidget):
         self._rebuild_layout()
 
     def _rebuild_layout(self):
-        """Recompute layout direction and font sizes based on current dimensions."""
-        if not self._indicators:
+        """Reflow indicators into the grid and update font sizes."""
+        n = len(self._indicators)
+        if n == 0:
             return
-
-        # Remove all widgets from current layout.
-        while self._layout.count():
-            item = self._layout.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
-
-        # Delete old layout and create new one.
-        QWidget().setLayout(self._layout)
 
         w = self.width()
         h = self.height()
-        n = len(self._indicators)
-
-        if n == 0:
-            self._layout = QHBoxLayout(self)
-            return
-
         aspect = w / max(h, 1)
 
         if aspect > 2.0:
-            # Wide — horizontal strip.
-            self._layout = QHBoxLayout(self)
-            cell_h = h
-            cell_w = w / n
+            # Wide — single row.
+            cols = n
         elif aspect < 0.5:
-            # Tall — vertical column.
-            self._layout = QVBoxLayout(self)
-            cell_h = h / n
-            cell_w = w
+            # Tall — single column.
+            cols = 1
         else:
-            # Grid.
-            cols = max(1, int(n ** 0.5))
-            rows = (n + cols - 1) // cols
-            self._layout = QGridLayout(self)
-            cell_h = h / max(rows, 1)
-            cell_w = w / max(cols, 1)
+            # Grid — aim for roughly square cells.
+            cols = max(1, round(math.sqrt(n * aspect)))
 
-        self._layout.setContentsMargins(4, 4, 4, 4)
-        self._layout.setSpacing(4)
+        rows = max(1, math.ceil(n / cols))
+        cell_h = h / rows
+        cell_w = w / cols
+
+        # Only reflow grid positions when column count changes.
+        if cols != self._current_cols:
+            # Remove all widgets from grid (without destroying them).
+            for widget in self._indicators.values():
+                self._layout.removeWidget(widget)
+
+            for i, widget in enumerate(self._indicators.values()):
+                self._layout.addWidget(widget, i // cols, i % cols)
+
+            self._current_cols = cols
 
         # Scale fonts from cell dimensions.
-        label_size = int(cell_h * 0.3)
-        value_size = int(cell_h * 0.4)
+        label_size = max(8, int(min(cell_h * 0.3, cell_w * 0.08)))
+        value_size = max(8, int(min(cell_h * 0.4, cell_w * 0.10)))
 
-        for i, widget in enumerate(self._indicators.values()):
+        for widget in self._indicators.values():
             widget.update_font_size(label_size, value_size)
-            if isinstance(self._layout, QGridLayout):
-                cols = max(1, int(n ** 0.5))
-                self._layout.addWidget(widget, i // cols, i % cols)
-            else:
-                self._layout.addWidget(widget)
-
-        self.setLayout(self._layout)
 
     # -- Subscriptions ---------------------------------------------------------
 
@@ -297,8 +278,10 @@ class AnnunciatorWidget(QWidget):
 
     def _clear_indicators(self):
         for widget in self._indicators.values():
+            self._layout.removeWidget(widget)
             widget.setParent(None)
             widget.deleteLater()
         self._indicators.clear()
         self._indicator_configs.clear()
         self._last_update.clear()
+        self._current_cols = 0
