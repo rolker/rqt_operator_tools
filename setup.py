@@ -15,6 +15,10 @@ setup(
             'config/test_annunciator.yaml',
             'config/test_ping_annunciator.yaml',
         ]),
+        ('share/' + package_name + '/launch', [
+            'launch/test_annunciator.launch.py',
+            'launch/test_ping_annunciator.launch.py',
+        ]),
     ],
     install_requires=['setuptools'],
     tests_require=['pytest'],
