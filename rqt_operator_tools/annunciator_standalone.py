@@ -4,10 +4,9 @@ import argparse
 import os
 import signal
 import sys
-import threading
 
 import rclpy
-from python_qt_binding.QtCore import Qt
+from python_qt_binding.QtCore import Qt, QTimer
 from python_qt_binding.QtWidgets import QApplication
 
 from .annunciator_widget import AnnunciatorWidget
@@ -27,10 +26,10 @@ def main(argv=None):
     )
     args, ros_args = parser.parse_known_args(argv)
 
+    app = QApplication.instance() or QApplication(sys.argv)
+
     rclpy.init(args=ros_args)
     node = rclpy.create_node('annunciator')
-
-    app = QApplication.instance() or QApplication(sys.argv)
 
     widget = AnnunciatorWidget(node)
     if args.always_on_top:
@@ -63,14 +62,16 @@ def main(argv=None):
     widget.resize(800, 60)
     widget.show()
 
-    # Spin ROS in a background thread.
-    spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
-    spin_thread.start()
+    # Spin ROS via QTimer to keep everything on the Qt thread.
+    spin_timer = QTimer()
+    spin_timer.timeout.connect(lambda: rclpy.spin_once(node, timeout_sec=0))
+    spin_timer.start(33)  # ~30 Hz
 
     # Allow Ctrl+C to work.
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     exit_code = app.exec_()
+    spin_timer.stop()
     widget.shutdown()
     rclpy.shutdown()
     sys.exit(exit_code)
