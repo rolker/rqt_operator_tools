@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'rqt_operator_tools'
+package_name = 'rqt_annunciator'
 
 setup(
     name=package_name,
@@ -25,12 +25,12 @@ setup(
     zip_safe=True,
     maintainer='Roland Arsenault',
     maintainer_email='roland@ccom.unh.edu',
-    description='Operator station rqt plugins: annunciator panel, checklist, logbook.',
+    description='Dark-until-problem annunciator panel for operator station status monitoring.',
     license='BSD-3-Clause',
     entry_points={
         'console_scripts': [
-            'annunciator = rqt_operator_tools.annunciator_standalone:main',
-            'diagnostic_test_publisher = rqt_operator_tools.diagnostic_test_publisher:main',
+            'annunciator = rqt_annunciator.annunciator_standalone:main',
+            'diagnostic_test_publisher = rqt_annunciator.diagnostic_test_publisher:main',
         ],
     },
 )

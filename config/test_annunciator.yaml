@@ -1,7 +1,7 @@
 # Self-contained annunciator test config.
 # Matches diagnostics from diagnostic_test_publisher (this package).
-# Launch publisher:  ros2 run rqt_operator_tools diagnostic_test_publisher
-# Launch annunciator: rqt --standalone rqt_operator_tools
+# Launch publisher:  ros2 run rqt_annunciator diagnostic_test_publisher
+# Launch annunciator: rqt --standalone rqt_annunciator
 #   then load this config via File dialog.
 diagnostics_topic: /diagnostics
 indicators:

@@ -2,7 +2,7 @@
 
 import pytest
 
-from rqt_operator_tools.config_model import (
+from rqt_annunciator.config_model import (
     AnnunciatorConfig,
     IndicatorConfig,
     IndicatorLevel,

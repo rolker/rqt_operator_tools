@@ -24,7 +24,7 @@ class AnnunciatorPlugin(Plugin):
         """Load the default config shipped with the package."""
         from ament_index_python.packages import get_package_share_directory
         import os
-        share_dir = get_package_share_directory('rqt_operator_tools')
+        share_dir = get_package_share_directory('rqt_annunciator')
         default_path = os.path.join(share_dir, 'config', 'default_annunciator.yaml')
         if os.path.exists(default_path):
             try:

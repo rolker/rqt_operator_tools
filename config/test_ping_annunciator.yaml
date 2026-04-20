@@ -4,7 +4,7 @@
 #
 # Terminal 1: ros2 launch network_tools ping_monitor.launch.py \
 #               config_file:=$(ros2 pkg prefix network_tools)/share/network_tools/config/test_ping_targets.yaml
-# Terminal 2: rqt --standalone rqt_operator_tools
+# Terminal 2: rqt --standalone rqt_annunciator
 #   then load this config via File dialog.
 diagnostics_topic: /diagnostics
 indicators:

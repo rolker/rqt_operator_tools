@@ -1,6 +1,6 @@
-<library path="rqt_operator_tools">
-  <class name="rqt_operator_tools/AnnunciatorPlugin"
-         type="rqt_operator_tools.annunciator_plugin.AnnunciatorPlugin"
+<library path="rqt_annunciator">
+  <class name="rqt_annunciator/AnnunciatorPlugin"
+         type="rqt_annunciator.annunciator_plugin.AnnunciatorPlugin"
          base_class_type="rqt_gui_py::Plugin">
     <description>
       Dark-until-problem annunciator panel for operator station status monitoring.

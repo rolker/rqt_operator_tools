@@ -1,10 +1,10 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>rqt_operator_tools</name>
+  <name>rqt_annunciator</name>
   <version>0.1.0</version>
   <description>
-    Operator station rqt plugins: annunciator panel, checklist, logbook.
+    Dark-until-problem annunciator panel for operator station status monitoring.
   </description>
   <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
   <license>BSD-3-Clause</license>
