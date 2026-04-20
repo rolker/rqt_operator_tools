@@ -93,7 +93,7 @@ class AnnunciatorWidget(QWidget):
             widget = IndicatorWidget(name, self)
             self._indicators[name] = widget
             self._indicator_configs[name] = ind_config
-            self._last_update[name] = 0.0
+            self._last_update[name] = time.monotonic()
 
         self._current_cols = 0  # force reflow
         self._rebuild_layout()
@@ -267,20 +267,18 @@ class AnnunciatorWidget(QWidget):
     def _check_stale(self):
         now = time.monotonic()
         for name, config in self._indicator_configs.items():
-            last = self._last_update.get(name, 0.0)
+            last = self._last_update.get(name, now)
             error_timeout = (config.stale_error_timeout
                              if config.stale_error_timeout > 0
                              else config.stale_timeout * 3)
-            if last == 0.0:
-                # Never received — show error.
-                self._indicators[name].set_status(
-                    IndicatorLevel.ERROR, 'no data')
-            elif (now - last) > error_timeout:
-                self._indicators[name].set_status(
-                    IndicatorLevel.ERROR, 'no data')
-            elif (now - last) > config.stale_timeout:
-                self._indicators[name].set_status(
-                    IndicatorLevel.WARN, 'no data')
+            age = now - last
+            widget = self._indicators[name]
+            if age > error_timeout:
+                if widget._level != IndicatorLevel.ERROR:
+                    widget.set_status(IndicatorLevel.ERROR, 'no data')
+            elif age > config.stale_timeout:
+                if widget._level != IndicatorLevel.WARN:
+                    widget.set_status(IndicatorLevel.WARN, 'no data')
 
     # -- Helpers ---------------------------------------------------------------
 
