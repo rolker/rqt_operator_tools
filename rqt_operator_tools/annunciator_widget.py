@@ -268,11 +268,19 @@ class AnnunciatorWidget(QWidget):
         now = time.monotonic()
         for name, config in self._indicator_configs.items():
             last = self._last_update.get(name, 0.0)
+            error_timeout = (config.stale_error_timeout
+                             if config.stale_error_timeout > 0
+                             else config.stale_timeout * 3)
             if last == 0.0:
-                # Never received — show stale.
-                self._indicators[name].set_stale()
+                # Never received — show error.
+                self._indicators[name].set_status(
+                    IndicatorLevel.ERROR, 'no data')
+            elif (now - last) > error_timeout:
+                self._indicators[name].set_status(
+                    IndicatorLevel.ERROR, 'no data')
             elif (now - last) > config.stale_timeout:
-                self._indicators[name].set_stale()
+                self._indicators[name].set_status(
+                    IndicatorLevel.WARN, 'no data')
 
     # -- Helpers ---------------------------------------------------------------
 
