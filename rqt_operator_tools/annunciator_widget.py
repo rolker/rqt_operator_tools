@@ -274,10 +274,10 @@ class AnnunciatorWidget(QWidget):
             age = now - last
             widget = self._indicators[name]
             if age > error_timeout:
-                if widget._level != IndicatorLevel.ERROR:
+                if widget._level != IndicatorLevel.ERROR or widget._value_text != 'no data':
                     widget.set_status(IndicatorLevel.ERROR, 'no data')
             elif age > config.stale_timeout:
-                if widget._level != IndicatorLevel.WARN:
+                if widget._level != IndicatorLevel.WARN or widget._value_text != 'no data':
                     widget.set_status(IndicatorLevel.WARN, 'no data')
 
     # -- Helpers ---------------------------------------------------------------
