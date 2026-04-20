@@ -42,7 +42,7 @@ def main(argv=None):
         # Try default from package share.
         try:
             from ament_index_python.packages import get_package_share_directory
-            share_dir = get_package_share_directory('rqt_operator_tools')
+            share_dir = get_package_share_directory('rqt_annunciator')
             default_path = os.path.join(share_dir, 'config', 'default_annunciator.yaml')
             if os.path.exists(default_path):
                 config_path = default_path

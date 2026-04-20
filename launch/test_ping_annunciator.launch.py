@@ -13,13 +13,13 @@ from launch.actions import ExecuteProcess
 
 
 def generate_launch_description():
-    pkg_share = get_package_share_directory('rqt_operator_tools')
+    pkg_share = get_package_share_directory('rqt_annunciator')
     config_file = os.path.join(pkg_share, 'config', 'test_ping_annunciator.yaml')
 
     return LaunchDescription([
         ExecuteProcess(
             cmd=[
-                'ros2', 'run', 'rqt_operator_tools', 'annunciator',
+                'ros2', 'run', 'rqt_annunciator', 'annunciator',
                 '--config', config_file,
             ],
             output='screen',

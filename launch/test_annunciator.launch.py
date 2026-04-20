@@ -9,18 +9,18 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    pkg_share = get_package_share_directory('rqt_operator_tools')
+    pkg_share = get_package_share_directory('rqt_annunciator')
     config_file = os.path.join(pkg_share, 'config', 'test_annunciator.yaml')
 
     return LaunchDescription([
         Node(
-            package='rqt_operator_tools',
+            package='rqt_annunciator',
             executable='diagnostic_test_publisher',
             name='diagnostic_test_publisher',
         ),
         ExecuteProcess(
             cmd=[
-                'ros2', 'run', 'rqt_operator_tools', 'annunciator',
+                'ros2', 'run', 'rqt_annunciator', 'annunciator',
                 '--config', config_file,
             ],
             output='screen',
