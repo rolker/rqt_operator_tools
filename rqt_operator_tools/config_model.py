@@ -169,6 +169,7 @@ class IndicatorConfig:
 
     # Timing.
     stale_timeout: float = 5.0
+    stale_error_timeout: float = 0.0  # 0 = 3× stale_timeout
 
     def matches_diagnostic(self, status_name: str) -> bool:
         """Check if *status_name* matches this indicator's diagnostic filter."""
@@ -223,6 +224,8 @@ class IndicatorConfig:
                 d['thresholds'] = thresholds
         if self.stale_timeout != 5.0:
             d['stale_timeout'] = self.stale_timeout
+        if self.stale_error_timeout != 0.0:
+            d['stale_error_timeout'] = self.stale_error_timeout
         return d
 
     @classmethod
@@ -246,6 +249,7 @@ class IndicatorConfig:
             diagnostic_name=d.get('diagnostic_name', ''),
             match_mode=match_mode,
             stale_timeout=d.get('stale_timeout', 5.0),
+            stale_error_timeout=d.get('stale_error_timeout', 0.0),
         )
 
 
