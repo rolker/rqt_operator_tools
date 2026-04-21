@@ -7,7 +7,7 @@ import time
 import pytest
 import rclpy
 
-from rqt_operator_log.bag_manager import BagManager
+from rqt_operator_log.bag_manager import BagManager, make_log_topic
 from rqt_operator_log.log_entry import EntryType, LogEntry
 
 
@@ -158,3 +158,37 @@ class TestParseEntry:
         entry = BagManager._parse_entry('{"type": "bogus"}', 4000)
         assert entry.entry_type == EntryType.OPERATOR_TEXT
         assert entry.text == '{"type": "bogus"}'
+
+
+class TestMakeLogTopic:
+    def test_empty_namespace(self):
+        assert make_log_topic('') == 'log/text'
+
+    def test_simple_namespace(self):
+        assert make_log_topic('operator') == '/operator/log/text'
+
+    def test_namespace_with_slash(self):
+        assert make_log_topic('/bizzy/') == '/bizzy/log/text'
+
+    def test_nested_namespace(self):
+        assert make_log_topic('fleet/boat1') == '/fleet/boat1/log/text'
+
+
+class TestNamespacedBag:
+    def test_namespaced_write_and_recover(self, ros_node, tmp_dir):
+        bm = BagManager(ros_node, base_dir=tmp_dir, log_namespace='operator')
+        assert bm.log_topic == '/operator/log/text'
+        bm.write_entry(LogEntry(
+            timestamp_ns=time.time_ns(),
+            entry_type=EntryType.OPERATOR_TEXT,
+            author='op',
+            text='namespaced entry',
+        ))
+        bm.close()
+
+        # Recovery should find entries regardless of namespace
+        bm2 = BagManager(ros_node, base_dir=tmp_dir, log_namespace='different')
+        recovered = bm2.recover_entries()
+        bm2.close()
+        assert len(recovered) == 1
+        assert recovered[0].text == 'namespaced entry'

@@ -21,18 +21,29 @@ from std_msgs.msg import String
 from .log_entry import EntryType, LogEntry
 
 
+def make_log_topic(namespace: str) -> str:
+    """Build the full log topic name from a namespace."""
+    if namespace:
+        ns = namespace.strip('/')
+        return f'/{ns}/log/text'
+    return 'log/text'
+
+
 class BagManager:
     """Write log entries to daily mcap bags and recover from existing ones."""
 
-    TEXT_TOPIC = 'log/text'
-
-    def __init__(self, node: Node, base_dir: str = ''):
+    def __init__(self, node: Node, base_dir: str = '', log_namespace: str = ''):
         self._node = node
         self._base_dir = base_dir or os.path.expanduser('~/operator_logs')
+        self._log_topic = make_log_topic(log_namespace)
         self._writer = None
         self._writer_lock = threading.Lock()
         self._current_day = None
         self._registered_topics: set[tuple[str, str]] = set()  # (topic_name, msg_type_str)
+
+    @property
+    def log_topic(self) -> str:
+        return self._log_topic
 
     def _day_dir(self, day: datetime) -> str:
         return os.path.join(self._base_dir, day.strftime('%Y%m%d'))
@@ -68,7 +79,7 @@ class BagManager:
 
         topic = TopicMetadata(
             id=0,
-            name=self.TEXT_TOPIC,
+            name=self._log_topic,
             type='std_msgs/msg/String',
             serialization_format='cdr',
         )
@@ -98,7 +109,7 @@ class BagManager:
                 'text': entry.text,
             })
             serialized = rclpy.serialization.serialize_message(msg)
-            self._writer.write(self.TEXT_TOPIC, serialized, entry.timestamp_ns)
+            self._writer.write(self._log_topic, serialized, entry.timestamp_ns)
 
     def register_topic(self, topic_name: str, msg_type_str: str):
         """Register an additional topic for recording."""
@@ -149,7 +160,7 @@ class BagManager:
         entries = []
         while reader.has_next():
             topic, data, timestamp_ns = reader.read_next()
-            if topic == self.TEXT_TOPIC:
+            if topic.endswith('log/text'):
                 msg = rclpy.serialization.deserialize_message(data, String)
                 entry = self._parse_entry(msg.data, timestamp_ns)
                 if entry:
