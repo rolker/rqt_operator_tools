@@ -1,0 +1,17 @@
+<library path="rqt_operator_log">
+  <class name="rqt_operator_log/OperatorLogPlugin"
+         type="rqt_operator_log.operator_log_plugin.OperatorLogPlugin"
+         base_class_type="rqt_gui_py::Plugin">
+    <description>
+      Operator logbook with timeline display and rosbag2 recording.
+    </description>
+    <qtgui>
+      <group>
+        <label>Robot Tools</label>
+      </group>
+      <label>Operator Log</label>
+      <icon type="theme">accessories-text-editor</icon>
+      <statustip>Log operator observations alongside sensor data.</statustip>
+    </qtgui>
+  </class>
+</library>
