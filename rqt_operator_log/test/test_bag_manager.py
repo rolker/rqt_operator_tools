@@ -161,25 +161,18 @@ class TestParseEntry:
         assert entry.text == '{"type": "bogus"}'
 
 
-class TestRecoveryWindow:
-    def test_old_entries_filtered(self, ros_node, tmp_dir):
-        """Entries older than 24h from the most recent should be excluded."""
+class TestRecoverAll:
+    def test_recovers_across_day_directories(self, ros_node, tmp_dir):
+        """Entries from multiple days should all be recovered."""
         now_ns = time.time_ns()
-        hours_25_ago = now_ns - int(25 * 3600 * 1e9)
-        hours_23_ago = now_ns - int(23 * 3600 * 1e9)
+        two_days_ago = now_ns - int(48 * 3600 * 1e9)
 
         bm = BagManager(ros_node, base_dir=tmp_dir)
         bm.write_entry(LogEntry(
-            timestamp_ns=hours_25_ago,
+            timestamp_ns=two_days_ago,
             entry_type=EntryType.OPERATOR_TEXT,
             author='op',
             text='old entry',
-        ))
-        bm.write_entry(LogEntry(
-            timestamp_ns=hours_23_ago,
-            entry_type=EntryType.OPERATOR_TEXT,
-            author='op',
-            text='recent entry',
         ))
         bm.write_entry(LogEntry(
             timestamp_ns=now_ns,
@@ -194,9 +187,8 @@ class TestRecoveryWindow:
         bm2.close()
 
         texts = [e.text for e in recovered]
+        assert 'old entry' in texts
         assert 'current entry' in texts
-        assert 'recent entry' in texts
-        assert 'old entry' not in texts
 
 
 class TestMakeLogTopic:

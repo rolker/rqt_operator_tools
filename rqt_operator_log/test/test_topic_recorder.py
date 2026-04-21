@@ -78,7 +78,7 @@ class TestTopicRecorder:
         from pathlib import Path
         from datetime import datetime, timezone
 
-        day = datetime.now().strftime('%Y%m%d')
+        day = datetime.now().strftime('%Y-%m-%d')
         day_dir = f'{tmp_dir}/{day}'
         segments = sorted(Path(day_dir).glob('operator_log_*'))
         assert len(segments) >= 1
