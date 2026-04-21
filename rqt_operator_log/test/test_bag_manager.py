@@ -161,6 +161,44 @@ class TestParseEntry:
         assert entry.text == '{"type": "bogus"}'
 
 
+class TestRecoveryWindow:
+    def test_old_entries_filtered(self, ros_node, tmp_dir):
+        """Entries older than 24h from the most recent should be excluded."""
+        now_ns = time.time_ns()
+        hours_25_ago = now_ns - int(25 * 3600 * 1e9)
+        hours_23_ago = now_ns - int(23 * 3600 * 1e9)
+
+        bm = BagManager(ros_node, base_dir=tmp_dir)
+        bm.write_entry(LogEntry(
+            timestamp_ns=hours_25_ago,
+            entry_type=EntryType.OPERATOR_TEXT,
+            author='op',
+            text='old entry',
+        ))
+        bm.write_entry(LogEntry(
+            timestamp_ns=hours_23_ago,
+            entry_type=EntryType.OPERATOR_TEXT,
+            author='op',
+            text='recent entry',
+        ))
+        bm.write_entry(LogEntry(
+            timestamp_ns=now_ns,
+            entry_type=EntryType.OPERATOR_TEXT,
+            author='op',
+            text='current entry',
+        ))
+        bm.close()
+
+        bm2 = BagManager(ros_node, base_dir=tmp_dir)
+        recovered = bm2.recover_entries()
+        bm2.close()
+
+        texts = [e.text for e in recovered]
+        assert 'current entry' in texts
+        assert 'recent entry' in texts
+        assert 'old entry' not in texts
+
+
 class TestMakeLogTopic:
     def test_empty_namespace(self):
         assert make_log_topic('') == 'log/text'

@@ -4,7 +4,7 @@ import json
 import os
 import re
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import rclpy.serialization
@@ -19,6 +19,8 @@ from rosbag2_py import (
 from std_msgs.msg import String
 
 from .log_entry import EntryType, LogEntry
+
+RECOVERY_WINDOW = timedelta(hours=24)
 
 
 def make_log_topic(namespace: str) -> str:
@@ -45,8 +47,10 @@ class BagManager:
     def log_topic(self) -> str:
         return self._log_topic
 
-    def _day_dir(self, day: datetime) -> str:
-        return os.path.join(self._base_dir, day.strftime('%Y%m%d'))
+    def _day_dir(self, dt: datetime) -> str:
+        """Return the day directory for a datetime, using local time for naming."""
+        local_dt = dt.astimezone()
+        return os.path.join(self._base_dir, local_dt.strftime('%Y%m%d'))
 
     def _next_segment_uri(self, day_dir: str) -> str:
         """Find the next available segment number in a day directory."""
@@ -60,17 +64,17 @@ class BagManager:
         return os.path.join(day_dir, f'operator_log_{segment:03d}')
 
     def _ensure_writer(self, timestamp_ns: int):
-        """Open a writer for the day containing timestamp_ns, rotating if needed."""
+        """Open a writer for the local day containing timestamp_ns, rotating if needed."""
         dt = datetime.fromtimestamp(timestamp_ns / 1e9, tz=timezone.utc)
-        day = dt.date()
+        local_day = dt.astimezone().date()
 
-        if self._writer is not None and self._current_day == day:
+        if self._writer is not None and self._current_day == local_day:
             return
 
         self._close_writer()
         day_dir = self._day_dir(dt)
         uri = self._next_segment_uri(day_dir)
-        self._current_day = day
+        self._current_day = local_day
 
         writer = SequentialWriter()
         storage = StorageOptions(uri=uri, storage_id='mcap')
@@ -133,22 +137,37 @@ class BagManager:
             self._writer.write(topic_name, serialized, timestamp_ns)
 
     def recover_entries(self) -> list[LogEntry]:
-        """Read all entries from today's bag segments."""
+        """Read log entries from the last 24 hours.
+
+        Scans today's and yesterday's directories (local time), reads all
+        log entries, then returns those within 24 hours of the most recent
+        entry found.
+        """
         now = datetime.now(tz=timezone.utc)
-        day_dir = self._day_dir(now)
-        if not os.path.isdir(day_dir):
+        yesterday = now - timedelta(days=1)
+
+        # Collect entries from today and yesterday's directories
+        all_entries = []
+        for dt in (yesterday, now):
+            day_dir = self._day_dir(dt)
+            if not os.path.isdir(day_dir):
+                continue
+            segments = sorted(Path(day_dir).glob('operator_log_*'))
+            for segment in segments:
+                try:
+                    all_entries.extend(self._read_segment(str(segment)))
+                except Exception as exc:
+                    self._node.get_logger().warn(
+                        f'Failed to read bag segment {segment}: {exc}'
+                    )
+
+        if not all_entries:
             return []
 
-        entries = []
-        segments = sorted(Path(day_dir).glob('operator_log_*'))
-        for segment in segments:
-            try:
-                entries.extend(self._read_segment(str(segment)))
-            except Exception as exc:
-                self._node.get_logger().warn(
-                    f'Failed to read bag segment {segment}: {exc}'
-                )
-        return entries
+        # Filter to 24h window ending at the most recent entry
+        latest_ns = max(e.timestamp_ns for e in all_entries)
+        cutoff_ns = latest_ns - int(RECOVERY_WINDOW.total_seconds() * 1e9)
+        return [e for e in all_entries if e.timestamp_ns >= cutoff_ns]
 
     def _read_segment(self, uri: str) -> list[LogEntry]:
         """Read log entries from a single bag segment."""
