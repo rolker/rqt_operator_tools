@@ -32,8 +32,6 @@ class BagManager:
         self._writer = None
         self._writer_lock = threading.Lock()
         self._current_day = None
-        self._current_uri = None
-        self._topic_registered = False
 
     def _day_dir(self, day: datetime) -> str:
         return os.path.join(self._base_dir, day.strftime('%Y%m%d'))
@@ -60,7 +58,6 @@ class BagManager:
         self._close_writer()
         day_dir = self._day_dir(dt)
         uri = self._next_segment_uri(day_dir)
-        self._current_uri = uri
         self._current_day = day
 
         writer = SequentialWriter()
@@ -76,7 +73,6 @@ class BagManager:
         )
         writer.create_topic(topic)
         self._writer = writer
-        self._topic_registered = True
         self._node.get_logger().info(f'Opened bag: {uri}')
 
     def write_entry(self, entry: LogEntry):
@@ -151,7 +147,6 @@ class BagManager:
         if self._writer is not None:
             self._writer.close()
             self._writer = None
-            self._topic_registered = False
 
     def close(self):
         with self._writer_lock:
