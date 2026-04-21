@@ -116,9 +116,9 @@ class BagManager:
     def register_topic(self, topic_name: str, msg_type_str: str):
         """Register an additional topic for recording."""
         key = (topic_name, msg_type_str)
-        if key in self._registered_topics:
-            return
         with self._writer_lock:
+            if key in self._registered_topics:
+                return
             self._registered_topics.add(key)
             if self._writer is not None:
                 self._writer.create_topic(TopicMetadata(
