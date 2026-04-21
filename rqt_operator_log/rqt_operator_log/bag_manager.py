@@ -32,6 +32,7 @@ class BagManager:
         self._writer = None
         self._writer_lock = threading.Lock()
         self._current_day = None
+        self._registered_topics: set[tuple[str, str]] = set()  # (topic_name, msg_type_str)
 
     def _day_dir(self, day: datetime) -> str:
         return os.path.join(self._base_dir, day.strftime('%Y%m%d'))
@@ -73,6 +74,16 @@ class BagManager:
         )
         writer.create_topic(topic)
         self._writer = writer
+
+        # Re-register any extra topics from previous segment
+        for topic_name, msg_type_str in list(self._registered_topics):
+            self._writer.create_topic(TopicMetadata(
+                id=0,
+                name=topic_name,
+                type=msg_type_str,
+                serialization_format='cdr',
+            ))
+
         self._node.get_logger().info(f'Opened bag: {uri}')
 
     def write_entry(self, entry: LogEntry):
@@ -88,6 +99,27 @@ class BagManager:
             })
             serialized = rclpy.serialization.serialize_message(msg)
             self._writer.write(self.TEXT_TOPIC, serialized, entry.timestamp_ns)
+
+    def register_topic(self, topic_name: str, msg_type_str: str):
+        """Register an additional topic for recording."""
+        key = (topic_name, msg_type_str)
+        if key in self._registered_topics:
+            return
+        self._registered_topics.add(key)
+        with self._writer_lock:
+            if self._writer is not None:
+                self._writer.create_topic(TopicMetadata(
+                    id=0,
+                    name=topic_name,
+                    type=msg_type_str,
+                    serialization_format='cdr',
+                ))
+
+    def write_serialized(self, topic_name: str, serialized: bytes, timestamp_ns: int):
+        """Write a pre-serialized message to the bag."""
+        with self._writer_lock:
+            self._ensure_writer(timestamp_ns)
+            self._writer.write(topic_name, serialized, timestamp_ns)
 
     def recover_entries(self) -> list[LogEntry]:
         """Read all entries from today's bag segments."""

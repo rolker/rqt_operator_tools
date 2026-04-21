@@ -9,16 +9,26 @@ from std_msgs.msg import String
 from .bag_manager import BagManager
 from .log_entry import EntryType, LogEntry
 from .log_widget import LogWidget
+from .topic_recorder import TopicRecorder
 
 DEFAULT_LOG_DIR = os.path.expanduser('~/operator_logs')
-ENV_VAR = 'OPERATOR_LOG_DIR'
+ENV_LOG_DIR = 'OPERATOR_LOG_DIR'
+ENV_TOPICS = 'OPERATOR_LOG_TOPICS'
 
 
 def _resolve_log_dir(settings_dir: str) -> str:
     """Resolve log directory: rqt settings > env var > default."""
     if settings_dir:
         return settings_dir
-    return os.environ.get(ENV_VAR, DEFAULT_LOG_DIR)
+    return os.environ.get(ENV_LOG_DIR, DEFAULT_LOG_DIR)
+
+
+def _resolve_record_topics() -> list[str]:
+    """Resolve topics to record from env var."""
+    raw = os.environ.get(ENV_TOPICS, '')
+    if not raw:
+        return []
+    return [t.strip() for t in raw.split(',') if t.strip()]
 
 
 class OperatorLogPlugin(Plugin):
@@ -31,6 +41,7 @@ class OperatorLogPlugin(Plugin):
         self._node = context.node
         self._log_dir = ''  # populated by restore_settings before _recover
         self._bag_manager = None
+        self._topic_recorder = None
 
         # Publisher for live log entries
         self._pub = self._node.create_publisher(String, 'log/text', 10)
@@ -42,12 +53,19 @@ class OperatorLogPlugin(Plugin):
         context.add_widget(self._widget)
 
     def _ensure_bag_manager(self):
-        """Create the bag manager if not yet created."""
+        """Create the bag manager and topic recorder if not yet created."""
         if self._bag_manager is not None:
             return
         log_dir = _resolve_log_dir(self._log_dir)
         self._bag_manager = BagManager(self._node, base_dir=log_dir)
         self._node.get_logger().info(f'Log directory: {log_dir}')
+
+        record_topics = _resolve_record_topics()
+        if record_topics:
+            self._topic_recorder = TopicRecorder(
+                self._node, self._bag_manager, record_topics
+            )
+
         self._recover()
 
     def _recover(self):
@@ -82,6 +100,8 @@ class OperatorLogPlugin(Plugin):
         self._bag_manager.write_entry(entry)
 
     def shutdown_plugin(self):
+        if self._topic_recorder:
+            self._topic_recorder.shutdown()
         if self._bag_manager:
             self._bag_manager.close()
 
@@ -107,9 +127,18 @@ class OperatorLogPlugin(Plugin):
         if chosen:
             self._log_dir = chosen
             self._node.get_logger().info(f'Log directory changed to: {chosen}')
-            # Reopen bag manager with new directory
+            if self._topic_recorder:
+                self._topic_recorder.shutdown()
+                self._topic_recorder = None
             if self._bag_manager:
                 self._bag_manager.close()
             self._bag_manager = BagManager(self._node, base_dir=chosen)
+
+            record_topics = _resolve_record_topics()
+            if record_topics:
+                self._topic_recorder = TopicRecorder(
+                    self._node, self._bag_manager, record_topics
+                )
+
             self._widget.clear_timeline()
             self._recover()
