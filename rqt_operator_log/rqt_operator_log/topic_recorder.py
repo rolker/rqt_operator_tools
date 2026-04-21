@@ -23,7 +23,6 @@ class TopicRecorder:
     def __init__(self, node: Node, bag_manager: BagManager, topic_names: list[str]):
         self._node = node
         self._bag_manager = bag_manager
-        self._topic_names = set(topic_names)
         self._subscriptions: dict[str, object] = {}
         self._pending = set(topic_names)
 

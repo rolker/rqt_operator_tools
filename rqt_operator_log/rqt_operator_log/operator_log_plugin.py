@@ -89,7 +89,7 @@ class OperatorLogPlugin(Plugin):
             self._widget.append_entry(entry)
         if entries:
             self._node.get_logger().info(
-                f'Recovered {len(entries)} log entries from today'
+                f'Recovered {len(entries)} log entries'
             )
 
     def _on_entry_submitted(self, text: str):

@@ -118,8 +118,8 @@ class BagManager:
         key = (topic_name, msg_type_str)
         if key in self._registered_topics:
             return
-        self._registered_topics.add(key)
         with self._writer_lock:
+            self._registered_topics.add(key)
             if self._writer is not None:
                 self._writer.create_topic(TopicMetadata(
                     id=0,

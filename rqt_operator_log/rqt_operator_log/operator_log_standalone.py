@@ -64,7 +64,7 @@ def main(argv=None):
     widget.setWindowTitle('Operator Log')
     widget.resize(600, 400)
 
-    # Recover today's entries.
+    # Recover previous entries.
     entries = bag_manager.recover_entries()
     for entry in entries:
         widget.append_entry(entry)
