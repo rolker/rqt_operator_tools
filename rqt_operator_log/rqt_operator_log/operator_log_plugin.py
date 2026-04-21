@@ -1,14 +1,24 @@
 """rqt plugin for the operator logbook."""
 
+import os
 import time
 
-from python_qt_binding.QtCore import QTimer
 from rqt_gui_py.plugin import Plugin
 from std_msgs.msg import String
 
 from .bag_manager import BagManager
 from .log_entry import EntryType, LogEntry
 from .log_widget import LogWidget
+
+DEFAULT_LOG_DIR = os.path.expanduser('~/operator_logs')
+ENV_VAR = 'OPERATOR_LOG_DIR'
+
+
+def _resolve_log_dir(settings_dir: str) -> str:
+    """Resolve log directory: rqt settings > env var > default."""
+    if settings_dir:
+        return settings_dir
+    return os.environ.get(ENV_VAR, DEFAULT_LOG_DIR)
 
 
 class OperatorLogPlugin(Plugin):
@@ -19,9 +29,8 @@ class OperatorLogPlugin(Plugin):
         self.setObjectName('OperatorLogPlugin')
 
         self._node = context.node
-        self._node.declare_parameter('log_directory', '')
-        log_dir = self._node.get_parameter('log_directory').get_parameter_value().string_value
-        self._bag_manager = BagManager(self._node, base_dir=log_dir)
+        self._log_dir = ''  # populated by restore_settings before _recover
+        self._bag_manager = None
 
         # Publisher for live log entries
         self._pub = self._node.create_publisher(String, 'log/text', 10)
@@ -32,7 +41,13 @@ class OperatorLogPlugin(Plugin):
         self._widget.entry_submitted.connect(self._on_entry_submitted)
         context.add_widget(self._widget)
 
-        # Recover today's entries
+    def _ensure_bag_manager(self):
+        """Create the bag manager if not yet created."""
+        if self._bag_manager is not None:
+            return
+        log_dir = _resolve_log_dir(self._log_dir)
+        self._bag_manager = BagManager(self._node, base_dir=log_dir)
+        self._node.get_logger().info(f'Log directory: {log_dir}')
         self._recover()
 
     def _recover(self):
@@ -47,6 +62,7 @@ class OperatorLogPlugin(Plugin):
 
     def _on_entry_submitted(self, text: str):
         """Handle a new text entry from the widget."""
+        self._ensure_bag_manager()
         entry = LogEntry(
             timestamp_ns=time.time_ns(),
             entry_type=EntryType.OPERATOR_TEXT,
@@ -66,12 +82,34 @@ class OperatorLogPlugin(Plugin):
         self._bag_manager.write_entry(entry)
 
     def shutdown_plugin(self):
-        self._bag_manager.close()
+        if self._bag_manager:
+            self._bag_manager.close()
 
     def save_settings(self, plugin_settings, instance_settings):
         instance_settings.set_value('author', self._widget.author)
+        if self._log_dir:
+            instance_settings.set_value('log_directory', self._log_dir)
 
     def restore_settings(self, plugin_settings, instance_settings):
         author = instance_settings.value('author', '')
         if author:
             self._widget.author = author
+        self._log_dir = instance_settings.value('log_directory', '')
+        self._ensure_bag_manager()
+
+    def trigger_configuration(self):
+        """Called when the user clicks the wrench icon in rqt."""
+        from python_qt_binding.QtWidgets import QFileDialog
+        current = _resolve_log_dir(self._log_dir)
+        chosen = QFileDialog.getExistingDirectory(
+            self._widget, 'Select Log Directory', current,
+        )
+        if chosen:
+            self._log_dir = chosen
+            self._node.get_logger().info(f'Log directory changed to: {chosen}')
+            # Reopen bag manager with new directory
+            if self._bag_manager:
+                self._bag_manager.close()
+            self._bag_manager = BagManager(self._node, base_dir=chosen)
+            self._widget.clear_timeline()
+            self._recover()
