@@ -19,7 +19,9 @@ class OperatorLogPlugin(Plugin):
         self.setObjectName('OperatorLogPlugin')
 
         self._node = context.node
-        self._bag_manager = BagManager(self._node)
+        self._node.declare_parameter('log_directory', '')
+        log_dir = self._node.get_parameter('log_directory').get_parameter_value().string_value
+        self._bag_manager = BagManager(self._node, base_dir=log_dir)
 
         # Publisher for live log entries
         self._pub = self._node.create_publisher(String, 'log/text', 10)

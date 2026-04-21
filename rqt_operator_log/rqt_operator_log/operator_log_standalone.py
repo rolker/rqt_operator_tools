@@ -19,8 +19,10 @@ def main(argv=None):
 
     rclpy.init(args=argv)
     node = rclpy.create_node('operator_log')
+    node.declare_parameter('log_directory', '')
+    log_dir = node.get_parameter('log_directory').get_parameter_value().string_value
 
-    bag_manager = BagManager(node)
+    bag_manager = BagManager(node, base_dir=log_dir)
     pub = node.create_publisher(String, 'log/text', 10)
 
     widget = LogWidget()
