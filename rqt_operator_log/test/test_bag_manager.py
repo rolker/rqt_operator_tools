@@ -16,6 +16,7 @@ def ros_node():
     rclpy.init()
     node = rclpy.create_node('test_bag_manager')
     yield node
+    node.destroy_node()
     rclpy.shutdown()
 
 

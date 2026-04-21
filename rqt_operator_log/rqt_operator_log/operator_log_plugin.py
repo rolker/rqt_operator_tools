@@ -133,6 +133,8 @@ class OperatorLogPlugin(Plugin):
     def shutdown_plugin(self):
         if self._sub:
             self._node.destroy_subscription(self._sub)
+        if self._pub:
+            self._node.destroy_publisher(self._pub)
         if self._topic_recorder:
             self._topic_recorder.shutdown()
         if self._bag_manager:
@@ -163,6 +165,9 @@ class OperatorLogPlugin(Plugin):
             if self._sub:
                 self._node.destroy_subscription(self._sub)
                 self._sub = None
+            if self._pub:
+                self._node.destroy_publisher(self._pub)
+                self._pub = None
             if self._topic_recorder:
                 self._topic_recorder.shutdown()
                 self._topic_recorder = None

@@ -10,6 +10,7 @@ from rclpy.executors import SingleThreadedExecutor
 from std_msgs.msg import String
 
 from rqt_operator_log.bag_manager import BagManager
+from rqt_operator_log.log_entry import EntryType, LogEntry
 from rqt_operator_log.topic_recorder import TopicRecorder
 
 
@@ -45,14 +46,12 @@ class TestTopicRecorder:
 
         bag_manager = BagManager(recorder_node, base_dir=tmp_dir)
         # Force open the writer so register_topic has a writer to work with
-        bag_manager.write_entry(
-            __import__('rqt_operator_log.log_entry', fromlist=['LogEntry']).LogEntry(
-                timestamp_ns=time.time_ns(),
-                entry_type=__import__('rqt_operator_log.log_entry', fromlist=['EntryType']).EntryType.OPERATOR_TEXT,
-                author='setup',
-                text='init',
-            )
-        )
+        bag_manager.write_entry(LogEntry(
+            timestamp_ns=time.time_ns(),
+            entry_type=EntryType.OPERATOR_TEXT,
+            author='setup',
+            text='init',
+        ))
 
         pub = pub_node.create_publisher(String, '/test/record_topic', 10)
 
