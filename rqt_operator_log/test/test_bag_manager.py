@@ -121,22 +121,32 @@ class TestBagManager:
 
 
 class TestParseEntry:
-    def test_operator_text(self):
+    def test_json_operator_text(self):
         entry = BagManager._parse_entry(
-            '[operator_text] <alice> hello world', 1000
+            '{"type": "operator_text", "author": "alice", "text": "hello world"}',
+            1000,
         )
         assert entry.entry_type == EntryType.OPERATOR_TEXT
         assert entry.author == 'alice'
         assert entry.text == 'hello world'
         assert entry.timestamp_ns == 1000
 
-    def test_system_event(self):
+    def test_json_system_event(self):
         entry = BagManager._parse_entry(
-            '[system_event] <> mode changed', 2000
+            '{"type": "system_event", "author": "", "text": "mode changed"}',
+            2000,
         )
         assert entry.entry_type == EntryType.SYSTEM_EVENT
         assert entry.author == ''
         assert entry.text == 'mode changed'
+
+    def test_json_special_chars_in_author(self):
+        entry = BagManager._parse_entry(
+            '{"type": "operator_text", "author": "user>name<test", "text": "ok"}',
+            3000,
+        )
+        assert entry.author == 'user>name<test'
+        assert entry.text == 'ok'
 
     def test_plain_text_fallback(self):
         entry = BagManager._parse_entry('just some text', 3000)
@@ -144,8 +154,7 @@ class TestParseEntry:
         assert entry.text == 'just some text'
         assert entry.author == ''
 
-    def test_malformed_brackets(self):
-        entry = BagManager._parse_entry('[invalid_type] <op> text', 4000)
-        # invalid_type is not a valid EntryType — should fall back
+    def test_invalid_json_fallback(self):
+        entry = BagManager._parse_entry('{"type": "bogus"}', 4000)
         assert entry.entry_type == EntryType.OPERATOR_TEXT
-        assert entry.text == '[invalid_type] <op> text'
+        assert entry.text == '{"type": "bogus"}'

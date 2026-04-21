@@ -1,6 +1,8 @@
 """Manage daily rosbag2 recording for operator log entries."""
 
+import json
 import os
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,8 +41,12 @@ class BagManager:
     def _next_segment_uri(self, day_dir: str) -> str:
         """Find the next available segment number in a day directory."""
         os.makedirs(day_dir, exist_ok=True)
-        existing = sorted(Path(day_dir).glob('operator_log_*'))
-        segment = len(existing)
+        max_num = -1
+        for path in Path(day_dir).glob('operator_log_*'):
+            m = re.search(r'operator_log_(\d+)', path.name)
+            if m:
+                max_num = max(max_num, int(m.group(1)))
+        segment = max_num + 1
         return os.path.join(day_dir, f'operator_log_{segment:03d}')
 
     def _ensure_writer(self, timestamp_ns: int):
@@ -79,7 +85,11 @@ class BagManager:
             self._ensure_writer(entry.timestamp_ns)
 
             msg = String()
-            msg.data = f'[{entry.entry_type.value}] <{entry.author}> {entry.text}'
+            msg.data = json.dumps({
+                'type': entry.entry_type.value,
+                'author': entry.author,
+                'text': entry.text,
+            })
             serialized = rclpy.serialization.serialize_message(msg)
             self._writer.write(self.TEXT_TOPIC, serialized, entry.timestamp_ns)
 
@@ -121,33 +131,16 @@ class BagManager:
     @staticmethod
     def _parse_entry(text: str, timestamp_ns: int) -> LogEntry | None:
         """Parse a serialized log string back into a LogEntry."""
-        # Format: [entry_type] <author> text
-        if not text.startswith('['):
-            return LogEntry(
-                timestamp_ns=timestamp_ns,
-                entry_type=EntryType.OPERATOR_TEXT,
-                text=text,
-            )
         try:
-            bracket_end = text.index(']')
-            type_str = text[1:bracket_end]
-            rest = text[bracket_end + 2:]  # skip '] '
-
-            entry_type = EntryType(type_str)
-
-            author = ''
-            if rest.startswith('<'):
-                angle_end = rest.index('>')
-                author = rest[1:angle_end]
-                rest = rest[angle_end + 2:]  # skip '> '
-
+            obj = json.loads(text)
             return LogEntry(
                 timestamp_ns=timestamp_ns,
-                entry_type=entry_type,
-                author=author,
-                text=rest,
+                entry_type=EntryType(obj['type']),
+                author=obj.get('author', ''),
+                text=obj.get('text', ''),
             )
-        except (ValueError, IndexError):
+        except (json.JSONDecodeError, KeyError, ValueError):
+            # Plain text fallback for non-JSON entries
             return LogEntry(
                 timestamp_ns=timestamp_ns,
                 entry_type=EntryType.OPERATOR_TEXT,

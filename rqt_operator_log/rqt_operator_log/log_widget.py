@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from python_qt_binding.QtCore import Qt, Signal
+from python_qt_binding.QtCore import Signal
 from python_qt_binding.QtWidgets import (
     QHBoxLayout,
     QLabel,

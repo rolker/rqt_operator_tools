@@ -71,5 +71,6 @@ def main(argv=None):
     exit_code = app.exec_()
     spin_timer.stop()
     bag_manager.close()
+    node.destroy_node()
     rclpy.shutdown()
     sys.exit(exit_code)
