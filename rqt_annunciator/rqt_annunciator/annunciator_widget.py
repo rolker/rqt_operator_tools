@@ -3,9 +3,9 @@
 import math
 import time
 
-from python_qt_binding.QtCore import QTimer, Signal
+from python_qt_binding.QtCore import QSize, QTimer, Signal
 from python_qt_binding.QtGui import QColor
-from python_qt_binding.QtWidgets import QGridLayout, QWidget
+from python_qt_binding.QtWidgets import QGridLayout, QLayout, QWidget
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 from rosidl_runtime_py.utilities import get_message
@@ -43,11 +43,22 @@ class AnnunciatorWidget(QWidget):
     Uses a single QGridLayout for the widget lifetime.  On resize the
     indicators are reflowed into a different number of columns/rows
     based on the window aspect ratio.
+
+    The widget fills whatever space its parent allocates and never pushes
+    for more: size hints are fixed constants, the layout uses
+    ``SetNoConstraint`` so the grid's aggregated minimum does not enforce
+    a minimum on this widget, and the child indicators break the
+    font-minimum feedback loop via ``QSizePolicy.Ignored`` on their
+    labels.  See issue #19.
     """
 
     # Signals for thread-safe UI updates from ROS callbacks.
     _diagnostics_received = Signal(object)
     _topic_received = Signal(str, object)  # indicator name, message
+
+    # Intrinsic hints — do not depend on indicator count or font size.
+    _MIN_HINT = QSize(80, 40)
+    _SIZE_HINT = QSize(320, 160)
 
     def __init__(self, node, parent=None):
         super().__init__(parent)
@@ -65,9 +76,22 @@ class AnnunciatorWidget(QWidget):
         palette.setColor(self.backgroundRole(), QColor(30, 30, 30))
         self.setPalette(palette)
 
+        # Leave the size policy at the default (Preferred/Preferred).  This
+        # widget sits inside an rqt dock that may share a splitter with
+        # other plugins — using Expanding here would make the annunciator
+        # fight its neighbors for space and resist being shrunk when the
+        # user drags the splitter handle.  The grid layout still fills
+        # whatever space the dock gives us; Preferred only affects how
+        # surplus space is *shared* with siblings, not whether we fill
+        # our allocation.
+
         self._layout = QGridLayout(self)
         self._layout.setContentsMargins(4, 4, 4, 4)
         self._layout.setSpacing(4)
+        # Prevent the grid's aggregated minimumSize (= sum of indicator
+        # minimums across columns) from being imposed as this widget's
+        # own minimum, which would propagate up to the rqt window.
+        self._layout.setSizeConstraint(QLayout.SetNoConstraint)
 
         # Wire signals for thread-safe updates.
         self._diagnostics_received.connect(self._handle_diagnostics)
@@ -109,6 +133,12 @@ class AnnunciatorWidget(QWidget):
         self._teardown_subscriptions()
 
     # -- Layout ----------------------------------------------------------------
+
+    def minimumSizeHint(self):  # noqa: N802 (Qt API)
+        return self._MIN_HINT
+
+    def sizeHint(self):  # noqa: N802 (Qt API)
+        return self._SIZE_HINT
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

@@ -1,8 +1,8 @@
 """Single annunciator indicator widget."""
 
-from python_qt_binding.QtCore import Qt
+from python_qt_binding.QtCore import QSize, Qt
 from python_qt_binding.QtGui import QColor, QFont
-from python_qt_binding.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy
+from python_qt_binding.QtWidgets import QFrame, QHBoxLayout, QLabel, QLayout, QSizePolicy
 
 from .config_model import IndicatorLevel
 
@@ -26,7 +26,18 @@ _BG_COLOR = QColor(30, 30, 30)  # dark background
 
 
 class IndicatorWidget(QFrame):
-    """A single indicator showing a status color bar, label, and value."""
+    """A single indicator showing a status color bar, label, and value.
+
+    Fills whatever space it is given by its parent layout and never demands
+    more: its minimum/size hints are fixed constants (not derived from font
+    or text length), and the child labels use ``QSizePolicy.Ignored`` so
+    their font-scaled hints do not propagate up.  See issue #19.
+    """
+
+    # Intrinsic size hints — independent of current font size or text length
+    # so they cannot feed back into an ancestor's minimum size.
+    _MIN_HINT = QSize(40, 20)
+    _SIZE_HINT = QSize(160, 48)
 
     def __init__(self, name: str, parent=None):
         super().__init__(parent)
@@ -37,25 +48,42 @@ class IndicatorWidget(QFrame):
         self.setAutoFillBackground(True)
         self._set_bg(_BG_COLOR)
 
+        # Fill the cell the grid gives us; do not ask for more than _SIZE_HINT.
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
         self._color_bar = QFrame(self)
         self._color_bar.setFixedWidth(8)
         self._color_bar.setAutoFillBackground(True)
 
+        # Ignored horizontal policy on the labels is the key to breaking the
+        # feedback loop: QLabel.minimumSizeHint() scales with font metrics,
+        # and without Ignored that minimum bubbles up through every parent
+        # layout and widens the top-level window on vertical drags.
+        label_policy = QSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+
         self._label = QLabel(name, self)
         self._label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._label.setSizePolicy(label_policy)
 
         self._value_label = QLabel('---', self)
         self._value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._value_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._value_label.setSizePolicy(label_policy)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 2, 8, 2)
         layout.setSpacing(8)
+        layout.setSizeConstraint(QLayout.SetNoConstraint)
         layout.addWidget(self._color_bar)
         layout.addWidget(self._label)
         layout.addWidget(self._value_label)
 
         self._apply_level()
+
+    def minimumSizeHint(self):  # noqa: N802 (Qt API)
+        return self._MIN_HINT
+
+    def sizeHint(self):  # noqa: N802 (Qt API)
+        return self._SIZE_HINT
 
     def set_status(self, level: IndicatorLevel, value_text: str = ''):
         """Update the indicator status and displayed value."""
