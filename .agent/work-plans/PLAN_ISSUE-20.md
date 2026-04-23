@@ -140,15 +140,55 @@ panes:
 
 ```cpp
 it_.reset(new image_transport::ImageTransport(node_));
-sub_ = it_->subscribe(pane.base, 1,
+image_transport::TransportHints hints(node_.get(), pane.transport);
+sub_ = it_->subscribe(
+         pane.base,
+         rmw_qos_profile_sensor_data,   // QoS — see "Subscription QoS" below
          std::bind(&CameraPaneWidget::on_image, this, _1),
-         nullptr, image_transport::TransportHints(node_.get(), pane.transport));
+         image_transport::VoidPtr(),
+         &hints,                         // TransportHints is a pointer in this overload
+         rclcpp::SubscriptionOptions());
 ```
 
 The base topic may never be advertised (bizzyboat publishes only the `/ffmpeg`
 sibling). `image_transport::Subscriber` builds the full name as
 `<base>/<suffix>` and subscribes directly — it does not require the base to
 exist.
+
+### Subscription QoS: `sensor_data`, not default
+
+Every image subscriber in this workspace uses `rclcpp::SensorDataQoS()` (see
+`sea_surface_segmentation/src/{sea_surface_layer,segments_to_pointcloud}.cpp`,
+`cube_bathymetry/src/{cube_bathymetry_node,detections_to_pointcloud}.cpp`).
+Publishers match. The default `image_transport::Subscriber` overload that
+takes a `queue_size` produces a **reliable, keep-last-N** QoS, which will not
+match best-effort publishers — no frames delivered, staleness goes red and
+stays red.
+
+We use the QoS-aware `subscribe()` overload (verified in
+`/opt/ros/jazzy/include/image_transport/image_transport/image_transport.hpp`):
+
+```cpp
+Subscriber subscribe(
+    const std::string & base_topic, rmw_qos_profile_t custom_qos,
+    const Subscriber::Callback & callback,
+    const VoidPtr & tracked_object,
+    const TransportHints * transport_hints,
+    const rclcpp::SubscriptionOptions options);
+```
+
+Pass `rmw_qos_profile_sensor_data` for `custom_qos`. If we ever need to tweak
+depth (e.g., `depth = 1` because we only paint the latest frame), clone the
+profile and mutate:
+
+```cpp
+rmw_qos_profile_t qos = rmw_qos_profile_sensor_data;
+qos.depth = 1;
+```
+
+Tests confirm the subscription shape (reliability = BestEffort, depth = 5
+default) in `test_pane_lifecycle.cpp` via `get_actual_qos()` on the created
+subscription.
 
 ### Staleness state machine (pure, gtest-able)
 
@@ -312,6 +352,46 @@ No live mutation of subscriptions while the dialog is open. The dialog edits
 an in-memory `GridConfig` copy; subscription churn happens only once, in
 `CameraGridWidget::load_config` triggered by OK.
 
+### Config dialog: keep logic testable without a `QApplication`
+
+Qt widget testing is painful. Avoid it by pushing the dialog's non-Qt logic
+into free functions in `config_model.{hpp,cpp}`, where gtest can exercise
+them directly:
+
+- **`void resize_panes(GridConfig&, int new_rows, int new_cols)`** — applies
+  the row-major rule: truncate trailing panes when shrinking, append
+  default-constructed `PaneConfig{}` entries when growing. The dialog calls
+  this on rows/cols spinbox change; the widget calls it when loading config
+  whose `len(panes)` disagrees with `rows*cols` (log a warning via
+  `RCLCPP_WARN` in that path).
+- **`GridConfig parse_yaml(const std::string& text)`** — already the
+  `config_model` `from_yaml` entry point, but ensure it throws a typed
+  `ConfigParseError` (derived from `std::runtime_error`) with a descriptive
+  message for the dialog's `QMessageBox::warning` to surface. The dialog's
+  Import path becomes a 5-line try/catch around this function.
+- **`std::vector<std::pair<std::string, std::string>> parse_image_topics(
+    const std::map<std::string, std::vector<std::string>>& topic_types)`**
+  — takes the output shape of `node->get_topic_names_and_types()` and
+  returns `(base, transport)` pairs. Pure; no ROS deps beyond the STL
+  types. The dialog snapshots topics once at open, hands the map to this
+  function, and populates the combo from the result.
+
+With those extracted, `test_config_model.cpp` covers:
+
+- YAML roundtrip (valid configs, covered already).
+- **Parse errors**: malformed YAML, missing `grid`, missing `panes`,
+  `grid.rows < 1`, non-numeric thresholds, unknown transport string. Each
+  asserts `ConfigParseError` with a substring match on the message.
+- **Pane resize**: all four growth/shrink combinations on `rows`/`cols`,
+  including the `len(panes) > rows*cols` load-time truncate path.
+- **Topic parsing**: ffmpeg sibling without base, compressed sibling with
+  base, `sensor_msgs/Image` on the base, unknown type (filtered out), mixed
+  same-namespace topics.
+
+The dialog itself — the Qt wiring of spinboxes, combos, buttons — remains
+untested at unit level (the repo's Python packages do the same for
+annunciator's `config_dialog.py`). Integration happens at manual acceptance.
+
 ## Dependencies (package.xml)
 
 ```xml
@@ -326,7 +406,7 @@ an in-memory `GridConfig` copy; subscription churn happens only once, in
 <depend>image_transport</depend>
 <depend>sensor_msgs</depend>
 <depend>cv_bridge</depend>
-<depend>libqt5-widgets</depend>
+<build_depend>qtbase5-dev</build_depend>
 <depend>yaml-cpp</depend>
 <depend>ament_index_cpp</depend>
 
@@ -345,6 +425,12 @@ an in-memory `GridConfig` copy; subscription churn happens only once, in
 `ffmpeg_image_transport` as `exec_depend` is the secondary goal: `rosdep
 install` on a fresh salmon pulls the H.265 decoder plugin. Binary is available
 on jazzy (`ros-jazzy-ffmpeg-image-transport`), verified.
+
+The Qt5 key is `qtbase5-dev` (verified against
+`/opt/ros/jazzy/share/rqt_image_view/package.xml`). `rqt_image_view` uses it
+as a `build_depend` only; runtime Qt libs come transitively through
+`rqt_gui_cpp` / `qt_gui_cpp`, so we mirror that shape rather than adding an
+`exec_depend` on Qt directly.
 
 ## CMake skeleton
 
@@ -449,17 +535,38 @@ ament_package()
 
 ## Open Questions
 
-1. **Qt dep spelling in `package.xml`**: `libqt5-widgets`? `qtbase5-dev`? ROS 2
-   jazzy's `rosdep` keys vary across distros. Crib the exact key from
-   `rqt_image_view`'s `package.xml` on jazzy before first push of the build.
-2. **Default config content**: Ship an empty 2×2 placeholder, or ship a
+1. **Default config content**: Ship an empty 2×2 placeholder, or ship a
    commented bizzyboat-style example (clearly tagged as "example")? The
    "platform-agnostic" principle argues for empty; usability argues for a
    commented example. Leaning empty.
-3. **Rate label source**: Self-measured from incoming-frame stamps (simple,
+2. **Rate label source**: Self-measured from incoming-frame stamps (simple,
    reflects what operators care about — is *this display* keeping up?) vs.
    subscribing to an existing topic-statistics source. Default to
    self-measured unless there's a reason not to.
+
+## Resolved During Planning
+
+- **Qt5 rosdep key** (was Open Question #1): `qtbase5-dev` as
+  `<build_depend>`, verified against
+  `/opt/ros/jazzy/share/rqt_image_view/package.xml`. Runtime Qt libs come
+  transitively through `rqt_gui_cpp` / `qt_gui_cpp`; no runtime Qt dep
+  needed.
+- **Subscription QoS** (was review finding 2): `rmw_qos_profile_sensor_data`
+  via the QoS-aware `image_transport::ImageTransport::subscribe` overload.
+  Every image subscriber in this workspace uses it; the default-QoS
+  overload would silently fail to match publishers.
+- **Staleness thresholds** (was review finding 1): fixed `warn=2s, error=5s`
+  matching `camp/src/camp/helm_manager/helm_manager.h:59-60`. Conscious
+  deviation from the issue's suggested rate-based defaults — cross-tool
+  consistency over per-stream adaptation for v1.
+- **Grid layout** (was review finding 3): aspect-aware, slack-to-outside
+  algorithm replacing `QGridLayout`; see "Grid layout" section.
+- **Config dialog testability** (was review finding 5): non-Qt logic
+  factored into free functions in `config_model`; see "Config dialog: keep
+  logic testable" section.
+- **`test_pane_lifecycle` contract** (was review finding 4): iteration
+  count, image fixture, and bounded-RSS assertions spelled out in Phase 1
+  step 9.
 
 ## Risk / Complexity Notes
 
