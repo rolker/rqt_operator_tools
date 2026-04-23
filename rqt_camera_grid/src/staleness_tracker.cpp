@@ -63,7 +63,10 @@ StalenessTracker::Level StalenessTracker::tick(const rclcpp::Time & now) const
     return Level::Error;
   }
   const double age = (now - last_frame_).seconds();
-  if (age >= error_s_) {
+  // Negative age means time ran backwards (e.g. use_sim_time + clock restart).
+  // Prefer Error so the operator sees a conservative signal through the
+  // discontinuity; the next frame in the new clock domain clears it naturally.
+  if (age < 0.0 || age >= error_s_) {
     return Level::Error;
   }
   if (age >= warn_s_) {

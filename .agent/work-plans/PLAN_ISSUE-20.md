@@ -211,9 +211,12 @@ Transitions:
     Warn ─── age > error_s ─────────▶ Error
 ```
 
-No Qt or ROS dependency inside the class — unit-testable with `rclcpp::Time`
-constructed from `builtin_interfaces`. Pane widget owns an instance, calls
-`mark_frame()` from `on_image()`, and `tick()` from the 1 Hz timer.
+No Qt dependency inside the class; uses `rclcpp::Time` so staleness math
+stays consistent with the node clock under `use_sim_time`. Pane widget
+owns an instance, calls `mark_frame()` from `on_image()`, and `tick()`
+from the 1 Hz timer. `tick()` treats a negative age (time moved backwards,
+e.g. sim clock restart) as `Error`, so the indicator stays conservative
+through clock discontinuities until the next frame arrives.
 
 **Default thresholds**: `warn_s = 2.0, error_s = 5.0`. Chosen for
 operator-station consistency: these are the green-at-2s / yellow-at-5s

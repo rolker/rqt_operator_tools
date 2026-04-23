@@ -118,8 +118,6 @@ void CameraPaneWidget::subscribe()
 
   image_transport::TransportHints hints(node_.get(), config_.transport);
 
-  // Copy base to avoid the subscriber capturing a reference into config_
-  // (config_ is stable for the widget's lifetime, but being explicit).
   sub_ = it_->subscribe(
     config_.base,
     qos,

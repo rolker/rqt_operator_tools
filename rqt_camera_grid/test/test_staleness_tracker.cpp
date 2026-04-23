@@ -112,3 +112,19 @@ TEST(StalenessTracker, NegativeWarnClampedToZero)
   EXPECT_EQ(s.tick(t(4.999)), StalenessTracker::Level::Warn);
   EXPECT_EQ(s.tick(t(5.0)), StalenessTracker::Level::Error);
 }
+
+TEST(StalenessTracker, BackwardTimeReportsError)
+{
+  // Simulates use_sim_time clock restart: a frame was marked at t=10s in the
+  // old clock domain, then the clock rewinds so tick() sees an earlier time.
+  // Negative age must report Error, not mask staleness as Neutral.
+  StalenessTracker s(2.0, 5.0);
+  s.mark_frame(t(10.0));
+  EXPECT_EQ(s.tick(t(10.0)), StalenessTracker::Level::Neutral);
+  EXPECT_EQ(s.tick(t(9.999)), StalenessTracker::Level::Error);
+  EXPECT_EQ(s.tick(t(5.0)), StalenessTracker::Level::Error);
+  EXPECT_EQ(s.tick(t(0.0)), StalenessTracker::Level::Error);
+  // A fresh frame in the new clock domain clears the error.
+  s.mark_frame(t(0.0));
+  EXPECT_EQ(s.tick(t(0.0)), StalenessTracker::Level::Neutral);
+}
