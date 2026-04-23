@@ -82,8 +82,12 @@ void CameraGridWidget::load_config(const GridConfig & config)
   // Warn before resize_panes truncates so the user sees the data loss.
   // resize_panes is the single source of truth for pane-count/grid-dim
   // alignment; build_panes just materializes widgets for the already-sized
-  // config_.panes vector.
-  const size_t total = static_cast<size_t>(config_.rows) * config_.cols;
+  // config_.panes vector. Clamp rows/cols to >=1 before the size_t math so
+  // a degenerate caller (0/negative dims) can't wrap total to SIZE_MAX and
+  // silently mask the truncation warning.
+  const int safe_rows = std::max(1, config_.rows);
+  const int safe_cols = std::max(1, config_.cols);
+  const size_t total = static_cast<size_t>(safe_rows) * safe_cols;
   if (config_.panes.size() > total) {
     RCLCPP_WARN(
       node_->get_logger(),

@@ -166,7 +166,7 @@ void CameraPaneWidget::onImageReceived(sensor_msgs::msg::Image::ConstSharedPtr m
 
   // Drop to Neutral immediately on frame arrival instead of waiting up to
   // 1s for the next QTimer tick. Matches operator expectation that a pane
-  // going green (recovery) tracks the frame, not the wall clock.
+  // returning to Neutral (recovery) tracks the frame, not the wall clock.
   current_level_ = staleness_.tick(now);
 
   QImage qimg = toQImage(msg);
@@ -202,12 +202,15 @@ void CameraPaneWidget::onImageReceived(sensor_msgs::msg::Image::ConstSharedPtr m
 
 QImage CameraPaneWidget::toQImage(const sensor_msgs::msg::Image::ConstSharedPtr & msg)
 {
-  // Direct zero-copy for rgb8.
+  // rgb8: wrap the message buffer in a QImage view (no encoding conversion),
+  // then deep-copy so the pixels outlive the ConstSharedPtr. Single-copy,
+  // not zero-copy — the copy is required because Qt may render the pixmap
+  // after the ROS message has been released.
   if (msg->encoding == "rgb8") {
     QImage view(
       msg->data.data(), msg->width, msg->height,
       static_cast<int>(msg->step), QImage::Format_RGB888);
-    return view.copy();  // detach from the message buffer before it goes away
+    return view.copy();
   }
 
   // cv_bridge fallback for common encodings.

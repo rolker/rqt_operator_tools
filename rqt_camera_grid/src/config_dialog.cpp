@@ -178,6 +178,9 @@ ConfigDialog::ConfigDialog(
 
 void ConfigDialog::populate_topic_combo()
 {
+  // Preserve any in-progress edit text across the repopulate so that hitting
+  // Refresh with a custom topic typed in doesn't clobber the user's input.
+  const QString preserved = base_combo_->currentText();
   base_combo_->clear();
   base_combo_->addItem("");  // leave-empty option
   try {
@@ -195,6 +198,7 @@ void ConfigDialog::populate_topic_combo()
       node_->get_logger(),
       "failed to enumerate topics for dialog: %s", e.what());
   }
+  base_combo_->setEditText(preserved);
 }
 
 void ConfigDialog::onBaseEditChanged(int index)
