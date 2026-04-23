@@ -52,13 +52,16 @@ class _FakeNode:
 
 class TestIndicatorWidgetSizeInvariants:
     def test_minimum_size_hint_is_fixed(self, qapp):
+        from rqt_annunciator.config_model import IndicatorLevel
         w = IndicatorWidget('demo')
         before = w.minimumSizeHint()
-        # Blow up the font — this used to drive the widget's minimum upward
-        # through QLabel.minimumSizeHint(), widening the rqt window on
-        # vertical drags.
-        w.update_font_size(label_size=80, value_size=120)
-        w.set_status(w._level, 'a very long value text that would be huge')
+        # Force a large cell so per-cell font fitting picks a huge font —
+        # this used to drive the widget's minimum upward through
+        # QLabel.minimumSizeHint(), widening the rqt window on vertical
+        # drags.
+        w.resize(800, 400)
+        w.set_status(IndicatorLevel.OK,
+                     'a very long value text that would be huge')
         after = w.minimumSizeHint()
         assert after == before, (
             'IndicatorWidget.minimumSizeHint() must not grow with font size '

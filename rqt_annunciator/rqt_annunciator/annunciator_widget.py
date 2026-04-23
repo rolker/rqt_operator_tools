@@ -70,6 +70,10 @@ class AnnunciatorWidget(QWidget):
         self._subscriptions: dict[str, object] = {}
         self._diag_sub = None
         self._current_cols = 0
+        # Last stretch weights applied via setColumnStretch, indexed by
+        # column.  Used to skip redundant calls when the weight is
+        # unchanged — see _restretch_columns.
+        self._last_column_stretches: list[int] = []
 
         self.setAutoFillBackground(True)
         palette = self.palette()
@@ -102,6 +106,14 @@ class AnnunciatorWidget(QWidget):
         self._stale_timer.timeout.connect(self._check_stale)
         self._stale_timer.start(1000)
 
+        # Debounce restretch requests: many width_sample_changed
+        # emissions can fire per event-loop iteration (one per
+        # indicator at ROS callback rate).  A zero-interval
+        # single-shot timer coalesces them into one restretch scan.
+        self._restretch_timer = QTimer(self)
+        self._restretch_timer.setSingleShot(True)
+        self._restretch_timer.timeout.connect(self._restretch_columns)
+
     def load_config(self, config: AnnunciatorConfig):
         """Apply a new configuration, rebuilding all indicators and subscriptions."""
         self._teardown_subscriptions()
@@ -115,6 +127,7 @@ class AnnunciatorWidget(QWidget):
                     f'Duplicate indicator name "{name}" — skipping')
                 continue
             widget = IndicatorWidget(name, self)
+            widget.width_sample_changed.connect(self._on_width_sample)
             self._indicators[name] = widget
             self._indicator_configs[name] = ind_config
             self._last_update[name] = time.monotonic()
@@ -130,6 +143,7 @@ class AnnunciatorWidget(QWidget):
     def shutdown(self):
         """Clean up subscriptions and timers."""
         self._stale_timer.stop()
+        self._restretch_timer.stop()
         self._teardown_subscriptions()
 
     # -- Layout ----------------------------------------------------------------
@@ -145,7 +159,12 @@ class AnnunciatorWidget(QWidget):
         self._rebuild_layout()
 
     def _rebuild_layout(self):
-        """Reflow indicators into the grid and update font sizes."""
+        """Reflow indicators into the grid and restretch columns.
+
+        Column widths come from each indicator's EMA of rendered text width
+        (see issue #23); fonts are sized per-cell by each IndicatorWidget
+        from its own resizeEvent, so this method no longer touches fonts.
+        """
         n = len(self._indicators)
         if n == 0:
             return
@@ -164,10 +183,6 @@ class AnnunciatorWidget(QWidget):
             # Grid — aim for roughly square cells.
             cols = max(1, round(math.sqrt(n * aspect)))
 
-        rows = max(1, math.ceil(n / cols))
-        cell_h = h / rows
-        cell_w = w / cols
-
         # Only reflow grid positions when column count changes.
         if cols != self._current_cols:
             # Remove all widgets from grid (without destroying them).
@@ -179,12 +194,57 @@ class AnnunciatorWidget(QWidget):
 
             self._current_cols = cols
 
-        # Scale fonts from cell dimensions.
-        label_size = max(8, int(min(cell_h * 0.3, cell_w * 0.08)))
-        value_size = max(8, int(min(cell_h * 0.4, cell_w * 0.10)))
+        self._restretch_columns()
 
-        for widget in self._indicators.values():
-            widget.update_font_size(label_size, value_size)
+    def _restretch_columns(self):
+        """Set each column's stretch from the max EMA width of its indicators.
+
+        Called on every ``width_sample_changed`` signal, which can fire
+        several times per second across many indicators.  To avoid
+        forcing a full layout recompute on every sample, the previously
+        applied weights are cached and ``setColumnStretch`` is only
+        called for columns whose weight actually changed.  Columns that
+        were active under a wider reflow but aren't anymore are zeroed
+        once, not on every call.
+        """
+        cols = self._current_cols
+        if cols <= 0 or not self._indicators:
+            return
+
+        indicators = list(self._indicators.values())
+        col_widths = [0] * cols
+        for i, widget in enumerate(indicators):
+            c = i % cols
+            if widget.ema_width_px > col_widths[c]:
+                col_widths[c] = widget.ema_width_px
+
+        # Stretch weights are relative; pixel-width averages work directly.
+        new_stretches = [max(1, w) for w in col_widths]
+        previous = self._last_column_stretches
+
+        # Zero any columns that were used previously but are no longer.
+        for c in range(cols, len(previous)):
+            self._layout.setColumnStretch(c, 0)
+
+        # Update only columns whose weight changed.
+        for c, weight in enumerate(new_stretches):
+            prev = previous[c] if c < len(previous) else None
+            if prev != weight:
+                self._layout.setColumnStretch(c, weight)
+
+        self._last_column_stretches = new_stretches
+
+    def _on_width_sample(self, _name, _width):
+        """Triggered by IndicatorWidget.width_sample_changed; schedule restretch.
+
+        We don't scan immediately — multiple indicators commonly emit
+        in the same event-loop iteration, and every scan touches all
+        columns.  A zero-interval single-shot timer coalesces all
+        signals between iterations into a single ``_restretch_columns``
+        call.
+        """
+        if not self._restretch_timer.isActive():
+            self._restretch_timer.start(0)
 
     # -- Subscriptions ---------------------------------------------------------
 
@@ -321,3 +381,18 @@ class AnnunciatorWidget(QWidget):
         self._indicator_configs.clear()
         self._last_update.clear()
         self._current_cols = 0
+        # Zero every column stretch previously applied to the layout;
+        # otherwise reloading with fewer columns would leave stale
+        # weights on cols that are no longer in use, since
+        # _restretch_columns only zeroes cols derived from the (now
+        # reset) memo.  Take the max of Qt's current column count and
+        # our own remembered count before resetting: QGridLayout's
+        # columnCount() can drop once widgets are removed, so relying
+        # on it alone could under-iterate and leave stretches behind.
+        max_cols = max(
+            self._layout.columnCount(),
+            len(self._last_column_stretches),
+        )
+        for c in range(max_cols):
+            self._layout.setColumnStretch(c, 0)
+        self._last_column_stretches = []
