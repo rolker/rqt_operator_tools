@@ -117,7 +117,15 @@ class IndicatorWidget(QFrame):
         # Seed the EMA from the label plus the '---' placeholder so the
         # first layout pass, before any data has arrived, reflects that
         # cold-start combined width (label + placeholder + gap).
-        self._ema_width_px = self._measure_combined_width(name, self._value_text)
+        #
+        # Stored as float so small sample-to-EMA deltas accumulate; only
+        # the exposed ema_width_px property rounds to int.  Quantizing
+        # the internal state on every update would freeze the EMA for
+        # changes smaller than 1/α pixels — e.g., at α=0.05 any sample
+        # within 10 px of the current value never moves it.
+        self._ema_width = float(
+            self._measure_combined_width(name, self._value_text)
+        )
 
         self._apply_level()
 
@@ -129,8 +137,12 @@ class IndicatorWidget(QFrame):
 
     @property
     def ema_width_px(self) -> int:
-        """Current EMA of this indicator's text width at the reference font."""
-        return self._ema_width_px
+        """Current EMA of this indicator's text width at the reference font.
+
+        Rounded to int on read; the underlying state is float so small
+        samples still migrate the average over time.
+        """
+        return int(round(self._ema_width))
 
     def set_status(self, level: IndicatorLevel, value_text: str = ''):
         """Update the indicator status and displayed value."""
@@ -145,13 +157,15 @@ class IndicatorWidget(QFrame):
         # Update EMA from the currently-displayed text and re-fit the font
         # so a sudden long value shrinks in-cell while the grid migrates.
         sample = self._measure_combined_width(self._label.text(), self._value_text)
-        old_width = self._ema_width_px
-        self._ema_width_px = int(round(
-            self._EMA_ALPHA * sample + (1.0 - self._EMA_ALPHA) * self._ema_width_px
-        ))
+        old_int = self.ema_width_px
+        self._ema_width = (
+            self._EMA_ALPHA * sample
+            + (1.0 - self._EMA_ALPHA) * self._ema_width
+        )
         self._fit_font()
-        if self._ema_width_px != old_width:
-            self.width_sample_changed.emit(self._name, self._ema_width_px)
+        new_int = self.ema_width_px
+        if new_int != old_int:
+            self.width_sample_changed.emit(self._name, new_int)
 
     def set_stale(self):
         """Mark this indicator as stale (no recent data)."""

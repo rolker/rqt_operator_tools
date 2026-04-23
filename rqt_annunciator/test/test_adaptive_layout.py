@@ -85,6 +85,32 @@ class TestIndicatorEMA:
             'new value'
         )
 
+    def test_ema_migrates_for_small_changes(self, qapp):
+        """A small but persistent delta should eventually move the EMA.
+
+        Regression: when the EMA was quantized to int on every update,
+        any sample whose delta from the current EMA was smaller than
+        1/α pixels (i.e., < ~10 px at α=0.05) would round back to the
+        same integer on every step, freezing the average forever.
+        """
+        w = IndicatorWidget('x')
+        # Preload a clean starting point by feeding the same value many
+        # times, letting the EMA converge.
+        for _ in range(200):
+            w.set_status(IndicatorLevel.OK, 'aa')
+        start = w.ema_width_px
+
+        # Now feed a slightly longer value — the per-step delta will be
+        # less than 1/α px, which used to stall int-quantized updates.
+        for _ in range(500):
+            w.set_status(IndicatorLevel.OK, 'aaa')
+        later = w.ema_width_px
+
+        assert later > start, (
+            f'EMA must keep migrating under small but persistent sample '
+            f'deltas; started at {start}, ended at {later}'
+        )
+
     def test_ema_emits_signal_on_change(self, qapp):
         """width_sample_changed fires when the EMA changes."""
         w = IndicatorWidget('x')
