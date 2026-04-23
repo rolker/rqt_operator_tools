@@ -32,6 +32,7 @@
 #include <QResizeEvent>
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 #include "rqt_camera_grid/camera_pane_widget.hpp"
@@ -90,13 +91,10 @@ GridConfig CameraGridWidget::get_config() const
 
 void CameraGridWidget::teardown_panes()
 {
-  for (auto * p : panes_) {
-    if (p) {
-      p->hide();
-      p->setParent(nullptr);
-      p->deleteLater();
-    }
-  }
+  // Deterministic teardown (stability rule 5): delete in order, synchronously.
+  // qDeleteAll is safe here because load_config is invoked on the Qt main
+  // thread and pane subscriptions never re-enter this path.
+  qDeleteAll(panes_);
   panes_.clear();
 }
 

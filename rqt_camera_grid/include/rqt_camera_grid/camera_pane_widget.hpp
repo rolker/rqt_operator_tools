@@ -44,6 +44,11 @@
 #include "rqt_camera_grid/config_model.hpp"
 #include "rqt_camera_grid/staleness_tracker.hpp"
 
+// Required for cross-thread Qt signal delivery of the image payload.
+// Without this, Qt::QueuedConnection emits a runtime warning
+// ("Cannot queue arguments of type ...") and the slot never fires.
+Q_DECLARE_METATYPE(sensor_msgs::msg::Image::ConstSharedPtr)
+
 namespace rqt_camera_grid
 {
 
@@ -95,7 +100,7 @@ private:
   void subscribe();
   void unsubscribe();
   void applyBorder(StalenessTracker::Level level);
-  QImage toQImage(const sensor_msgs::msg::Image & msg);
+  QImage toQImage(const sensor_msgs::msg::Image::ConstSharedPtr & msg);
 
   rclcpp::Node::SharedPtr node_;
   std::shared_ptr<image_transport::ImageTransport> it_;

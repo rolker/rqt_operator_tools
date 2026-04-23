@@ -66,6 +66,16 @@ CameraPaneWidget::CameraPaneWidget(
   config_(config),
   staleness_(config.warn_s, config.error_s)
 {
+  // Register the ROS message shared-ptr type with Qt's meta-object system
+  // exactly once per process. Without this the auto-queued connection
+  // from the ROS executor thread drops signals with a runtime warning.
+  static bool s_meta_registered = []() {
+      qRegisterMetaType<sensor_msgs::msg::Image::ConstSharedPtr>(
+        "sensor_msgs::msg::Image::ConstSharedPtr");
+      return true;
+    }();
+  (void)s_meta_registered;
+
   setAutoFillBackground(true);
   QPalette pal = palette();
   pal.setColor(QPalette::Window, kBgColor);
@@ -135,9 +145,9 @@ void CameraPaneWidget::onImageReceived(sensor_msgs::msg::Image::ConstSharedPtr m
   if (!msg || msg->width == 0 || msg->height == 0) {
     return;
   }
-  staleness_.mark_frame(rclcpp::Clock().now());
+  staleness_.mark_frame(node_->get_clock()->now());
 
-  QImage qimg = toQImage(*msg);
+  QImage qimg = toQImage(msg);
   if (!qimg.isNull()) {
     pixmap_ = QPixmap::fromImage(qimg);
   } else {
@@ -156,21 +166,21 @@ void CameraPaneWidget::onImageReceived(sensor_msgs::msg::Image::ConstSharedPtr m
   update();
 }
 
-QImage CameraPaneWidget::toQImage(const sensor_msgs::msg::Image & msg)
+QImage CameraPaneWidget::toQImage(const sensor_msgs::msg::Image::ConstSharedPtr & msg)
 {
   // Direct zero-copy for rgb8.
-  if (msg.encoding == "rgb8") {
+  if (msg->encoding == "rgb8") {
     QImage view(
-      msg.data.data(), msg.width, msg.height,
-      static_cast<int>(msg.step), QImage::Format_RGB888);
+      msg->data.data(), msg->width, msg->height,
+      static_cast<int>(msg->step), QImage::Format_RGB888);
     return view.copy();  // detach from the message buffer before it goes away
   }
 
   // cv_bridge fallback for common encodings.
-  if (msg.encoding == "bgr8" || msg.encoding == "mono8") {
+  if (msg->encoding == "bgr8" || msg->encoding == "mono8") {
     try {
-      auto cv_ptr = cv_bridge::toCvCopy(
-        std::make_shared<sensor_msgs::msg::Image>(msg), "rgb8");
+      // Pass the ConstSharedPtr directly; avoids an extra full-frame copy.
+      auto cv_ptr = cv_bridge::toCvCopy(msg, "rgb8");
       return QImage(
         cv_ptr->image.data, cv_ptr->image.cols, cv_ptr->image.rows,
         static_cast<int>(cv_ptr->image.step), QImage::Format_RGB888).copy();
@@ -178,26 +188,26 @@ QImage CameraPaneWidget::toQImage(const sensor_msgs::msg::Image & msg)
       // Fall through to unsupported-encoding handling below.
       RCLCPP_WARN(
         node_->get_logger(), "cv_bridge failed on pane '%s' (%s): %s",
-        config_.base.c_str(), msg.encoding.c_str(), e.what());
+        config_.base.c_str(), msg->encoding.c_str(), e.what());
       return QImage();
     }
   }
 
   // Unsupported encoding: log once per distinct encoding, return null.
-  if (!encoding_warned_ || last_warned_encoding_ != msg.encoding) {
+  if (!encoding_warned_ || last_warned_encoding_ != msg->encoding) {
     RCLCPP_WARN(
       node_->get_logger(),
       "pane '%s': unsupported encoding '%s' — rendering placeholder",
-      config_.base.c_str(), msg.encoding.c_str());
+      config_.base.c_str(), msg->encoding.c_str());
     encoding_warned_ = true;
-    last_warned_encoding_ = msg.encoding;
+    last_warned_encoding_ = msg->encoding;
   }
   return QImage();
 }
 
 void CameraPaneWidget::tick()
 {
-  auto level = staleness_.tick(rclcpp::Clock().now());
+  auto level = staleness_.tick(node_->get_clock()->now());
   if (level != current_level_) {
     current_level_ = level;
     applyBorder(level);

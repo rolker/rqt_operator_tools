@@ -233,7 +233,8 @@ TEST(ConfigModel, ParseTopicsCompressedSiblingWithBase)
   };
   auto pairs = parse_image_topics(topics);
   ASSERT_EQ(pairs.size(), 2u);
-  // Sorted: /cam/image_raw raw < /cam/image_raw compressed.
+  // Sorted lexicographically by (base, transport), so "compressed" < "raw"
+  // when the base is the same.
   EXPECT_EQ(pairs[0], (std::pair<std::string, std::string>{"/cam/image_raw", "compressed"}));
   EXPECT_EQ(pairs[1], (std::pair<std::string, std::string>{"/cam/image_raw", "raw"}));
 }

@@ -42,6 +42,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <vector>
