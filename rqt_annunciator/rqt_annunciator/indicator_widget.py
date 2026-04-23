@@ -102,11 +102,17 @@ class IndicatorWidget(QFrame):
         layout.addWidget(self._label)
         layout.addWidget(self._value_label)
 
-        # Reference font metrics for width measurement — rebuilt on demand
-        # in case the font family ever changes (currently it does not).
+        # Cached reference font metrics at a fixed pixel size, built once
+        # at construction.  Using a fixed size keeps the EMA decoupled
+        # from the rendered font (which varies per-cell).  Separate bold
+        # metrics because the value label is bold.
         ref_font = QFont()
         ref_font.setPixelSize(self._REFERENCE_FONT_PX)
         self._reference_metrics = QFontMetrics(ref_font)
+
+        ref_font_bold = QFont(ref_font)
+        ref_font_bold.setBold(True)
+        self._reference_metrics_bold = QFontMetrics(ref_font_bold)
 
         # Seed the EMA from the label text alone so the first layout pass,
         # before any data has arrived, reflects the natural label width.
@@ -157,24 +163,45 @@ class IndicatorWidget(QFrame):
     # -- Internals -------------------------------------------------------------
 
     def _measure_combined_width(self, label_text: str, value_text: str) -> int:
-        """Pixel width of ``label + spacer + value`` at the reference font."""
-        # Value is rendered bold, so measure bold; label is regular.
-        bold_font = QFont()
-        bold_font.setPixelSize(self._REFERENCE_FONT_PX)
-        bold_font.setBold(True)
-        bold_metrics = QFontMetrics(bold_font)
+        """Pixel width of ``label + spacer + value`` at the reference font.
+
+        Uses the cached reference metrics built in ``__init__`` so this can
+        run on every ``set_status`` and every ``_fit_font`` without
+        per-call font allocation.
+        """
         label_w = self._reference_metrics.horizontalAdvance(label_text)
-        value_w = bold_metrics.horizontalAdvance(value_text)
+        value_w = self._reference_metrics_bold.horizontalAdvance(value_text)
         # A small gap between label and value so they don't visually touch.
         gap = self._reference_metrics.horizontalAdvance('  ')
         return label_w + gap + value_w
 
     def _fit_font(self):
         """Pick the largest font that fits ``label + value`` in the cell."""
-        # Subtract fixed decorations from the cell's usable width:
-        # margins (4 + 8) + color bar (8) + 2 spacings of 8 = 36 px.
-        usable_w = self.width() - 36
-        usable_h = self.height() - 4  # vertical margins
+        # Derive usable interior from the layout's actual margins and
+        # spacing plus the color bar width, so tweaks to those constants
+        # do not silently break fitting.
+        layout = self.layout()
+        if layout is not None:
+            margins = layout.contentsMargins()
+            h_overhead = margins.left() + margins.right()
+            v_overhead = margins.top() + margins.bottom()
+            spacing = max(0, layout.spacing())
+            h_overhead += spacing * max(0, layout.count() - 1)
+        else:
+            h_overhead = 0
+            v_overhead = 0
+
+        # Color bar width is fixed (setFixedWidth), but fall back to
+        # minimumWidth / sizeHint in case that ever changes.
+        color_bar_w = max(
+            self._color_bar.width(),
+            self._color_bar.minimumWidth(),
+            self._color_bar.sizeHint().width(),
+        )
+        h_overhead += color_bar_w
+
+        usable_w = self.width() - h_overhead
+        usable_h = self.height() - v_overhead
         if usable_w <= 0 or usable_h <= 0:
             return
 
@@ -191,11 +218,14 @@ class IndicatorWidget(QFrame):
         font_px = int(min(horiz_px, vert_px))
         font_px = max(self._MIN_FONT_PX, min(self._MAX_FONT_PX, font_px))
 
-        label_font = QFont()
+        # Start from each label's current font so we preserve any
+        # app-wide or theme-applied attributes (family, letter spacing,
+        # hinting) and only override what we control here.
+        label_font = QFont(self._label.font())
         label_font.setPixelSize(font_px)
         self._label.setFont(label_font)
 
-        value_font = QFont()
+        value_font = QFont(self._value_label.font())
         value_font.setPixelSize(font_px)
         value_font.setBold(True)
         self._value_label.setFont(value_font)

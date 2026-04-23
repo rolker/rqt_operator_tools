@@ -70,6 +70,10 @@ class AnnunciatorWidget(QWidget):
         self._subscriptions: dict[str, object] = {}
         self._diag_sub = None
         self._current_cols = 0
+        # Last stretch weights applied via setColumnStretch, indexed by
+        # column.  Used to skip redundant calls when the weight is
+        # unchanged — see _restretch_columns.
+        self._last_column_stretches: list[int] = []
 
         self.setAutoFillBackground(True)
         palette = self.palette()
@@ -184,27 +188,42 @@ class AnnunciatorWidget(QWidget):
         self._restretch_columns()
 
     def _restretch_columns(self):
-        """Set each column's stretch from the max EMA width of its indicators."""
+        """Set each column's stretch from the max EMA width of its indicators.
+
+        Called on every ``width_sample_changed`` signal, which can fire
+        several times per second across many indicators.  To avoid
+        forcing a full layout recompute on every sample, the previously
+        applied weights are cached and ``setColumnStretch`` is only
+        called for columns whose weight actually changed.  Columns that
+        were active under a wider reflow but aren't anymore are zeroed
+        once, not on every call.
+        """
         cols = self._current_cols
         if cols <= 0 or not self._indicators:
             return
 
         indicators = list(self._indicators.values())
-        # Collect max EMA width per column based on the current (i // cols,
-        # i % cols) assignment used in _rebuild_layout.
         col_widths = [0] * cols
         for i, widget in enumerate(indicators):
             c = i % cols
             if widget.ema_width_px > col_widths[c]:
                 col_widths[c] = widget.ema_width_px
 
-        # Clear stretches for any columns left behind by a previous wider
-        # reflow, then set the active ones.  Stretch weights are relative,
-        # so passing the pixel-width averages directly is fine.
-        for c in range(self._layout.columnCount()):
+        # Stretch weights are relative; pixel-width averages work directly.
+        new_stretches = [max(1, w) for w in col_widths]
+        previous = self._last_column_stretches
+
+        # Zero any columns that were used previously but are no longer.
+        for c in range(cols, len(previous)):
             self._layout.setColumnStretch(c, 0)
-        for c, weight in enumerate(col_widths):
-            self._layout.setColumnStretch(c, max(1, weight))
+
+        # Update only columns whose weight changed.
+        for c, weight in enumerate(new_stretches):
+            prev = previous[c] if c < len(previous) else None
+            if prev != weight:
+                self._layout.setColumnStretch(c, weight)
+
+        self._last_column_stretches = new_stretches
 
     def _on_width_sample(self, _name, _width):
         """Triggered by IndicatorWidget.width_sample_changed; restretch."""
@@ -345,3 +364,4 @@ class AnnunciatorWidget(QWidget):
         self._indicator_configs.clear()
         self._last_update.clear()
         self._current_cols = 0
+        self._last_column_stretches = []
