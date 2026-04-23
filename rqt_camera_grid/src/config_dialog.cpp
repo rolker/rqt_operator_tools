@@ -246,18 +246,30 @@ void ConfigDialog::onSelectionChanged(int row)
 void ConfigDialog::onAddPane()
 {
   save_current_editor_to_config();
-  config_.panes.push_back(PaneConfig{});
-  // Grow the grid if we've overrun rows*cols, so the new pane is visible
-  // after OK rather than silently truncated by CameraGridWidget::build_panes.
-  // Prefer growing cols first (usually more screen width than height).
-  const int needed = static_cast<int>(config_.panes.size());
-  while (config_.rows * config_.cols < needed) {
-    if (config_.cols <= config_.rows) {
-      config_.cols += 1;
+  // Project grid growth needed for one additional pane. Prefer growing
+  // cols first (usually more screen width than height). Refuse the add if
+  // the projection would push either dimension past the spinbox cap —
+  // otherwise config_ and the UI widgets would silently disagree.
+  constexpr int kMaxDim = 16;
+  int new_rows = config_.rows;
+  int new_cols = config_.cols;
+  const int needed = static_cast<int>(config_.panes.size()) + 1;
+  while (new_rows * new_cols < needed) {
+    if (new_cols <= new_rows) {
+      new_cols += 1;
     } else {
-      config_.rows += 1;
+      new_rows += 1;
     }
   }
+  if (new_rows > kMaxDim || new_cols > kMaxDim) {
+    RCLCPP_WARN(
+      node_->get_logger(),
+      "cannot add pane: would exceed %dx%d grid limit", kMaxDim, kMaxDim);
+    return;
+  }
+  config_.panes.push_back(PaneConfig{});
+  config_.rows = new_rows;
+  config_.cols = new_cols;
   // Restore the dialog's panes.size() == rows*cols invariant: the grow
   // loop can leave rows*cols > panes.size() (e.g. 2x2+1 grows to 2x3 but
   // we only added one pane), which would leave the extra cell non-editable
@@ -280,6 +292,11 @@ void ConfigDialog::onRemovePane()
   if (row < 0) {return;}
   current_row_ = -1;  // prevent save to about-to-delete slot
   config_.panes.erase(config_.panes.begin() + row);
+  // Restore the dialog's panes.size() == rows*cols invariant (symmetric
+  // with onAddPane). Erase shrank panes below rows*cols; resize_panes
+  // pads back with a default pane. The user can shrink the grid itself
+  // via the rows/cols spinboxes.
+  resize_panes(config_, config_.rows, config_.cols);
   refresh_list();
   if (!config_.panes.empty()) {
     list_->setCurrentRow(std::min<int>(row, static_cast<int>(config_.panes.size()) - 1));
