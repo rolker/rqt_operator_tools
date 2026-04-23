@@ -112,7 +112,9 @@ class IndicatorWidget(QFrame):
 
         # Seed the EMA from the label plus the '---' placeholder so the
         # first layout pass, before any data has arrived, reflects that
-        # cold-start combined width (label + placeholder + gap).
+        # cold-start combined width (label + placeholder).  The label/
+        # value gap is reserved by the real layout spacing in
+        # ``_fit_font``, not by ``_measure_combined_width``.
         #
         # Stored as float so small sample-to-EMA deltas accumulate; only
         # the exposed ema_width_px property rounds to int.  Quantizing
@@ -188,16 +190,22 @@ class IndicatorWidget(QFrame):
 
         Base the reference font on ``self._label.font()`` (the effective
         post-style font, incorporating any stylesheet family, weight,
-        letter spacing, etc.) and only override ``pixelSize`` / ``bold``.
-        Pass ``self._label`` as the ``QPaintDevice`` so metrics use the
-        label's actual DPI — otherwise a HiDPI display would measure
-        against pre-scale metrics and misreport widths.
+        letter spacing, etc.) and only override ``pixelSize``.  Inherit
+        the label's bold state rather than forcing it off: ``_fit_font``
+        preserves whatever weight ``self._label.font()`` carries when it
+        applies the fitted size, so measurement and rendering must agree
+        or a bold-label theme would under-measure and fit a font_px too
+        large to render without clipping.  The value reference keeps an
+        explicit ``setBold(True)`` because ``_fit_font`` forces the value
+        label to bold unconditionally.  Pass ``self._label`` as the
+        ``QPaintDevice`` so metrics use the label's actual DPI — otherwise
+        a HiDPI display would measure against pre-scale metrics and
+        misreport widths.
         """
         base_font = self._label.font()
 
         ref_font = QFont(base_font)
         ref_font.setPixelSize(self._REFERENCE_FONT_PX)
-        ref_font.setBold(False)
         self._reference_metrics = QFontMetrics(ref_font, self._label)
 
         ref_font_bold = QFont(base_font)
