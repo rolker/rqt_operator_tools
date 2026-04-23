@@ -368,7 +368,14 @@ class AnnunciatorWidget(QWidget):
         # otherwise reloading with fewer columns would leave stale
         # weights on cols that are no longer in use, since
         # _restretch_columns only zeroes cols derived from the (now
-        # reset) memo.
-        for c in range(self._layout.columnCount()):
+        # reset) memo.  Take the max of Qt's current column count and
+        # our own remembered count before resetting: QGridLayout's
+        # columnCount() can drop once widgets are removed, so relying
+        # on it alone could under-iterate and leave stretches behind.
+        max_cols = max(
+            self._layout.columnCount(),
+            len(self._last_column_stretches),
+        )
+        for c in range(max_cols):
             self._layout.setColumnStretch(c, 0)
         self._last_column_stretches = []

@@ -1,6 +1,6 @@
 """Single annunciator indicator widget."""
 
-from python_qt_binding.QtCore import QSize, Qt, Signal
+from python_qt_binding.QtCore import QEvent, QSize, Qt, Signal
 from python_qt_binding.QtGui import QColor, QFont, QFontMetrics
 from python_qt_binding.QtWidgets import QFrame, QHBoxLayout, QLabel, QLayout, QSizePolicy
 
@@ -102,17 +102,13 @@ class IndicatorWidget(QFrame):
         layout.addWidget(self._label)
         layout.addWidget(self._value_label)
 
-        # Cached reference font metrics at a fixed pixel size, built once
-        # at construction.  Using a fixed size keeps the EMA decoupled
-        # from the rendered font (which varies per-cell).  Separate bold
-        # metrics because the value label is bold.
-        ref_font = QFont()
-        ref_font.setPixelSize(self._REFERENCE_FONT_PX)
-        self._reference_metrics = QFontMetrics(ref_font)
-
-        ref_font_bold = QFont(ref_font)
-        ref_font_bold.setBold(True)
-        self._reference_metrics_bold = QFontMetrics(ref_font_bold)
+        # Cached reference font metrics at a fixed pixel size.  Using a
+        # fixed size keeps the EMA decoupled from the rendered font
+        # (which varies per-cell); separate bold metrics because the
+        # value label is bold.  Rebuilt on font/style change events via
+        # changeEvent so a runtime theme/DPI change doesn't leave the
+        # cache measuring against an obsolete font family.
+        self._rebuild_reference_metrics()
 
         # Seed the EMA from the label plus the '---' placeholder so the
         # first layout pass, before any data has arrived, reflects that
@@ -175,7 +171,27 @@ class IndicatorWidget(QFrame):
         super().resizeEvent(event)
         self._fit_font()
 
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (QEvent.FontChange, QEvent.StyleChange):
+            # Font family, style, or DPI changed — the cached reference
+            # metrics were measured against the old font.  Rebuild and
+            # re-fit so the EMA and rendered font stay in sync with
+            # what the user actually sees.
+            self._rebuild_reference_metrics()
+            self._fit_font()
+
     # -- Internals -------------------------------------------------------------
+
+    def _rebuild_reference_metrics(self):
+        """(Re)build the cached reference QFontMetrics at the fixed pixel size."""
+        ref_font = QFont()
+        ref_font.setPixelSize(self._REFERENCE_FONT_PX)
+        self._reference_metrics = QFontMetrics(ref_font)
+
+        ref_font_bold = QFont(ref_font)
+        ref_font_bold.setBold(True)
+        self._reference_metrics_bold = QFontMetrics(ref_font_bold)
 
     def _measure_combined_width(self, label_text: str, value_text: str) -> int:
         """Pixel width of ``label + spacer + value`` at the reference font.

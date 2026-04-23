@@ -6,6 +6,7 @@ import pytest
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
+from python_qt_binding.QtCore import QEvent
 from python_qt_binding.QtWidgets import QApplication
 
 from rqt_annunciator.config_model import (
@@ -136,6 +137,32 @@ class TestIndicatorEMA:
         assert w._label.font().pixelSize() <= IndicatorWidget._MAX_FONT_PX
         assert w._value_label.font().pixelSize() <= IndicatorWidget._MAX_FONT_PX
 
+    def test_font_change_event_rebuilds_reference_metrics(self, qapp):
+        """Runtime font changes must invalidate cached reference metrics.
+
+        Regression: metrics cached in __init__ with a bare QFont() would
+        silently go stale if the application font/theme/DPI changed,
+        leaving EMA measurement against the old font while rendering
+        uses the new one.
+        """
+        w = IndicatorWidget('demo')
+        before = w._reference_metrics
+        before_bold = w._reference_metrics_bold
+
+        # Deliver a synthetic FontChange event — the widget must rebuild.
+        w.changeEvent(QEvent(QEvent.FontChange))
+        assert w._reference_metrics is not before, (
+            'changeEvent(FontChange) must rebuild _reference_metrics'
+        )
+        assert w._reference_metrics_bold is not before_bold, (
+            'changeEvent(FontChange) must rebuild _reference_metrics_bold'
+        )
+
+        # StyleChange should also rebuild (stylesheet or theme swap).
+        before2 = w._reference_metrics
+        w.changeEvent(QEvent(QEvent.StyleChange))
+        assert w._reference_metrics is not before2
+
     def test_fit_font_shrinks_below_layout_overhead(self, qapp):
         """Shrinking past the layout overhead must still update the font.
 
@@ -213,32 +240,40 @@ class TestAnnunciatorColumnStretch:
         Regression: _clear_indicators used to reset the in-memory memo
         but not the QGridLayout's stretch table, so reloading from a
         wider config left stale weights on columns no longer in use.
+        Also regression against relying on QGridLayout.columnCount()
+        after widget removal — the clear range is taken as
+        max(columnCount, len(memo)) before the memo is reset.
         """
-        w = _make_annunciator([f'wide_{i}' for i in range(6)])
-        w.resize(1200, 100)
+        wide_count = 12
+        w = _make_annunciator([f'wide_{i}' for i in range(wide_count)])
+        w.resize(3000, 60)
         w._rebuild_layout()
-        assert w._current_cols == 6
-        # Remember what the layout thinks about columns 2..5 — they
-        # must have been given non-zero stretches by _restretch_columns.
-        for c in range(2, 6):
+        assert w._current_cols == wide_count
+        # Every column in the wide layout got a non-zero stretch.
+        for c in range(wide_count):
             assert w._layout.columnStretch(c) > 0
+        # Also verify the memo remembers the wide width — this is what
+        # _clear_indicators relies on if columnCount() drops.
+        assert len(w._last_column_stretches) == wide_count
 
-        # Reload with a much smaller config — only 2 indicators.
+        # Reload with a single-indicator config.
         config = AnnunciatorConfig(
             indicators=[
-                IndicatorConfig(name='a', source='diagnostics',
-                                diagnostic_name='d_a'),
-                IndicatorConfig(name='b', source='diagnostics',
-                                diagnostic_name='d_b'),
+                IndicatorConfig(name='only', source='diagnostics',
+                                diagnostic_name='d_only'),
             ]
         )
         w.load_config(config)
-        w.resize(1200, 100)
+        w.resize(3000, 60)
         w._rebuild_layout()
-        assert w._current_cols == 2
-        # Every column outside the new range must be zeroed on the
-        # layout itself, not just in our memo.
-        for c in range(2, w._layout.columnCount()):
+        assert w._current_cols == 1
+
+        # Every column from 1 up to the pre-reload max must be zeroed.
+        # Use the wider of (current columnCount, original wide_count) so
+        # we don't depend on Qt's choice of columnCount after teardown.
+        check_upper = max(w._layout.columnCount(), wide_count)
+        for c in range(1, check_upper):
             assert w._layout.columnStretch(c) == 0, (
-                f'stale column {c} stretch survived config reload'
+                f'stale column {c} stretch survived reload from '
+                f'{wide_count} cols to 1'
             )
