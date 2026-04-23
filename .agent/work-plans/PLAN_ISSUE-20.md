@@ -98,8 +98,7 @@ rqt_operator_tools/
 ├── rqt_camera_grid/                              # NEW C++ package
 │   ├── package.xml                               # format 3, ament_cmake
 │   ├── CMakeLists.txt                            # find_package Qt5/rclcpp/rqt_gui_cpp; MOC; pluginlib export
-│   ├── plugin.xml                                # rqt GUI descriptor (menu/label/icon)
-│   ├── plugin_description.xml                    # pluginlib descriptor for PLUGINLIB_EXPORT_CLASS
+│   ├── plugin.xml                                # single file: pluginlib class export + rqt GUI descriptor (matches rqt_image_view)
 │   ├── README.md                                 # design section: language choice, config model, perspective schema
 │   ├── config/default_camera_grid.yaml           # 2×2 empty placeholder
 │   ├── include/rqt_camera_grid/
@@ -242,6 +241,14 @@ For `bgr8` and other common encodings, convert via `cv_bridge` (fallback path).
 is exercised for our primary deployment — `cv_bridge::toCvShare(msg, "rgb8")`
 then wrap the `cv::Mat` buffer as a `QImage`.
 
+**Unsupported-encoding policy**: `rgb8` and `bgr8` render. `mono8` renders
+via `cv_bridge::toCvShare(msg, "rgb8")` (automatic grayscale → RGB
+conversion). Any other encoding (`16UC1`, `32FC1`, depth formats, unknown
+strings) triggers a one-time `RCLCPP_WARN` per pane naming the encoding, and
+the pane renders a plain dark background with its topic label and staleness
+border still operational. One pane with an exotic encoding never crashes or
+empties the grid.
+
 ### Grid layout: image-aspect-aware, outside-padding-only
 
 Goal: **minimize empty space *between* image panes**. Slack from aspect-ratio
@@ -280,6 +287,18 @@ child geometries directly.
    working without sacrificing the clean-fit of the majority.
 7. **Recompute layout** in `resizeEvent` and whenever any pane's observed
    aspect changes the median.
+8. **Logical pixels**: all `W`, `H`, cell sizes, and child geometries are in
+   Qt logical pixels (`widget->width()` / `widget->height()`), not device
+   pixels. Qt handles device-pixel scaling via
+   `QWidget::devicePixelRatioF()` at paint time — we never multiply by it in
+   the layout math. Verifies correctly on 4K operator displays.
+9. **First-frame relayout**: each pane starts with the target aspect `A`
+   (initially 16/9). When its first `Image` arrives, the pane reports its
+   observed aspect to `CameraGridWidget`, which updates the median and
+   triggers one relayout. Subsequent frames on that pane do not re-trigger
+   relayout unless the pane's observed aspect changes the median (expected
+   to be rare). Acceptable one-time visual jump when a pane first comes
+   online; predictable behavior from then on.
 
 Example, 2×2 of 16:9 cameras in a 1920×800 widget:
 
@@ -472,7 +491,7 @@ install(TARGETS ${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin)
-install(FILES plugin.xml plugin_description.xml DESTINATION share/${PROJECT_NAME})
+install(FILES plugin.xml DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 
@@ -496,7 +515,7 @@ ament_package()
 
 ### Phase 1 — This PR
 
-1. **Scaffolding**: `package.xml`, `CMakeLists.txt`, `plugin.xml`, `plugin_description.xml`, `README.md`.
+1. **Scaffolding**: `package.xml`, `CMakeLists.txt`, `plugin.xml` (single file — pluginlib class export + rqt `qtgui` block in one, matching `rqt_image_view`), `README.md`.
 2. **`staleness_tracker.{hpp,cpp}`**: pure C++ state machine.
 3. **`config_model.{hpp,cpp}`**: `PaneConfig`, `GridConfig` structs + `yaml-cpp` load/save; defaults.
 4. **`camera_pane_widget.{hpp,cpp}`**: `QFrame` subclass with child `QLabel` for image + top-strip label; `image_transport::Subscriber` member; border color via palette; uses `cv_bridge::toCvShare` for non-rgb8 frames, zero-copy `QImage` view otherwise.
@@ -535,14 +554,7 @@ ament_package()
 
 ## Open Questions
 
-1. **Default config content**: Ship an empty 2×2 placeholder, or ship a
-   commented bizzyboat-style example (clearly tagged as "example")? The
-   "platform-agnostic" principle argues for empty; usability argues for a
-   commented example. Leaning empty.
-2. **Rate label source**: Self-measured from incoming-frame stamps (simple,
-   reflects what operators care about — is *this display* keeping up?) vs.
-   subscribing to an existing topic-statistics source. Default to
-   self-measured unless there's a reason not to.
+_None — all planning decisions resolved. See `Resolved During Planning`._
 
 ## Resolved During Planning
 
@@ -567,6 +579,25 @@ ament_package()
 - **`test_pane_lifecycle` contract** (was review finding 4): iteration
   count, image fixture, and bounded-RSS assertions spelled out in Phase 1
   step 9.
+- **Default config content**: empty 2×2 placeholder. Platform-agnostic
+  principle wins; operators copy one of the platform-shipped configs out
+  of the boat's config directory when they want a populated grid.
+- **Rate label source**: self-measured from incoming-frame timestamps
+  (EWMA over ~1s window). Reflects what operators actually care about —
+  is *this display* keeping up — without depending on an external
+  statistics topic that may or may not be running.
+- **plugin.xml / plugin_description.xml**: single `plugin.xml` file serves
+  both pluginlib (`<class ... base_class_type="rqt_gui_cpp::Plugin">`) and
+  rqt GUI (`<qtgui>` block). Verified against
+  `/opt/ros/jazzy/share/rqt_image_view/plugin.xml` — same structure,
+  single file. No separate `plugin_description.xml` needed.
+- **Unsupported image encodings**: log-once-warn per pane + dark
+  placeholder. See "Image rendering" section.
+- **High-DPI**: layout math in logical pixels; Qt handles device-pixel
+  scaling. See "Grid layout" item 8.
+- **First-frame relayout**: each pane's first `Image` triggers one
+  relayout; subsequent frames don't retrigger unless the pane's aspect
+  changes the median. See "Grid layout" item 9.
 
 ## Risk / Complexity Notes
 
