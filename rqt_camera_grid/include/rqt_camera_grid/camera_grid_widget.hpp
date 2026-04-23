@@ -78,7 +78,7 @@ private:
   std::shared_ptr<image_transport::ImageTransport> it_;
   GridConfig config_;
   std::vector<CameraPaneWidget *> panes_;
-  QTimer * tick_timer_;
+  QTimer * tick_timer_{nullptr};
   double target_aspect_{16.0 / 9.0};
 };
 

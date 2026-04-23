@@ -254,6 +254,11 @@ void ConfigDialog::onAddPane()
       config_.rows += 1;
     }
   }
+  // Restore the dialog's panes.size() == rows*cols invariant: the grow
+  // loop can leave rows*cols > panes.size() (e.g. 2x2+1 grows to 2x3 but
+  // we only added one pane), which would leave the extra cell non-editable
+  // from the dialog until OK/reload.
+  resize_panes(config_, config_.rows, config_.cols);
   rows_spin_->blockSignals(true);
   cols_spin_->blockSignals(true);
   rows_spin_->setValue(config_.rows);

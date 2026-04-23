@@ -89,11 +89,14 @@ CameraPaneWidget::CameraPaneWidget(
   label_->adjustSize();
   label_->raise();
 
-  // Cross-thread marshaling: ROS executor emits imageReceived; Qt slot
-  // runs on the main thread via Qt::QueuedConnection (auto when emitter
-  // and receiver are on different threads).
+  // Cross-thread marshaling: ROS executor emits imageReceived; slot runs
+  // on the Qt main thread. AutoConnection already resolves to Queued
+  // because the emitting thread (ROS executor) differs from the
+  // receiver's thread affinity (GUI main), but we pass Qt::QueuedConnection
+  // explicitly so the intent survives any future moveToThread refactor.
   connect(this, &CameraPaneWidget::imageReceived,
-          this, &CameraPaneWidget::onImageReceived);
+          this, &CameraPaneWidget::onImageReceived,
+          Qt::QueuedConnection);
 
   if (!config_.base.empty()) {
     subscribe();
