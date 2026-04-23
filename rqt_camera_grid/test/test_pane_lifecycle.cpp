@@ -51,10 +51,15 @@
 namespace
 {
 
-int64_t current_rss_kb()
+// Returns the peak resident set size in KB (ru_maxrss is monotonic — it
+// only ever grows — so deltas between two calls are a conservative leak
+// indicator: any true leak will show up, transient spikes may inflate
+// the number but not hide one). Returns -1 on failure so the caller can
+// surface a broken sampling path instead of silently passing with 0.
+int64_t peak_rss_kb()
 {
   struct rusage usage;
-  if (getrusage(RUSAGE_SELF, &usage) != 0) {return 0;}
+  if (getrusage(RUSAGE_SELF, &usage) != 0) {return -1;}
   return usage.ru_maxrss;
 }
 
@@ -117,7 +122,8 @@ TEST_F(PaneLifecycleTest, RapidConstructDestruct)
     CameraPaneWidget pane(node_, it_, config);
     (void)pane;
   }
-  const int64_t baseline_rss = current_rss_kb();
+  const int64_t baseline_peak_rss = peak_rss_kb();
+  ASSERT_GE(baseline_peak_rss, 0) << "getrusage failed before warmup";
 
   for (int i = 0; i < kIterations; ++i) {
     CameraPaneWidget pane(node_, it_, config);
@@ -125,11 +131,12 @@ TEST_F(PaneLifecycleTest, RapidConstructDestruct)
     QCoreApplication::processEvents();
   }
 
-  const int64_t final_rss = current_rss_kb();
-  const int64_t growth = final_rss - baseline_rss;
+  const int64_t final_peak_rss = peak_rss_kb();
+  ASSERT_GE(final_peak_rss, 0) << "getrusage failed after iterations";
+  const int64_t growth = final_peak_rss - baseline_peak_rss;
   EXPECT_LT(growth, kMaxRssGrowthKb)
-    << "RSS grew by " << growth << " KB across " << kIterations
-    << " construct/destruct cycles (baseline " << baseline_rss << " KB).";
+    << "peak RSS grew by " << growth << " KB across " << kIterations
+    << " construct/destruct cycles (baseline peak " << baseline_peak_rss << " KB).";
 }
 
 TEST_F(PaneLifecycleTest, ConstructDestructWithEmptyBaseNeverSubscribes)

@@ -37,6 +37,7 @@
 #include <rmw/qos_profiles.h>
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <utility>
 
@@ -178,14 +179,28 @@ void CameraPaneWidget::onImageReceived(sensor_msgs::msg::Image::ConstSharedPtr m
   // Source changed; invalidate the cached scaled pixmap.
   cached_scaled_ = QPixmap();
 
-  // Update rate portion of the label.
+  // Update rate portion of the label — throttled to 1 Hz and guarded on
+  // a text-changed check so high-rate streams × many panes don't churn
+  // Qt layout on the main thread.
   if (rate_ready_ && ewma_interval_s_ > 0.0) {
-    const double rate_hz = 1.0 / ewma_interval_s_;
-    label_->setText(
-      QString("%1  %2 Hz")
-      .arg(QString::fromStdString(config_.base))
-      .arg(rate_hz, 0, 'f', 1));
-    label_->adjustSize();
+    constexpr double kRateLabelPeriodS = 1.0;
+    const double since_update =
+      (last_rate_label_update_.nanoseconds() == 0) ?
+      std::numeric_limits<double>::infinity() :
+      (now - last_rate_label_update_).seconds();
+    if (since_update >= kRateLabelPeriodS) {
+      const double rate_hz = 1.0 / ewma_interval_s_;
+      const QString text =
+        QString("%1  %2 Hz")
+        .arg(QString::fromStdString(config_.base))
+        .arg(rate_hz, 0, 'f', 1);
+      if (text != last_rate_label_text_) {
+        label_->setText(text);
+        label_->adjustSize();
+        last_rate_label_text_ = text;
+      }
+      last_rate_label_update_ = now;
+    }
   }
 
   // Track aspect for the grid widget to pick up in firstFrameSeen.

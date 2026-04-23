@@ -33,6 +33,7 @@
 #include <QImage>
 #include <QLabel>
 #include <QPixmap>
+#include <QString>
 
 #include <memory>
 #include <string>
@@ -126,6 +127,12 @@ private:
   rclcpp::Time last_frame_time_{0, 0, RCL_ROS_TIME};
   double ewma_interval_s_{0.0};
   bool rate_ready_{false};
+
+  // Rate label throttling: refresh at 1 Hz and only when the rendered
+  // text actually changes, so high-rate cameras with many panes don't
+  // churn Qt layout on the main thread.
+  rclcpp::Time last_rate_label_update_{0, 0, RCL_ROS_TIME};
+  QString last_rate_label_text_;
 
   QLabel * label_{nullptr};
 };
