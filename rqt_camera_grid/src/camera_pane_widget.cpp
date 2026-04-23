@@ -146,6 +146,20 @@ void CameraPaneWidget::onImageReceived(sensor_msgs::msg::Image::ConstSharedPtr m
     return;
   }
   const rclcpp::Time now = node_->get_clock()->now();
+
+  // EWMA inter-arrival interval for the rate label.
+  if (first_frame_seen_) {
+    const double dt = (now - last_frame_time_).seconds();
+    if (dt > 0.0 && dt < 60.0) {  // guard against clock jumps / long pauses
+      constexpr double alpha = 0.3;  // ~1s window at 10 Hz
+      ewma_interval_s_ = rate_ready_ ?
+        (alpha * dt + (1.0 - alpha) * ewma_interval_s_) :
+        dt;
+      rate_ready_ = true;
+    }
+  }
+  last_frame_time_ = now;
+
   staleness_.mark_frame(now);
 
   // Drop to Neutral immediately on frame arrival instead of waiting up to
@@ -158,6 +172,18 @@ void CameraPaneWidget::onImageReceived(sensor_msgs::msg::Image::ConstSharedPtr m
     pixmap_ = QPixmap::fromImage(qimg);
   } else {
     pixmap_ = QPixmap();
+  }
+  // Source changed; invalidate the cached scaled pixmap.
+  cached_scaled_ = QPixmap();
+
+  // Update rate portion of the label.
+  if (rate_ready_ && ewma_interval_s_ > 0.0) {
+    const double rate_hz = 1.0 / ewma_interval_s_;
+    label_->setText(
+      QString("%1  %2 Hz")
+      .arg(QString::fromStdString(config_.base))
+      .arg(rate_hz, 0, 'f', 1));
+    label_->adjustSize();
   }
 
   // Track aspect for the grid widget to pick up in firstFrameSeen.
@@ -236,6 +262,10 @@ double CameraPaneWidget::observed_aspect() const
 
 void CameraPaneWidget::set_image_rect(const QRect & rect)
 {
+  if (rect.size() != image_rect_.size()) {
+    // Size changed — drop the scaled cache so paintEvent rebuilds it.
+    cached_scaled_ = QPixmap();
+  }
   image_rect_ = rect;
   update();
 }
@@ -266,12 +296,19 @@ void CameraPaneWidget::paintEvent(QPaintEvent * event)
     image_rect_;
 
   if (!pixmap_.isNull() && !image_rect.isEmpty()) {
-    QPixmap scaled = pixmap_.scaled(
-      image_rect.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    // Rebuild the scaled cache only when the source frame or image rect
+    // changed; otherwise reuse. paintEvent fires on exposure/overdraw even
+    // when nothing meaningful has changed — SmoothTransformation rescale is
+    // too expensive to do unconditionally with multiple panes.
+    if (cached_scaled_.isNull() || cached_scaled_size_ != image_rect.size()) {
+      cached_scaled_ = pixmap_.scaled(
+        image_rect.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+      cached_scaled_size_ = image_rect.size();
+    }
     // Center within image_rect (letterbox for mismatched aspects).
-    QRect target = scaled.rect();
+    QRect target = cached_scaled_.rect();
     target.moveCenter(image_rect.center());
-    painter.drawPixmap(target.topLeft(), scaled);
+    painter.drawPixmap(target.topLeft(), cached_scaled_);
   }
 
   // Staleness border wraps image_rect.

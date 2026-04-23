@@ -111,11 +111,21 @@ private:
   StalenessTracker::Level current_level_{StalenessTracker::Level::Error};
 
   QPixmap pixmap_;
+  // Cached scaled pixmap — rebuilt only on new frame or image_rect change.
+  // Keeps paintEvent cheap under frequent exposure repaints.
+  QPixmap cached_scaled_;
+  QSize cached_scaled_size_{0, 0};
+
   QRect image_rect_;  // logical pixels inside this widget
   double observed_aspect_{0.0};
   bool first_frame_seen_{false};
   bool encoding_warned_{false};
   std::string last_warned_encoding_;
+
+  // Per-pane rate measurement (EWMA of inter-arrival intervals).
+  rclcpp::Time last_frame_time_{0, 0, RCL_ROS_TIME};
+  double ewma_interval_s_{0.0};
+  bool rate_ready_{false};
 
   QLabel * label_{nullptr};
 };

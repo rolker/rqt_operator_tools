@@ -118,7 +118,17 @@ ConfigDialog::ConfigDialog(
   auto * right_form = new QFormLayout();
   base_combo_ = new QComboBox();
   base_combo_->setEditable(true);
-  right_form->addRow("Base topic:", base_combo_);
+  // Pair the combo with a Refresh button so operators can pick up topics
+  // advertised after the dialog opened without having to close and reopen.
+  // Still snapshot-based per stability rule 1 — just on demand.
+  auto * base_row = new QHBoxLayout();
+  base_row->addWidget(base_combo_, 1);
+  auto * refresh_btn = new QPushButton("Refresh");
+  refresh_btn->setToolTip("Re-scan for advertised image topics");
+  base_row->addWidget(refresh_btn);
+  right_form->addRow("Base topic:", base_row);
+  connect(refresh_btn, &QPushButton::clicked, this,
+          &ConfigDialog::populate_topic_combo);
   transport_combo_ = new QComboBox();
   for (const auto & t : kTransports) {
     transport_combo_->addItem(t);
