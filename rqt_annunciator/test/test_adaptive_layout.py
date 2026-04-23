@@ -7,6 +7,7 @@ import pytest
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from python_qt_binding.QtCore import QEvent
+from python_qt_binding.QtGui import QFont
 from python_qt_binding.QtWidgets import QApplication
 
 from rqt_annunciator.config_model import (
@@ -136,6 +137,33 @@ class TestIndicatorEMA:
         w.set_status(IndicatorLevel.OK, 'v')
         assert w._label.font().pixelSize() <= IndicatorWidget._MAX_FONT_PX
         assert w._value_label.font().pixelSize() <= IndicatorWidget._MAX_FONT_PX
+
+    def test_reference_metrics_track_label_font(self, qapp):
+        """Reference font is based on the label's font, not QFont() default.
+
+        Regression: rebuilding from bare ``QFont()`` ignored stylesheet
+        overrides and the effective inherited font, so EMA measurement
+        diverged from what the label actually renders.  The fix bases
+        the reference on ``self._label.font()`` and only overrides
+        pixelSize/bold.  We verify by setting a letter-spacing on the
+        label font (an attribute we do NOT override) and checking the
+        reference metrics pick up the resulting wider advance.
+        """
+        w = IndicatorWidget('demo')
+        before = w._reference_metrics.horizontalAdvance('abcdefgh')
+
+        new_font = QFont(w._label.font())
+        # Explicit per-character spacing passes through our rebuild
+        # (we only override pixelSize / bold).
+        new_font.setLetterSpacing(QFont.AbsoluteSpacing, 6.0)
+        w._label.setFont(new_font)
+        w.changeEvent(QEvent(QEvent.FontChange))
+
+        after = w._reference_metrics.horizontalAdvance('abcdefgh')
+        assert after > before, (
+            'reference metrics must pick up label-font attributes '
+            f'(letter spacing); before={before} after={after}'
+        )
 
     def test_font_change_event_rebuilds_reference_metrics(self, qapp):
         """Runtime font changes must invalidate cached reference metrics.

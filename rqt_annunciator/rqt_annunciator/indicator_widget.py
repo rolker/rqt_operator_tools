@@ -184,14 +184,26 @@ class IndicatorWidget(QFrame):
     # -- Internals -------------------------------------------------------------
 
     def _rebuild_reference_metrics(self):
-        """(Re)build the cached reference QFontMetrics at the fixed pixel size."""
-        ref_font = QFont()
-        ref_font.setPixelSize(self._REFERENCE_FONT_PX)
-        self._reference_metrics = QFontMetrics(ref_font)
+        """(Re)build the cached reference QFontMetrics at the fixed pixel size.
 
-        ref_font_bold = QFont(ref_font)
+        Base the reference font on ``self._label.font()`` (the effective
+        post-style font, incorporating any stylesheet family, weight,
+        letter spacing, etc.) and only override ``pixelSize`` / ``bold``.
+        Pass ``self._label`` as the ``QPaintDevice`` so metrics use the
+        label's actual DPI — otherwise a HiDPI display would measure
+        against pre-scale metrics and misreport widths.
+        """
+        base_font = self._label.font()
+
+        ref_font = QFont(base_font)
+        ref_font.setPixelSize(self._REFERENCE_FONT_PX)
+        ref_font.setBold(False)
+        self._reference_metrics = QFontMetrics(ref_font, self._label)
+
+        ref_font_bold = QFont(base_font)
+        ref_font_bold.setPixelSize(self._REFERENCE_FONT_PX)
         ref_font_bold.setBold(True)
-        self._reference_metrics_bold = QFontMetrics(ref_font_bold)
+        self._reference_metrics_bold = QFontMetrics(ref_font_bold, self._label)
 
     def _measure_combined_width(self, label_text: str, value_text: str) -> int:
         """Pixel width of ``label + spacer + value`` at the reference font.
