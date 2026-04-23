@@ -196,12 +196,55 @@ dialog filters to those whose name ends in a known transport suffix
 transport)` dropdown entry. Free-form fallback fields cover the ffmpeg-only
 deployment where the base isn't advertised.
 
-### Perspective save/restore
+### Configuration lifecycle
 
-`rqt_gui_cpp::Plugin::saveSettings(qt_gui_cpp::Settings&)` and `restoreSettings(...)`
-mirror the Python `rqt_gui_py` API. We serialize `GridConfig` to a YAML string
-and store under key `config_yaml`. On `restoreSettings`, deserialize; if absent,
-load `share/rqt_camera_grid/config/default_camera_grid.yaml`.
+We mirror `rqt_annunciator` exactly. Three layers feed the widget's
+in-memory `GridConfig`; whichever was set most recently wins.
+
+| Layer | When | Mechanism |
+|---|---|---|
+| 1. Shipped default | Plugin construction | Load `share/rqt_camera_grid/config/default_camera_grid.yaml` via `ament_index_cpp::get_package_share_directory`. Baseline so the grid isn't empty on first launch. |
+| 2. rqt perspective | After construction, and on shutdown | `qt_gui_cpp::Plugin::restoreSettings(plugin_settings, instance_settings)` reads `instance_settings.value("config_yaml")`. If present, **overrides the default**. `saveSettings(...)` writes the current config back on close. |
+| 3. User edit via config dialog | Any time the user clicks rqt's wrench | `triggerConfiguration()` opens the config dialog (see below). On OK, the dialog's config replaces the widget's; rqt persists it to the perspective at shutdown via layer 2. |
+
+**User flow for "load a YAML file and keep it"**: open config dialog → Import
+YAML... → pick file → OK → (rqt close or perspective save) → perspective now
+contains that config. Next rqt open, `restoreSettings` brings it back. No
+special handling needed — the dialog's import path only updates the dialog's
+in-memory model, and the same OK-then-save mechanism persists it.
+
+### Config dialog capabilities (matches annunciator)
+
+`config_dialog.cpp` exposes:
+
+- **Grid dims**: two `QSpinBox`es for rows × cols; applying either resizes
+  the pane list (truncate / append empty panes).
+- **Pane list** (`QListWidget`): select a pane to edit; **+** / **−**
+  buttons add/remove panes. Pane label = `base` (or `(empty)` if unset).
+- **Pane editor** (right pane of dialog):
+  - **Base topic**: `QComboBox` (editable) populated from a snapshot of
+    `node->get_topic_names_and_types()` at dialog-open — see stability rule
+    1. Each entry is a `(base, transport)` pair parsed from the advertised
+    topic name/type. Free-form text entry is allowed so the operator can
+    type a base topic that isn't currently advertised.
+  - **Transport**: `QComboBox` (`raw`, `compressed`, `compressedDepth`,
+    `theora`, `ffmpeg`). Auto-filled when the user picks a dropdown entry
+    from the base combo.
+  - **Warn threshold**: `QDoubleSpinBox` (seconds).
+  - **Error threshold**: `QDoubleSpinBox` (seconds).
+- **Import YAML...** button (`QFileDialog::getOpenFileName`): replaces the
+  dialog's in-memory `GridConfig` with the file's contents, repopulates the
+  pane list. Parse errors surface via `QMessageBox::warning`.
+- **Export YAML...** button (`QFileDialog::getSaveFileName`): writes the
+  dialog's current `GridConfig` to the chosen path. Useful for staging
+  configs on disk and committing them to platform repos.
+- **OK / Cancel** (`QDialogButtonBox`): OK atomically applies the whole
+  config — one reconfigure on the Qt main thread (stability rule 2). Cancel
+  discards the dialog's changes; existing subscriptions are untouched.
+
+No live mutation of subscriptions while the dialog is open. The dialog edits
+an in-memory `GridConfig` copy; subscription churn happens only once, in
+`CameraGridWidget::load_config` triggered by OK.
 
 ## Dependencies (package.xml)
 
@@ -219,6 +262,7 @@ load `share/rqt_camera_grid/config/default_camera_grid.yaml`.
 <depend>cv_bridge</depend>
 <depend>libqt5-widgets</depend>
 <depend>yaml-cpp</depend>
+<depend>ament_index_cpp</depend>
 
 <exec_depend>ffmpeg_image_transport</exec_depend>
 
@@ -251,6 +295,7 @@ find_package(image_transport REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 find_package(Qt5 COMPONENTS Widgets REQUIRED)
 
 set(CMAKE_AUTOMOC ON)
@@ -265,7 +310,8 @@ add_library(${PROJECT_NAME} SHARED
 )
 target_include_directories(${PROJECT_NAME} PUBLIC include)
 ament_target_dependencies(${PROJECT_NAME}
-  rclcpp rqt_gui_cpp qt_gui_cpp pluginlib image_transport sensor_msgs cv_bridge)
+  rclcpp rqt_gui_cpp qt_gui_cpp pluginlib image_transport sensor_msgs cv_bridge
+  ament_index_cpp)
 target_link_libraries(${PROJECT_NAME} Qt5::Widgets yaml-cpp)
 
 pluginlib_export_plugin_description_file(rqt_gui plugin.xml)
