@@ -24,7 +24,8 @@ default pull was Python. We're diverging because:
 - **Reference implementation is C++**: upstream `rqt_image_view` on jazzy is a
   C++ `rqt_gui_cpp` plugin with essentially the dependency set we need
   (`rqt_gui_cpp`, `image_transport`, `cv_bridge`, `sensor_msgs`, Qt5). We crib
-  from it instead of inventing a Python-side equivalent.
+  **its structure** (CMake layout, pluginlib wiring, Qt thread marshaling),
+  not its behavior — see stability caveat below.
 - **Zero-copy rendering**: `QImage(Image::data.data(), w, h, step, Format_RGB888)`
   is a pointer view of the `sensor_msgs::msg::Image` buffer — no per-frame copy
   between Python and Qt. Relevant at higher pane counts.
@@ -35,6 +36,47 @@ default pull was Python. We're diverging because:
 
 Cost we accept: `ament_cmake` + MOC + Qt build complexity instead of a flat
 Python package; slower iteration; first C++ package in this repo.
+
+### Stability caveat: rqt_image_view is a **structural** reference only
+
+`rqt_image_view` has field-observed crashes on operator stations (e.g., when
+refreshing the topic list in the dropdown). We do not copy its patterns
+blindly. Explicit design rules this plugin must follow:
+
+1. **Topic discovery is dialog-scoped and snapshot-based**. Populate the
+   `(base, transport)` dropdown when the config dialog opens by calling
+   `node->get_topic_names_and_types()` once, operating on that snapshot, and
+   closing the dialog commits whatever was selected. Do not refresh topics
+   continuously while subscriptions are live, and do not tear down
+   subscriptions from the refresh path.
+2. **Reconfigure runs on the Qt main thread, with subscriptions serialized**.
+   When the user applies new config, tear down existing `image_transport::Subscriber`
+   objects first (on the Qt main thread via `QMetaObject::invokeMethod` /
+   queued connection), wait for their destructors to return, then construct
+   the new ones. Never swap subscriptions from inside an incoming-image
+   callback.
+3. **Callback → UI marshaling is explicit and signal-based**. image_transport
+   callbacks arrive on the `rclcpp::executors::MultiThreadedExecutor` thread.
+   Each pane emits a Qt signal with the `Image::ConstSharedPtr` captured by
+   value; the pane's paint slot runs on the main thread. This keeps
+   `sensor_msgs::msg::Image` storage alive across the thread boundary via
+   `shared_ptr` refcount, avoiding use-after-free on rapid reconfigure.
+4. **Paint slot is defensive**. Guard on `msg->width > 0 && msg->height > 0`,
+   on encoding match (or `cv_bridge` conversion success), and on
+   `!label_->isDestroyed()`-equivalent widget state before painting.
+5. **Shutdown order is explicit**. `CameraGridWidget::~CameraGridWidget` and
+   `CameraGridPlugin::shutdownPlugin` must destruct panes (and therefore their
+   subscribers) **before** letting the node go out of scope. Verify with
+   valgrind on at least a two-pane reconfigure-heavy scenario before merging.
+6. **Regression tests for the fragile paths**: write gtests that construct and
+   destruct `CameraPaneWidget` rapidly while pushing dummy `Image` messages
+   through the subscriber callback; use `QT_QPA_PLATFORM=offscreen` so this
+   runs in CI.
+
+Before importing any specific code pattern from `rqt_image_view` (e.g., its
+`on_topic_changed` handler, its `QComboBox` setup, its `rgb8`/`bgr8`
+conversion path), understand the pattern and its failure modes first. "It
+works in rqt_image_view" is not evidence of safety.
 
 ## Principles and ADRs Considered
 
@@ -262,7 +304,7 @@ ament_package()
 6. **`camera_grid_plugin.{hpp,cpp}`**: `rqt_gui_cpp::Plugin` subclass + `PLUGINLIB_EXPORT_CLASS` macro; `saveSettings`/`restoreSettings`/`triggerConfiguration`.
 7. **`config_dialog.{hpp,cpp}`**: grid-dims spinboxes + pane table with dropdown-or-free-form `(base, transport)` fields, populated via `node->get_topic_names_and_types()`.
 8. **`config/default_camera_grid.yaml`**: empty 2×2 placeholder.
-9. **Tests**: `test_staleness_tracker.cpp` (transitions + boundary ticks), `test_config_model.cpp` (YAML roundtrip + validation).
+9. **Tests**: `test_staleness_tracker.cpp` (transitions + boundary ticks), `test_config_model.cpp` (YAML roundtrip + validation), `test_pane_lifecycle.cpp` (construct/destruct `CameraPaneWidget` rapidly with dummy `Image` messages via `QT_QPA_PLATFORM=offscreen` — the regression test for stability rule 6).
 10. **Repo root `README.md`**: add `rqt_camera_grid` entry AND the missing `rqt_operator_log` entry.
 
 ### Phase 2 — Follow-up issues (file separately)
@@ -311,9 +353,13 @@ ament_package()
   and the test runner handle the mixed layout without extra flags.
 - **MOC + Qt5** add build time relative to the Python plan. Acceptable.
 - **Thread safety**: image_transport callbacks arrive on a ROS executor
-  thread; UI updates happen on the Qt main thread. Use `QMetaObject::invokeMethod`
-  (or a Qt signal emitted from the callback) to marshal — standard `rqt_image_view`
-  pattern.
+  thread; UI updates happen on the Qt main thread. See stability caveat
+  item 3 — signal-based marshaling with `ConstSharedPtr` payloads, not a
+  `QMetaObject::invokeMethod` copy of a `cv::Mat` view.
+- **Reference-implementation crashes**: `rqt_image_view` has field-observed
+  instability (topic-refresh crashes). The stability caveat section lists
+  six rules to prevent inheriting those failure modes; the regression tests
+  in rule 6 are the most important anti-regression signal.
 
 ## Estimated Scope
 
