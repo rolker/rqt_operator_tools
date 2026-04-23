@@ -106,6 +106,14 @@ class AnnunciatorWidget(QWidget):
         self._stale_timer.timeout.connect(self._check_stale)
         self._stale_timer.start(1000)
 
+        # Debounce restretch requests: many width_sample_changed
+        # emissions can fire per event-loop iteration (one per
+        # indicator at ROS callback rate).  A zero-interval
+        # single-shot timer coalesces them into one restretch scan.
+        self._restretch_timer = QTimer(self)
+        self._restretch_timer.setSingleShot(True)
+        self._restretch_timer.timeout.connect(self._restretch_columns)
+
     def load_config(self, config: AnnunciatorConfig):
         """Apply a new configuration, rebuilding all indicators and subscriptions."""
         self._teardown_subscriptions()
@@ -135,6 +143,7 @@ class AnnunciatorWidget(QWidget):
     def shutdown(self):
         """Clean up subscriptions and timers."""
         self._stale_timer.stop()
+        self._restretch_timer.stop()
         self._teardown_subscriptions()
 
     # -- Layout ----------------------------------------------------------------
@@ -226,8 +235,16 @@ class AnnunciatorWidget(QWidget):
         self._last_column_stretches = new_stretches
 
     def _on_width_sample(self, _name, _width):
-        """Triggered by IndicatorWidget.width_sample_changed; restretch."""
-        self._restretch_columns()
+        """Triggered by IndicatorWidget.width_sample_changed; schedule restretch.
+
+        We don't scan immediately — multiple indicators commonly emit
+        in the same event-loop iteration, and every scan touches all
+        columns.  A zero-interval single-shot timer coalesces all
+        signals between iterations into a single ``_restretch_columns``
+        call.
+        """
+        if not self._restretch_timer.isActive():
+            self._restretch_timer.start(0)
 
     # -- Subscriptions ---------------------------------------------------------
 

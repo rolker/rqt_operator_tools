@@ -234,15 +234,62 @@ class TestAnnunciatorColumnStretch:
         w = _make_annunciator(['a', 'b'])
         w.resize(800, 100)
         w._rebuild_layout()
+        qapp.processEvents()  # flush initial debounced restretch
         before_a = w._layout.columnStretch(0)
         # Feed indicator 'a' a long value many times to migrate its EMA.
         ind_a = w._indicators['a']
         for _ in range(100):
             ind_a.set_status(IndicatorLevel.OK, 'X' * 50)
+        # Flush the debounced restretch so the layout picks up the new
+        # per-column max (see _on_width_sample — the QTimer coalesces
+        # signals emitted within one event-loop iteration).
+        qapp.processEvents()
         after_a = w._layout.columnStretch(0)
         assert after_a > before_a, (
             'Column stretch must grow as the indicator in that column '
             'accumulates wider value samples'
+        )
+
+    def test_width_samples_coalesce_into_single_restretch(self, qapp):
+        """Many width_sample_changed emissions should trigger one scan.
+
+        _restretch_columns rescans every indicator per call; without
+        coalescing, N indicators emitting in one event-loop iteration
+        cause N scans of all N indicators.  The single-shot zero-interval
+        timer collapses them into one.
+        """
+        w = _make_annunciator([f'ind{i}' for i in range(4)])
+        w.resize(800, 100)
+        w._rebuild_layout()
+        qapp.processEvents()  # drain the initial restretch
+
+        # Wrap _restretch_columns to count calls.
+        call_count = [0]
+        original = w._restretch_columns
+
+        def counted():
+            call_count[0] += 1
+            original()
+
+        # Disconnect the real slot, connect our counter.
+        w._restretch_timer.timeout.disconnect()
+        w._restretch_timer.timeout.connect(counted)
+
+        # Fire many samples — synchronously, in one iteration.
+        for ind in w._indicators.values():
+            for _ in range(5):
+                ind.width_sample_changed.emit(ind._name, 100)
+        # No restretch should have happened yet (timer not fired).
+        assert call_count[0] == 0
+        # Timer should be pending.
+        assert w._restretch_timer.isActive()
+
+        # Fire the timer explicitly via processEvents.
+        qapp.processEvents()
+        # All 20 emissions coalesced into one scan.
+        assert call_count[0] == 1, (
+            f'expected single coalesced restretch, got {call_count[0]} '
+            f'from 20 signal emissions'
         )
 
     def test_old_column_stretches_cleared_on_reflow(self, qapp):

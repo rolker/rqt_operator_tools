@@ -206,17 +206,20 @@ class IndicatorWidget(QFrame):
         self._reference_metrics_bold = QFontMetrics(ref_font_bold, self._label)
 
     def _measure_combined_width(self, label_text: str, value_text: str) -> int:
-        """Pixel width of ``label + spacer + value`` at the reference font.
+        """Pixel width of ``label + value`` at the reference font.
 
-        Uses the cached reference metrics built in ``__init__`` so this can
-        run on every ``set_status`` and every ``_fit_font`` without
+        Uses the cached reference metrics built in ``__init__`` so this
+        can run on every ``set_status`` and every ``_fit_font`` without
         per-call font allocation.
+
+        The visual gap between label and value is already reserved by
+        the real layout spacing (``layout.spacing() × (count − 1)``) in
+        ``_fit_font``.  Adding it here too would double-count it and
+        make fitted fonts systematically smaller than what renders.
         """
         label_w = self._reference_metrics.horizontalAdvance(label_text)
         value_w = self._reference_metrics_bold.horizontalAdvance(value_text)
-        # A small gap between label and value so they don't visually touch.
-        gap = self._reference_metrics.horizontalAdvance('  ')
-        return label_w + gap + value_w
+        return label_w + value_w
 
     def _fit_font(self):
         """Pick the largest font that fits ``label + value`` in the cell."""
