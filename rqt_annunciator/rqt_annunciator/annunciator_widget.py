@@ -115,6 +115,7 @@ class AnnunciatorWidget(QWidget):
                     f'Duplicate indicator name "{name}" — skipping')
                 continue
             widget = IndicatorWidget(name, self)
+            widget.width_sample_changed.connect(self._on_width_sample)
             self._indicators[name] = widget
             self._indicator_configs[name] = ind_config
             self._last_update[name] = time.monotonic()
@@ -145,7 +146,12 @@ class AnnunciatorWidget(QWidget):
         self._rebuild_layout()
 
     def _rebuild_layout(self):
-        """Reflow indicators into the grid and update font sizes."""
+        """Reflow indicators into the grid and restretch columns.
+
+        Column widths come from each indicator's EMA of rendered text width
+        (see issue #23); fonts are sized per-cell by each IndicatorWidget
+        from its own resizeEvent, so this method no longer touches fonts.
+        """
         n = len(self._indicators)
         if n == 0:
             return
@@ -164,10 +170,6 @@ class AnnunciatorWidget(QWidget):
             # Grid — aim for roughly square cells.
             cols = max(1, round(math.sqrt(n * aspect)))
 
-        rows = max(1, math.ceil(n / cols))
-        cell_h = h / rows
-        cell_w = w / cols
-
         # Only reflow grid positions when column count changes.
         if cols != self._current_cols:
             # Remove all widgets from grid (without destroying them).
@@ -179,12 +181,34 @@ class AnnunciatorWidget(QWidget):
 
             self._current_cols = cols
 
-        # Scale fonts from cell dimensions.
-        label_size = max(8, int(min(cell_h * 0.3, cell_w * 0.08)))
-        value_size = max(8, int(min(cell_h * 0.4, cell_w * 0.10)))
+        self._restretch_columns()
 
-        for widget in self._indicators.values():
-            widget.update_font_size(label_size, value_size)
+    def _restretch_columns(self):
+        """Set each column's stretch from the max EMA width of its indicators."""
+        cols = self._current_cols
+        if cols <= 0 or not self._indicators:
+            return
+
+        indicators = list(self._indicators.values())
+        # Collect max EMA width per column based on the current (i // cols,
+        # i % cols) assignment used in _rebuild_layout.
+        col_widths = [0] * cols
+        for i, widget in enumerate(indicators):
+            c = i % cols
+            if widget.ema_width_px > col_widths[c]:
+                col_widths[c] = widget.ema_width_px
+
+        # Clear stretches for any columns left behind by a previous wider
+        # reflow, then set the active ones.  Stretch weights are relative,
+        # so passing the pixel-width averages directly is fine.
+        for c in range(self._layout.columnCount()):
+            self._layout.setColumnStretch(c, 0)
+        for c, weight in enumerate(col_widths):
+            self._layout.setColumnStretch(c, max(1, weight))
+
+    def _on_width_sample(self, _name, _width):
+        """Triggered by IndicatorWidget.width_sample_changed; restretch."""
+        self._restretch_columns()
 
     # -- Subscriptions ---------------------------------------------------------
 
