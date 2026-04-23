@@ -1,4 +1,4 @@
-# Work Plan: Issue #20 — rqt_camera_grid
+# Work Plan: Issue #20 — rqt_camera_grid (C++)
 
 **Issue**: [feat: rqt_camera_grid — multi-stream image grid with staleness border](https://github.com/rolker/rqt_operator_tools/issues/20)
 **Branch**: `feature/issue-20`
@@ -6,55 +6,80 @@
 
 ## Summary
 
-Add a new `rqt_camera_grid` package to this repo: an rqt plugin that displays N
-`image_transport` streams in a configurable grid, with a per-pane staleness
-border (neutral / amber / red) that matches `rqt_annunciator`'s dark-until-problem
-convention. Secondary goal: declare `ffmpeg_image_transport` as `exec_depend` so
-a fresh `rosdep install` on an operator station pulls the H.265 decoder needed
-by the bizzyboat / izzyboat rollout
+Add a new `rqt_camera_grid` package to this repo: a **C++ rqt plugin**
+(`rqt_gui_cpp`) that displays N `image_transport` streams in a configurable
+grid, with a per-pane staleness border (neutral / amber / red) that matches
+`rqt_annunciator`'s dark-until-problem convention. Secondary goal: declare
+`ffmpeg_image_transport` as `exec_depend` so a fresh `rosdep install` on an
+operator station pulls the H.265 decoder needed by the bizzyboat / izzyboat
+rollout
 ([unh_marine_perception#4](https://github.com/rolker/unh_marine_perception/issues/4),
 [unh_echoboats_project11#78](https://github.com/rolker/unh_echoboats_project11/issues/78)).
+
+## Language choice: C++ over Python
+
+This repo's precedent is Python (`rqt_annunciator`, `rqt_operator_log`), so the
+default pull was Python. We're diverging because:
+
+- **Reference implementation is C++**: upstream `rqt_image_view` on jazzy is a
+  C++ `rqt_gui_cpp` plugin with essentially the dependency set we need
+  (`rqt_gui_cpp`, `image_transport`, `cv_bridge`, `sensor_msgs`, Qt5). We crib
+  from it instead of inventing a Python-side equivalent.
+- **Zero-copy rendering**: `QImage(Image::data.data(), w, h, step, Format_RGB888)`
+  is a pointer view of the `sensor_msgs::msg::Image` buffer — no per-frame copy
+  between Python and Qt. Relevant at higher pane counts.
+- **Native `image_transport::Subscriber`**: the C++ API is first-class; the
+  Python binding is a wrapper. No ambiguity about `FFMPEGPacket` vs decoded
+  `Image` delivery — the plugin's `getTransport()` handles decode inside the
+  subscriber and hands us `sensor_msgs::msg::Image`.
+
+Cost we accept: `ament_cmake` + MOC + Qt build complexity instead of a flat
+Python package; slower iteration; first C++ package in this repo.
 
 ## Principles and ADRs Considered
 
 | Principle / ADR | How it applies |
 |---|---|
 | **Only what's needed** | Ship the core grid + staleness border + perspective save/restore. Defer click-to-expand, FPS limiter, and recording-status overlay to follow-up issues. |
-| **Improve incrementally** | Single reviewable PR matching `rqt_annunciator`'s shape; nice-to-haves land later. |
-| **Capture decisions** | Record the per-pane `{base, transport}` config decision and the auto-discovery-by-suffix UI rule in the package README's "Design" section — the rationale (ffmpeg-only deployments with no base topic) is non-obvious. |
-| **A change includes its consequences** | Same PR updates repo-root `README.md` (new pkg + pre-existing missing `rqt_operator_log` entry), ships a default config, and adds unit tests at parity with `rqt_annunciator`. |
-| **Test what breaks** | Unit-test the staleness state machine (neutral → warn → error → recovered) and config YAML roundtrip. GUI layout / letterbox left to manual acceptance. |
-| **Workspace vs. project separation** | Plugin stays platform-agnostic — no bizzyboat defaults in code; default config is a 2×2 placeholder. |
-| **ADR-0008 (ROS 2 conventions)** | `package.xml` format 3, `ament_python`, BSD-3-Clause, `plugin.xml` at package root, REP-144 naming. Mirrors `rqt_annunciator`. |
-| **ADR-0009 (Python packaging)** | All deps via `package.xml` `exec_depend`; no pip. `ffmpeg_image_transport` and `image_transport` declared there. |
+| **Improve incrementally** | Single reviewable PR; nice-to-haves land later. |
+| **Capture decisions** | Record the language choice (C++, cribbing from `rqt_image_view`) and the per-pane `{base, transport}` config model in the package `README.md`. Both are load-bearing and non-obvious. |
+| **A change includes its consequences** | Same PR updates repo-root `README.md` (new pkg + pre-existing missing `rqt_operator_log` entry), ships a default config, and adds gtest unit tests. |
+| **Test what breaks** | Gtest the staleness state machine (neutral → warn → error → recovered) and config YAML roundtrip. GUI layout / letterbox left to manual acceptance. |
+| **Workspace vs. project separation** | Plugin stays platform-agnostic — no bizzyboat defaults in code; default config is a 2×2 empty placeholder. |
+| **ADR-0008 (ROS 2 conventions)** | `package.xml` format 3, `ament_cmake`, BSD-3-Clause, pluginlib export via `plugin_description.xml`, REP-144 naming. Matches `rqt_image_view`. |
+| **ADR-0009 (Python packaging)** | N/A for a C++ package; but `ffmpeg_image_transport` still lands via `rosdep` in `package.xml`, not pip. |
 
 ## Package Structure
 
 ```
 rqt_operator_tools/
-├── rqt_camera_grid/                              # NEW package
-│   ├── package.xml                               # format 3, ament_python
-│   ├── setup.py / setup.cfg
-│   ├── resource/rqt_camera_grid                  # ament index marker
-│   ├── plugin.xml                                # rqt plugin descriptor
-│   ├── README.md                                 # design section + perspective schema
-│   ├── config/default_camera_grid.yaml           # 2×2 placeholder
-│   ├── rqt_camera_grid/
-│   │   ├── __init__.py
-│   │   ├── camera_grid_plugin.py                 # thin rqt wrapper
-│   │   ├── camera_grid_widget.py                 # grid container, layout, perspective I/O
-│   │   ├── camera_pane_widget.py                 # single pane: image + border + label
-│   │   ├── staleness_tracker.py                  # pure state machine (testable w/o Qt)
-│   │   ├── config_model.py                       # PaneConfig / GridConfig + YAML
-│   │   └── config_dialog.py                      # grid dims + per-pane (base, transport) editor
+├── rqt_camera_grid/                              # NEW C++ package
+│   ├── package.xml                               # format 3, ament_cmake
+│   ├── CMakeLists.txt                            # find_package Qt5/rclcpp/rqt_gui_cpp; MOC; pluginlib export
+│   ├── plugin.xml                                # rqt GUI descriptor (menu/label/icon)
+│   ├── plugin_description.xml                    # pluginlib descriptor for PLUGINLIB_EXPORT_CLASS
+│   ├── README.md                                 # design section: language choice, config model, perspective schema
+│   ├── config/default_camera_grid.yaml           # 2×2 empty placeholder
+│   ├── include/rqt_camera_grid/
+│   │   ├── camera_grid_plugin.hpp                # : public rqt_gui_cpp::Plugin
+│   │   ├── camera_grid_widget.hpp                # : public QWidget
+│   │   ├── camera_pane_widget.hpp                # : public QFrame
+│   │   ├── staleness_tracker.hpp                 # pure logic, no Qt/ROS
+│   │   └── config_model.hpp                      # PaneConfig / GridConfig structs + yaml I/O
+│   ├── src/
+│   │   ├── camera_grid_plugin.cpp                # PLUGINLIB_EXPORT_CLASS + rqt save/restore
+│   │   ├── camera_grid_widget.cpp                # QGridLayout container, perspective I/O
+│   │   ├── camera_pane_widget.cpp                # image_transport::Subscriber, QImage render, border
+│   │   ├── staleness_tracker.cpp
+│   │   ├── config_model.cpp                      # yaml-cpp load/save
+│   │   └── config_dialog.cpp                     # grid-dims + per-pane (base, transport) editor
 │   └── test/
-│       ├── test_config_model.py                  # yaml roundtrip, validation
-│       ├── test_staleness.py                     # state machine transitions
-│       └── test_copyright.py                     # ament_copyright
-└── README.md                                     # UPDATED: list all three packages
+│       ├── test_staleness_tracker.cpp            # gtest
+│       ├── test_config_model.cpp                 # gtest
+│       └── CMakeLists.txt (or inline)            # ament_add_gtest
 ```
 
-## Design Decisions (promoted from issue comment)
+## Design Decisions
 
 ### Per-pane config: `{base, transport}` struct, not a single topic string
 
@@ -67,98 +92,194 @@ panes:
   - { base: /some/usb_cam/image_raw,                        transport: raw,        warn_s: 1.0, error_s: 3.0 }
 ```
 
-The plugin constructs `image_transport::Subscriber(base, queue, cb, transport_hint)`
-per pane. The base topic itself may never be advertised (bizzyboat publishes only
-the `/ffmpeg` sibling) — we rely on the fact that `image_transport::Subscriber`
-builds the full topic name from `<base>/<suffix>` without checking the base.
-
-Defaults for `warn_s` / `error_s`: if omitted, compute from first observed frame
-rate (warn = 3× period, error = 10× period, per the issue); fall back to
-`warn_s=1.0, error_s=3.0` until the first frame arrives.
-
-### Staleness state machine (pure, testable)
-
-```
-                      frame arrives
-  NEUTRAL <─────────────────────────── WARN / ERROR
-      │  last-frame-age > warn_s           ▲
-      ▼                                     │
-    WARN ─── last-frame-age > error_s ──▶ ERROR
+```cpp
+it_.reset(new image_transport::ImageTransport(node_));
+sub_ = it_->subscribe(pane.base, 1,
+         std::bind(&CameraPaneWidget::on_image, this, _1),
+         nullptr, image_transport::TransportHints(node_.get(), pane.transport));
 ```
 
-Implemented in `staleness_tracker.py` as a class taking `(warn_s, error_s, now_fn)`
-with `mark_frame()` and `tick(now)` → level. The pane widget calls `tick()` from a
-1 Hz `QTimer` and repaints the border on change.
+The base topic may never be advertised (bizzyboat publishes only the `/ffmpeg`
+sibling). `image_transport::Subscriber` builds the full name as
+`<base>/<suffix>` and subscribes directly — it does not require the base to
+exist.
+
+### Staleness state machine (pure, gtest-able)
+
+```cpp
+class StalenessTracker {
+ public:
+  enum class Level { Neutral, Warn, Error };
+  StalenessTracker(double warn_s, double error_s);
+  void mark_frame(rclcpp::Time now);
+  Level tick(rclcpp::Time now) const;   // called from a QTimer at 1 Hz
+};
+```
+
+Transitions:
+
+```
+                     frame arrives
+  Neutral <────────────────────────── Warn / Error
+      │  age > warn_s                    ▲
+      ▼                                   │
+    Warn ─── age > error_s ─────────▶ Error
+```
+
+No Qt or ROS dependency inside the class — unit-testable with `rclcpp::Time`
+constructed from `builtin_interfaces`. Pane widget owns an instance, calls
+`mark_frame()` from `on_image()`, and `tick()` from the 1 Hz timer.
+
+### Image rendering: zero-copy QImage view
+
+For `sensor_msgs::msg::Image` with `encoding == "rgb8"`:
+
+```cpp
+QImage view(msg->data.data(), msg->width, msg->height, msg->step, QImage::Format_RGB888);
+pixmap_ = QPixmap::fromImage(view.scaled(label_->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+```
+
+For `bgr8` and other common encodings, convert via `cv_bridge` (fallback path).
+`ffmpeg_image_transport` decodes to `bgr8` by default, so the `cv_bridge` path
+is exercised for our primary deployment — `cv_bridge::toCvShare(msg, "rgb8")`
+then wrap the `cv::Mat` buffer as a `QImage`.
 
 ### Config dialog UX
 
-Dropdown-driven: enumerate all currently advertised topics whose **name** ends in
-a known transport suffix (`/ffmpeg`, `/compressed`, `/compressedDepth`, `/theora`)
-or whose **type** is `sensor_msgs/Image` / `sensor_msgs/CompressedImage` /
-`ffmpeg_image_msgs/FFMPEGPacket`. Parse each into a `(base, transport)` pair for
-the dropdown. Free-form fallback fields for deployments where the topic isn't
-currently advertised.
-
-Rationale lives in the package README — this is the load-bearing decision the
-comment on #20 captured.
+`rclcpp::Node::get_topic_names_and_types()` gives all advertised topics. The
+dialog filters to those whose name ends in a known transport suffix
+(`/ffmpeg`, `/compressed`, `/compressedDepth`, `/theora`) or whose type is
+`sensor_msgs/msg/Image` / `sensor_msgs/msg/CompressedImage` /
+`ffmpeg_image_transport_msgs/msg/FFMPEGPacket`. Each parsed into a `(base,
+transport)` dropdown entry. Free-form fallback fields cover the ffmpeg-only
+deployment where the base isn't advertised.
 
 ### Perspective save/restore
 
-Follow `rqt_annunciator`'s pattern: YAML-serialize `GridConfig` and store via
-`instance_settings.set_value('config_yaml', ...)`. Load the default from
-`share/rqt_camera_grid/config/default_camera_grid.yaml` when no perspective
-setting exists.
+`rqt_gui_cpp::Plugin::saveSettings(qt_gui_cpp::Settings&)` and `restoreSettings(...)`
+mirror the Python `rqt_gui_py` API. We serialize `GridConfig` to a YAML string
+and store under key `config_yaml`. On `restoreSettings`, deserialize; if absent,
+load `share/rqt_camera_grid/config/default_camera_grid.yaml`.
 
 ## Dependencies (package.xml)
 
 ```xml
-<exec_depend>python_qt_binding</exec_depend>
-<exec_depend>rclpy</exec_depend>
-<exec_depend>rqt_gui</exec_depend>
-<exec_depend>rqt_gui_py</exec_depend>
-<exec_depend>sensor_msgs</exec_depend>
-<exec_depend>image_transport</exec_depend>
-<exec_depend>ffmpeg_image_transport</exec_depend>
-<exec_depend>cv_bridge</exec_depend>
-<exec_depend>python3-yaml</exec_depend>
+<buildtool_depend>ament_cmake</buildtool_depend>
+<buildtool_depend>ament_cmake_ros</buildtool_depend>
 
-<test_depend>ament_copyright</test_depend>
-<test_depend>python3-pytest</test_depend>
+<depend>rclcpp</depend>
+<depend>rqt_gui</depend>
+<depend>rqt_gui_cpp</depend>
+<depend>qt_gui_cpp</depend>
+<depend>pluginlib</depend>
+<depend>image_transport</depend>
+<depend>sensor_msgs</depend>
+<depend>cv_bridge</depend>
+<depend>libqt5-widgets</depend>
+<depend>yaml-cpp</depend>
+
+<exec_depend>ffmpeg_image_transport</exec_depend>
+
+<test_depend>ament_cmake_gtest</test_depend>
+<test_depend>ament_lint_auto</test_depend>
+<test_depend>ament_lint_common</test_depend>
+
+<export>
+  <build_type>ament_cmake</build_type>
+  <rqt_gui plugin="${prefix}/plugin.xml"/>
+</export>
 ```
 
-`cv_bridge` converts the incoming `sensor_msgs/Image` → QImage. `image_transport`
-and `ffmpeg_image_transport` are the Python-accessible subscription plumbing and
-the H.265 plugin that motivates the secondary goal.
+`ffmpeg_image_transport` as `exec_depend` is the secondary goal: `rosdep
+install` on a fresh salmon pulls the H.265 decoder plugin. Binary is available
+on jazzy (`ros-jazzy-ffmpeg-image-transport`), verified.
+
+## CMake skeleton
+
+```cmake
+cmake_minimum_required(VERSION 3.10)
+project(rqt_camera_grid)
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rqt_gui_cpp REQUIRED)
+find_package(qt_gui_cpp REQUIRED)
+find_package(pluginlib REQUIRED)
+find_package(image_transport REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(yaml-cpp REQUIRED)
+find_package(Qt5 COMPONENTS Widgets REQUIRED)
+
+set(CMAKE_AUTOMOC ON)
+
+add_library(${PROJECT_NAME} SHARED
+  src/camera_grid_plugin.cpp
+  src/camera_grid_widget.cpp
+  src/camera_pane_widget.cpp
+  src/staleness_tracker.cpp
+  src/config_model.cpp
+  src/config_dialog.cpp
+)
+target_include_directories(${PROJECT_NAME} PUBLIC include)
+ament_target_dependencies(${PROJECT_NAME}
+  rclcpp rqt_gui_cpp qt_gui_cpp pluginlib image_transport sensor_msgs cv_bridge)
+target_link_libraries(${PROJECT_NAME} Qt5::Widgets yaml-cpp)
+
+pluginlib_export_plugin_description_file(rqt_gui plugin.xml)
+
+install(TARGETS ${PROJECT_NAME}
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin)
+install(FILES plugin.xml plugin_description.xml DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY include/ DESTINATION include)
+
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_staleness_tracker test/test_staleness_tracker.cpp src/staleness_tracker.cpp)
+  target_include_directories(test_staleness_tracker PRIVATE include)
+  ament_add_gtest(test_config_model test/test_config_model.cpp src/config_model.cpp)
+  target_include_directories(test_config_model PRIVATE include)
+  target_link_libraries(test_config_model yaml-cpp)
+  ament_lint_auto_find_test_dependencies()
+endif()
+
+ament_package()
+```
 
 ## Implementation Phases
 
 ### Phase 1 — This PR
 
-1. **Scaffolding**: `package.xml`, `setup.py`, `setup.cfg`, `resource/`, `plugin.xml`, `README.md`.
-2. **`config_model.py`**: `PaneConfig` and `GridConfig` dataclasses + YAML I/O; defaults.
-3. **`staleness_tracker.py`**: pure state machine (no Qt import).
-4. **`camera_pane_widget.py`**: QLabel-based image renderer with colored `QFrame` border; letterbox via `QImage.scaled(..., KeepAspectRatio)`; topic + rate label.
-5. **`camera_grid_widget.py`**: `QGridLayout` container; creates panes from `GridConfig`; holds `image_transport` subscriptions; 1 Hz staleness tick; `get_config` / `load_config`.
-6. **`camera_grid_plugin.py`**: rqt wrapper mirroring `annunciator_plugin.py` (perspective save/restore + `trigger_configuration`).
-7. **`config_dialog.py`**: grid-dims spinboxes + pane table with dropdown-or-free-form `(base, transport)` fields.
-8. **`config/default_camera_grid.yaml`**: 2×2 empty placeholder panes (so a fresh install shows borders + labels).
-9. **Tests**: `test_config_model.py` (YAML roundtrip, missing-field validation), `test_staleness.py` (transitions + boundary ticks), `test_copyright.py`.
-10. **Repo root `README.md`**: add `rqt_camera_grid` entry AND `rqt_operator_log` entry (pre-existing omission flagged in review).
+1. **Scaffolding**: `package.xml`, `CMakeLists.txt`, `plugin.xml`, `plugin_description.xml`, `README.md`.
+2. **`staleness_tracker.{hpp,cpp}`**: pure C++ state machine.
+3. **`config_model.{hpp,cpp}`**: `PaneConfig`, `GridConfig` structs + `yaml-cpp` load/save; defaults.
+4. **`camera_pane_widget.{hpp,cpp}`**: `QFrame` subclass with child `QLabel` for image + top-strip label; `image_transport::Subscriber` member; border color via palette; uses `cv_bridge::toCvShare` for non-rgb8 frames, zero-copy `QImage` view otherwise.
+5. **`camera_grid_widget.{hpp,cpp}`**: `QGridLayout` container; constructs panes from `GridConfig`; owns a shared `image_transport::ImageTransport`; 1 Hz `QTimer` ticks all panes.
+6. **`camera_grid_plugin.{hpp,cpp}`**: `rqt_gui_cpp::Plugin` subclass + `PLUGINLIB_EXPORT_CLASS` macro; `saveSettings`/`restoreSettings`/`triggerConfiguration`.
+7. **`config_dialog.{hpp,cpp}`**: grid-dims spinboxes + pane table with dropdown-or-free-form `(base, transport)` fields, populated via `node->get_topic_names_and_types()`.
+8. **`config/default_camera_grid.yaml`**: empty 2×2 placeholder.
+9. **Tests**: `test_staleness_tracker.cpp` (transitions + boundary ticks), `test_config_model.cpp` (YAML roundtrip + validation).
+10. **Repo root `README.md`**: add `rqt_camera_grid` entry AND the missing `rqt_operator_log` entry.
 
-### Phase 2 — Follow-up issues (file separately at PR time)
+### Phase 2 — Follow-up issues (file separately)
 
 - Click-to-expand a pane to fill the grid.
 - Per-pane FPS limiter (QElapsedTimer-based drop).
 - Recording-status overlay coordinated with `rqt_operator_log`.
 - Auto-threshold from observed frame rate (if manual defaults prove awkward).
+- Standalone (non-rqt) entry point if operators want a bare window. Non-trivial in C++ (`QApplication` + `rclcpp::Node` + event-loop bridging); not worth it unless asked for.
 
 ## Files to Change
 
 | File | Change |
 |------|--------|
-| `rqt_camera_grid/**` | New package (all files listed above) |
+| `rqt_camera_grid/**` | New C++ package (all files listed above) |
 | `README.md` | Add `rqt_camera_grid` entry; add missing `rqt_operator_log` entry |
-| `.agent/work-plans/PLAN_ISSUE-20.md` | This plan (first commit) |
+| `.agent/work-plans/PLAN_ISSUE-20.md` | This plan |
 
 ## Consequences
 
@@ -167,29 +288,37 @@ the H.265 plugin that motivates the secondary goal.
 | Add a new package | Repo root `README.md` | Yes |
 | Add `ffmpeg_image_transport` rosdep | PR description verifies `rosdep install` resolves it on a fresh salmon shell | Yes (call out in PR) |
 | Define perspective schema | Document schema in package `README.md` | Yes |
-| Staleness threshold defaults | Documented in package `README.md` | Yes |
+| First C++ package in this repo | Note the divergence from Python precedent in package `README.md`; confirm CI (`./ui_ws/build.sh`) picks up ament_cmake tests alongside ament_python | Yes |
 
 ## Open Questions
 
-1. **Image conversion for `FFMPEGPacket`**: `ffmpeg_image_transport` exposes a
-   Python subscription that decodes into `sensor_msgs/Image`, or does it deliver
-   `FFMPEGPacket` to the subscriber and require host-side decode in our widget?
-   Needs a five-minute check against `ffmpeg_image_transport`'s Python API on
-   jazzy before writing the subscription code — may affect `cv_bridge` usage.
-2. **Default config content**: Ship an empty 2×2 placeholder, or ship a commented
-   bizzyboat-style example (clearly tagged as "example, not applicable on every
-   platform")? The "platform-agnostic" principle argues for empty; usability
-   argues for a commented example.
-3. **Rate label source**: Measure rate from incoming-frame timestamps in the
-   pane, or subscribe to `/rosout` / reuse an existing rate-tracker utility?
-   The self-measured approach is simpler and matches what operators actually
-   care about (is *this display* keeping up); default to self-measured unless
-   there's a reason not to.
+1. **Qt dep spelling in `package.xml`**: `libqt5-widgets`? `qtbase5-dev`? ROS 2
+   jazzy's `rosdep` keys vary across distros. Crib the exact key from
+   `rqt_image_view`'s `package.xml` on jazzy before first push of the build.
+2. **Default config content**: Ship an empty 2×2 placeholder, or ship a
+   commented bizzyboat-style example (clearly tagged as "example")? The
+   "platform-agnostic" principle argues for empty; usability argues for a
+   commented example. Leaning empty.
+3. **Rate label source**: Self-measured from incoming-frame stamps (simple,
+   reflects what operators care about — is *this display* keeping up?) vs.
+   subscribing to an existing topic-statistics source. Default to
+   self-measured unless there's a reason not to.
+
+## Risk / Complexity Notes
+
+- **First C++ package in this repo**: adds ament_cmake to the build surface
+  (this repo has only been ament_python so far). Verify `./ui_ws/build.sh`
+  and the test runner handle the mixed layout without extra flags.
+- **MOC + Qt5** add build time relative to the Python plan. Acceptable.
+- **Thread safety**: image_transport callbacks arrive on a ROS executor
+  thread; UI updates happen on the Qt main thread. Use `QMetaObject::invokeMethod`
+  (or a Qt signal emitted from the callback) to marshal — standard `rqt_image_view`
+  pattern.
 
 ## Estimated Scope
 
-Single PR. Package size comparable to `rqt_annunciator` (~800-1200 LoC including
-tests). Nice-to-haves deferred to separate issues keeps this reviewable.
+Single PR. Package size comparable to `rqt_image_view` (~1500–2500 LoC
+including tests and CMake). Nice-to-haves deferred keeps this reviewable.
 
 ---
 **Authored-By**: `Claude Code Agent`
