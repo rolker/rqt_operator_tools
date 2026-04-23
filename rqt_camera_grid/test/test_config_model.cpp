@@ -287,6 +287,33 @@ TEST(ConfigModel, ParseTopicsFiltersUnknownTypes)
   EXPECT_TRUE(pairs.empty());
 }
 
+TEST(ConfigModel, ParseTopicsRejectsSuffixMatchWithWrongType)
+{
+  // Topic name ends in a known transport suffix but advertises a wrong
+  // type (e.g. a diagnostic publisher that happens to end in "/compressed").
+  // It must not be reported as an image source — otherwise it would show
+  // up in the config dialog and the pane would fail to render.
+  std::map<std::string, std::vector<std::string>> topics = {
+    {"/debug/compressed", {"diagnostic_msgs/msg/DiagnosticStatus"}},
+    {"/cam/foo/ffmpeg", {"std_msgs/msg/String"}},
+    {"/depth/compressedDepth", {"sensor_msgs/msg/PointCloud2"}},
+  };
+  auto pairs = parse_image_topics(topics);
+  EXPECT_TRUE(pairs.empty())
+    << "suffix-matched topics with wrong types should be rejected";
+}
+
+TEST(ConfigModel, ParseTopicsAcceptsCompressedDepthWithCorrectType)
+{
+  std::map<std::string, std::vector<std::string>> topics = {
+    {"/cam/depth/compressedDepth", {"sensor_msgs/msg/CompressedImage"}},
+  };
+  auto pairs = parse_image_topics(topics);
+  ASSERT_EQ(pairs.size(), 1u);
+  EXPECT_EQ(pairs[0].first, "/cam/depth");
+  EXPECT_EQ(pairs[0].second, "compressedDepth");
+}
+
 TEST(ConfigModel, ParseTopicsMixedNamespace)
 {
   std::map<std::string, std::vector<std::string>> topics = {

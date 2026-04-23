@@ -60,15 +60,15 @@ those cases.
 
 ### Subscription QoS
 
-`rmw_qos_profile_sensor_data`. Matches the `rclcpp::SensorDataQoS()` used
-by every image subscriber in this workspace — the default-QoS overload
-would silently fail to match best-effort publishers.
+`rmw_qos_profile_sensor_data`. Image publishers typically use best-effort
+sensor-data QoS; the default-QoS overload (reliable, keep-last-1) would
+silently fail to match those publishers and deliver no frames.
 
 ### Staleness thresholds
 
 Per-pane `warn_s` and `error_s` (seconds since last frame). Defaults are
-`warn=2.0`, `error=5.0`, matching `camp/src/camp/helm_manager/helm_manager.h`
-so operators see the same green/yellow/red boundaries across tools.
+`warn=2.0`, `error=5.0`, chosen for consistency with the green/yellow/red
+staleness boundaries operators see elsewhere on the operator station.
 
 ### Grid layout
 

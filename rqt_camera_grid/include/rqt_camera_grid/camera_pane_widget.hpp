@@ -100,7 +100,6 @@ private:
   void handleImage(const sensor_msgs::msg::Image::ConstSharedPtr & msg);
   void subscribe();
   void unsubscribe();
-  void applyBorder(StalenessTracker::Level level);
   QImage toQImage(const sensor_msgs::msg::Image::ConstSharedPtr & msg);
 
   rclcpp::Node::SharedPtr node_;

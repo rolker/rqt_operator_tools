@@ -96,10 +96,17 @@ void resize_panes(GridConfig & config, int new_rows, int new_cols);
 
 // Parse the output shape of rclcpp::Node::get_topic_names_and_types()
 // (map<topic_name, vector<type_name>>) into a list of image-shaped (base,
-// transport) pairs. Recognized transports: ffmpeg, compressed,
-// compressedDepth, theora. Topics whose name doesn't end in a known
-// transport suffix are treated as raw iff their type is
-// sensor_msgs/msg/Image. Unknown types are filtered out.
+// transport) pairs.
+//
+// A topic is accepted only if both its name and its advertised type match:
+//   - /<base>/ffmpeg          + ffmpeg_image_transport_msgs/msg/FFMPEGPacket
+//   - /<base>/compressed      + sensor_msgs/msg/CompressedImage
+//   - /<base>/compressedDepth + sensor_msgs/msg/CompressedImage
+//   - /<base>/theora          + theora_image_transport/msg/Packet
+//   - /<base>                 + sensor_msgs/msg/Image (raw)
+// Topics with a known suffix but a non-matching type are skipped rather
+// than offered with the wrong transport; topics without a known suffix
+// and without a raw Image type are filtered out.
 std::vector<std::pair<std::string, std::string>> parse_image_topics(
   const std::map<std::string, std::vector<std::string>> & topic_types);
 

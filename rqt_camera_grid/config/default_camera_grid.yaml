@@ -10,6 +10,6 @@
 #     - { base: <topic>, transport: <raw|compressed|compressedDepth|theora|ffmpeg>,
 #         warn_s: <float>, error_s: <float> }
 #
-# Defaults: warn_s=2.0, error_s=5.0 (matches camp helm_manager thresholds).
+# Defaults: warn_s=2.0, error_s=5.0 for operator-station consistency.
 grid: { rows: 2, cols: 2 }
 panes: []

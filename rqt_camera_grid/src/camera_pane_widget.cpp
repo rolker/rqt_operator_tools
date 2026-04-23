@@ -102,7 +102,7 @@ CameraPaneWidget::CameraPaneWidget(
   if (!config_.base.empty()) {
     subscribe();
   }
-  applyBorder(StalenessTracker::Level::Error);
+  // current_level_ defaults to Error in the header — no frame yet.
 }
 
 CameraPaneWidget::~CameraPaneWidget()
@@ -265,14 +265,8 @@ void CameraPaneWidget::tick()
   auto level = staleness_.tick(node_->get_clock()->now());
   if (level != current_level_) {
     current_level_ = level;
-    applyBorder(level);
     update();
   }
-}
-
-void CameraPaneWidget::applyBorder(StalenessTracker::Level level)
-{
-  current_level_ = level;
 }
 
 double CameraPaneWidget::observed_aspect() const

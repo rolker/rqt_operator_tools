@@ -105,7 +105,7 @@ rqt_operator_tools/
 │   │   ├── camera_grid_plugin.hpp                # : public rqt_gui_cpp::Plugin
 │   │   ├── camera_grid_widget.hpp                # : public QWidget
 │   │   ├── camera_pane_widget.hpp                # : public QFrame
-│   │   ├── staleness_tracker.hpp                 # pure logic, no Qt/ROS
+│   │   ├── staleness_tracker.hpp                 # pure logic, uses rclcpp::Time (no Qt)
 │   │   ├── grid_layout.hpp                       # pure geometry (W,H,R,C,A)->rects
 │   │   └── config_model.hpp                      # PaneConfig / GridConfig structs + yaml I/O
 │   ├── src/
@@ -215,15 +215,14 @@ No Qt or ROS dependency inside the class — unit-testable with `rclcpp::Time`
 constructed from `builtin_interfaces`. Pane widget owns an instance, calls
 `mark_frame()` from `on_image()`, and `tick()` from the 1 Hz timer.
 
-**Default thresholds**: `warn_s = 2.0, error_s = 5.0`. These match
-`camp/src/camp/helm_manager/helm_manager.h:59-60`
-(`max_green_duration_ = rclcpp::Duration(2, 0)`,
-`max_yellow_duration_ = rclcpp::Duration(5, 0)`) so an operator moving
-between camp's helm-manager widget and this plugin sees the same
-green-at-2s / yellow-at-5s boundaries across tools. This is a conscious
-deviation from the issue's suggested rate-based defaults ("warn at 3× the
-period, error at 10×") — cross-tool consistency on the operator station
-outweighs per-stream-rate adaptation for v1. If operators later find fixed
+**Default thresholds**: `warn_s = 2.0, error_s = 5.0`. Chosen for
+operator-station consistency: these are the green-at-2s / yellow-at-5s
+boundaries operators already see in other staleness-indicating tools
+on the operator station, so moving between tools doesn't require
+recalibrating expectations. This is a conscious deviation from the
+issue's suggested rate-based defaults ("warn at 3× the period, error
+at 10×") — cross-tool consistency on the operator station outweighs
+per-stream-rate adaptation for v1. If operators later find fixed
 thresholds don't match actual stream behavior, adaptive thresholds remain
 an easy follow-up (see Phase 2).
 
@@ -391,9 +390,14 @@ them directly:
 - **`std::vector<std::pair<std::string, std::string>> parse_image_topics(
     const std::map<std::string, std::vector<std::string>>& topic_types)`**
   — takes the output shape of `node->get_topic_names_and_types()` and
-  returns `(base, transport)` pairs. Pure; no ROS deps beyond the STL
-  types. The dialog snapshots topics once at open, hands the map to this
-  function, and populates the combo from the result.
+  returns `(base, transport)` pairs. Pure function (no ROS runtime deps
+  beyond STL types, but the input string values are ROS type names that
+  are checked against expected types per transport). Each suffix is only
+  reported if the advertised type also matches
+  (e.g. `/ffmpeg` must advertise `ffmpeg_image_transport_msgs/msg/FFMPEGPacket`)
+  — otherwise a non-image publisher with a colliding topic name would
+  appear in the dropdown. The dialog snapshots topics once at open, hands
+  the map to this function, and populates the combo from the result.
 
 With those extracted, `test_config_model.cpp` covers:
 
@@ -565,12 +569,12 @@ _None — all planning decisions resolved. See `Resolved During Planning`._
   needed.
 - **Subscription QoS** (was review finding 2): `rmw_qos_profile_sensor_data`
   via the QoS-aware `image_transport::ImageTransport::subscribe` overload.
-  Every image subscriber in this workspace uses it; the default-QoS
-  overload would silently fail to match publishers.
-- **Staleness thresholds** (was review finding 1): fixed `warn=2s, error=5s`
-  matching `camp/src/camp/helm_manager/helm_manager.h:59-60`. Conscious
-  deviation from the issue's suggested rate-based defaults — cross-tool
-  consistency over per-stream adaptation for v1.
+  Image publishers typically use best-effort sensor-data QoS; the default
+  (reliable, keep-last-1) would silently fail to match them.
+- **Staleness thresholds** (was review finding 1): fixed `warn=2s, error=5s`,
+  chosen for operator-station consistency with other staleness-indicating
+  tools. Conscious deviation from the issue's suggested rate-based defaults
+  — cross-tool consistency over per-stream adaptation for v1.
 - **Grid layout** (was review finding 3): aspect-aware, slack-to-outside
   algorithm replacing `QGridLayout`; see "Grid layout" section.
 - **Config dialog testability** (was review finding 5): non-Qt logic

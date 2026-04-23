@@ -41,14 +41,24 @@ namespace rqt_camera_grid
 namespace
 {
 
-const std::array<std::string, 4> kKnownTransportSuffixes{
-  "/ffmpeg", "/compressed", "/compressedDepth", "/theora"};
-
-std::string suffix_to_transport(const std::string & suffix)
+// Expected advertised type for each image_transport transport. A topic is
+// only reported as that transport if its suffix matches *and* the topic
+// advertises the expected message type. Otherwise a non-image publisher
+// with a colliding topic name (e.g. /debug/compressed) would appear in
+// the config dialog's dropdown.
+struct TransportSuffix
 {
-  // Strip leading slash.
-  return suffix.empty() ? std::string() : suffix.substr(1);
-}
+  std::string suffix;         // e.g. "/compressed"
+  std::string transport;      // e.g. "compressed"
+  std::string expected_type;  // e.g. "sensor_msgs/msg/CompressedImage"
+};
+
+const std::array<TransportSuffix, 4> kKnownTransportSuffixes{{
+  {"/ffmpeg", "ffmpeg", "ffmpeg_image_transport_msgs/msg/FFMPEGPacket"},
+  {"/compressed", "compressed", "sensor_msgs/msg/CompressedImage"},
+  {"/compressedDepth", "compressedDepth", "sensor_msgs/msg/CompressedImage"},
+  {"/theora", "theora", "theora_image_transport/msg/Packet"},
+}};
 
 bool ends_with(const std::string & s, const std::string & suf)
 {
@@ -229,17 +239,21 @@ std::vector<std::pair<std::string, std::string>> parse_image_topics(
 {
   std::vector<std::pair<std::string, std::string>> out;
   for (const auto & [topic, types] : topic_types) {
-    // Known transport suffixes first.
-    bool matched = false;
-    for (const auto & suf : kKnownTransportSuffixes) {
-      if (ends_with(topic, suf)) {
-        const std::string base = topic.substr(0, topic.size() - suf.size());
-        out.emplace_back(base, suffix_to_transport(suf));
-        matched = true;
-        break;
+    // Known transport suffixes first. Suffix match alone isn't enough —
+    // require the expected advertised type too so a non-image publisher
+    // on /<anything>/compressed doesn't populate the dialog.
+    bool suffix_matched = false;
+    for (const auto & entry : kKnownTransportSuffixes) {
+      if (!ends_with(topic, entry.suffix)) {continue;}
+      suffix_matched = true;
+      if (has_type(types, entry.expected_type)) {
+        const std::string base =
+          topic.substr(0, topic.size() - entry.suffix.size());
+        out.emplace_back(base, entry.transport);
       }
+      break;
     }
-    if (matched) {continue;}
+    if (suffix_matched) {continue;}
 
     // Otherwise, accept raw Image topics; filter out unrelated types.
     if (has_type(types, "sensor_msgs/msg/Image")) {
