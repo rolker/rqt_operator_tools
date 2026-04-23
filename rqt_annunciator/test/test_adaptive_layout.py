@@ -180,3 +180,39 @@ class TestAnnunciatorColumnStretch:
             assert w._layout.columnStretch(c) == 0, (
                 f'stale column {c} stretch left over from a wider reflow'
             )
+
+    def test_config_reload_clears_prior_column_stretches(self, qapp):
+        """load_config with fewer indicators must zero the old cols too.
+
+        Regression: _clear_indicators used to reset the in-memory memo
+        but not the QGridLayout's stretch table, so reloading from a
+        wider config left stale weights on columns no longer in use.
+        """
+        w = _make_annunciator([f'wide_{i}' for i in range(6)])
+        w.resize(1200, 100)
+        w._rebuild_layout()
+        assert w._current_cols == 6
+        # Remember what the layout thinks about columns 2..5 — they
+        # must have been given non-zero stretches by _restretch_columns.
+        for c in range(2, 6):
+            assert w._layout.columnStretch(c) > 0
+
+        # Reload with a much smaller config — only 2 indicators.
+        config = AnnunciatorConfig(
+            indicators=[
+                IndicatorConfig(name='a', source='diagnostics',
+                                diagnostic_name='d_a'),
+                IndicatorConfig(name='b', source='diagnostics',
+                                diagnostic_name='d_b'),
+            ]
+        )
+        w.load_config(config)
+        w.resize(1200, 100)
+        w._rebuild_layout()
+        assert w._current_cols == 2
+        # Every column outside the new range must be zeroed on the
+        # layout itself, not just in our memo.
+        for c in range(2, w._layout.columnCount()):
+            assert w._layout.columnStretch(c) == 0, (
+                f'stale column {c} stretch survived config reload'
+            )

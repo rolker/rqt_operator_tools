@@ -192,10 +192,12 @@ class IndicatorWidget(QFrame):
             h_overhead = 0
             v_overhead = 0
 
-        # Color bar width is fixed (setFixedWidth), but fall back to
-        # minimumWidth / sizeHint in case that ever changes.
+        # Use the enforced width constraint rather than current geometry.
+        # ``setFixedWidth(8)`` pins minimumWidth == maximumWidth == 8, so
+        # minimumWidth() is reliable even before the first layout pass,
+        # whereas width() may still be the default geometry and
+        # overestimate the overhead (making fonts unnecessarily small).
         color_bar_w = max(
-            self._color_bar.width(),
             self._color_bar.minimumWidth(),
             self._color_bar.sizeHint().width(),
         )

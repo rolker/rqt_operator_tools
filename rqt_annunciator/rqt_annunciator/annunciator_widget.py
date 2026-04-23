@@ -364,4 +364,11 @@ class AnnunciatorWidget(QWidget):
         self._indicator_configs.clear()
         self._last_update.clear()
         self._current_cols = 0
+        # Zero every column stretch previously applied to the layout;
+        # otherwise reloading with fewer columns would leave stale
+        # weights on cols that are no longer in use, since
+        # _restretch_columns only zeroes cols derived from the (now
+        # reset) memo.
+        for c in range(self._layout.columnCount()):
+            self._layout.setColumnStretch(c, 0)
         self._last_column_stretches = []
