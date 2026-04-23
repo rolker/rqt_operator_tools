@@ -86,7 +86,7 @@ the first frame arrival per pane.
 ### Supported encodings
 
 - `rgb8` — zero-copy `QImage` view of the `sensor_msgs::msg::Image` buffer.
-- `bgr8` — `cv_bridge::toCvShare(msg, "rgb8")`, then wrap as `QImage`.
+- `bgr8` — `cv_bridge::toCvCopy(msg, "rgb8")`, then wrap as `QImage`. Note that `toCvShare` would not help here — any encoding conversion (bgr8→rgb8, mono8→rgb8) necessarily copies.
 - `mono8` — `cv_bridge` automatic grayscale → RGB conversion.
 - Other encodings (`16UC1`, `32FC1`, depth formats, unknown) — one-time
   `RCLCPP_WARN` per pane, render a dark placeholder. Staleness border

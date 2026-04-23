@@ -117,7 +117,7 @@ private:
   bool encoding_warned_{false};
   std::string last_warned_encoding_;
 
-  QLabel * label_;
+  QLabel * label_{nullptr};
 };
 
 }  // namespace rqt_camera_grid

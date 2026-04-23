@@ -145,7 +145,13 @@ void CameraPaneWidget::onImageReceived(sensor_msgs::msg::Image::ConstSharedPtr m
   if (!msg || msg->width == 0 || msg->height == 0) {
     return;
   }
-  staleness_.mark_frame(node_->get_clock()->now());
+  const rclcpp::Time now = node_->get_clock()->now();
+  staleness_.mark_frame(now);
+
+  // Drop to Neutral immediately on frame arrival instead of waiting up to
+  // 1s for the next QTimer tick. Matches operator expectation that a pane
+  // going green (recovery) tracks the frame, not the wall clock.
+  current_level_ = staleness_.tick(now);
 
   QImage qimg = toQImage(msg);
   if (!qimg.isNull()) {
@@ -179,7 +185,10 @@ QImage CameraPaneWidget::toQImage(const sensor_msgs::msg::Image::ConstSharedPtr 
   // cv_bridge fallback for common encodings.
   if (msg->encoding == "bgr8" || msg->encoding == "mono8") {
     try {
-      // Pass the ConstSharedPtr directly; avoids an extra full-frame copy.
+      // Pass the ConstSharedPtr directly. toCvCopy still allocates for the
+      // encoding conversion (bgr8/mono8 -> rgb8 is never zero-copy); this
+      // just avoids the pointless intermediate make_shared<Image>(msg) copy
+      // that the previous form did before handing off to cv_bridge.
       auto cv_ptr = cv_bridge::toCvCopy(msg, "rgb8");
       return QImage(
         cv_ptr->image.data, cv_ptr->image.cols, cv_ptr->image.rows,

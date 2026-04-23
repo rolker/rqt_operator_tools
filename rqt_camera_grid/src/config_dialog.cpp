@@ -233,6 +233,23 @@ void ConfigDialog::onAddPane()
 {
   save_current_editor_to_config();
   config_.panes.push_back(PaneConfig{});
+  // Grow the grid if we've overrun rows*cols, so the new pane is visible
+  // after OK rather than silently truncated by CameraGridWidget::build_panes.
+  // Prefer growing cols first (usually more screen width than height).
+  const int needed = static_cast<int>(config_.panes.size());
+  while (config_.rows * config_.cols < needed) {
+    if (config_.cols <= config_.rows) {
+      config_.cols += 1;
+    } else {
+      config_.rows += 1;
+    }
+  }
+  rows_spin_->blockSignals(true);
+  cols_spin_->blockSignals(true);
+  rows_spin_->setValue(config_.rows);
+  cols_spin_->setValue(config_.cols);
+  rows_spin_->blockSignals(false);
+  cols_spin_->blockSignals(false);
   refresh_list();
   list_->setCurrentRow(static_cast<int>(config_.panes.size()) - 1);
 }
@@ -258,6 +275,11 @@ void ConfigDialog::onImportYaml()
   try {
     GridConfig loaded = config_from_file(path.toStdString());
     config_ = loaded;
+    // Prevent the setCurrentRow(0) below from firing onSelectionChanged,
+    // which would call save_current_editor_to_config() with the pre-import
+    // current_row_ and the editor's stale values and overwrite the freshly
+    // imported config_.panes[old_row_].
+    current_row_ = -1;
     rows_spin_->blockSignals(true);
     cols_spin_->blockSignals(true);
     rows_spin_->setValue(config_.rows);
@@ -331,11 +353,12 @@ void ConfigDialog::refresh_list()
   list_->blockSignals(false);
 }
 
-GridConfig ConfigDialog::get_config() const
+GridConfig ConfigDialog::get_config()
 {
-  // Ensure the editor's current values are folded in. save_current_editor
-  // mutates config_, so const_cast is pragmatic here.
-  const_cast<ConfigDialog *>(this)->save_current_editor_to_config();
+  // Fold the editor's live field values into config_ before returning, so
+  // callers see everything the user typed (including edits to the currently
+  // selected pane that haven't been flushed via a selection change).
+  save_current_editor_to_config();
   return config_;
 }
 

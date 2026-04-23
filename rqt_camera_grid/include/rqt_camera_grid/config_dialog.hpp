@@ -53,7 +53,12 @@ public:
     const GridConfig & initial,
     QWidget * parent = nullptr);
 
-  GridConfig get_config() const;
+  // Non-const because it folds the editor's live field values into config_
+  // before returning. The alternative (const method with const_cast) hides
+  // the mutation from readers; the alternative-alternative (commit on
+  // accepted signal) would leave the dialog surprising if callers read
+  // mid-edit. This is the honest compromise.
+  GridConfig get_config();
 
 private slots:
   void onRowsChanged(int value);
