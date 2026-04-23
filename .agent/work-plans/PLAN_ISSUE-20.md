@@ -107,17 +107,21 @@ rqt_operator_tools/
 │   │   ├── camera_grid_widget.hpp                # : public QWidget
 │   │   ├── camera_pane_widget.hpp                # : public QFrame
 │   │   ├── staleness_tracker.hpp                 # pure logic, no Qt/ROS
+│   │   ├── grid_layout.hpp                       # pure geometry (W,H,R,C,A)->rects
 │   │   └── config_model.hpp                      # PaneConfig / GridConfig structs + yaml I/O
 │   ├── src/
 │   │   ├── camera_grid_plugin.cpp                # PLUGINLIB_EXPORT_CLASS + rqt save/restore
-│   │   ├── camera_grid_widget.cpp                # QGridLayout container, perspective I/O
+│   │   ├── camera_grid_widget.cpp                # resizeEvent -> grid_layout; perspective I/O
 │   │   ├── camera_pane_widget.cpp                # image_transport::Subscriber, QImage render, border
 │   │   ├── staleness_tracker.cpp
+│   │   ├── grid_layout.cpp                       # pure fn; no Qt/ROS
 │   │   ├── config_model.cpp                      # yaml-cpp load/save
 │   │   └── config_dialog.cpp                     # grid-dims + per-pane (base, transport) editor
 │   └── test/
 │       ├── test_staleness_tracker.cpp            # gtest
 │       ├── test_config_model.cpp                 # gtest
+│       ├── test_grid_layout.cpp                  # gtest
+│       ├── test_pane_lifecycle.cpp               # gtest (Qt offscreen)
 │       └── CMakeLists.txt (or inline)            # ament_add_gtest
 ```
 
@@ -128,10 +132,10 @@ rqt_operator_tools/
 ```yaml
 grid: { rows: 2, cols: 2 }
 panes:
-  - { base: /bizzy/sensors/cameras/oak_forward/image_raw,   transport: ffmpeg,     warn_s: 1.0, error_s: 3.0 }
-  - { base: /bizzy/sensors/cameras/oak_starboard/image_raw, transport: ffmpeg,     warn_s: 1.0, error_s: 3.0 }
-  - { base: /bizzy/sensors/cameras/oak_aft/segmentation,    transport: compressed, warn_s: 2.0, error_s: 6.0 }
-  - { base: /some/usb_cam/image_raw,                        transport: raw,        warn_s: 1.0, error_s: 3.0 }
+  - { base: /bizzy/sensors/cameras/oak_forward/image_raw,   transport: ffmpeg,     warn_s: 2.0, error_s: 5.0 }
+  - { base: /bizzy/sensors/cameras/oak_starboard/image_raw, transport: ffmpeg,     warn_s: 2.0, error_s: 5.0 }
+  - { base: /bizzy/sensors/cameras/oak_aft/segmentation,    transport: compressed, warn_s: 2.0, error_s: 5.0 }
+  - { base: /some/usb_cam/image_raw,                        transport: raw,        warn_s: 2.0, error_s: 5.0 }
 ```
 
 ```cpp
@@ -172,6 +176,18 @@ No Qt or ROS dependency inside the class — unit-testable with `rclcpp::Time`
 constructed from `builtin_interfaces`. Pane widget owns an instance, calls
 `mark_frame()` from `on_image()`, and `tick()` from the 1 Hz timer.
 
+**Default thresholds**: `warn_s = 2.0, error_s = 5.0`. These match
+`camp/src/camp/helm_manager/helm_manager.h:59-60`
+(`max_green_duration_ = rclcpp::Duration(2, 0)`,
+`max_yellow_duration_ = rclcpp::Duration(5, 0)`) so an operator moving
+between camp's helm-manager widget and this plugin sees the same
+green-at-2s / yellow-at-5s boundaries across tools. This is a conscious
+deviation from the issue's suggested rate-based defaults ("warn at 3× the
+period, error at 10×") — cross-tool consistency on the operator station
+outweighs per-stream-rate adaptation for v1. If operators later find fixed
+thresholds don't match actual stream behavior, adaptive thresholds remain
+an easy follow-up (see Phase 2).
+
 ### Image rendering: zero-copy QImage view
 
 For `sensor_msgs::msg::Image` with `encoding == "rgb8"`:
@@ -186,7 +202,57 @@ For `bgr8` and other common encodings, convert via `cv_bridge` (fallback path).
 is exercised for our primary deployment — `cv_bridge::toCvShare(msg, "rgb8")`
 then wrap the `cv::Mat` buffer as a `QImage`.
 
-### Config dialog UX
+### Grid layout: image-aspect-aware, outside-padding-only
+
+Goal: **minimize empty space *between* image panes**. Slack from aspect-ratio
+mismatch between the widget and the camera images goes to the outer edges of
+the grid, not between neighboring panes.
+
+Do **not** use a plain `QGridLayout` with uniform cell sizes — that puts slack
+everywhere. Instead, `CameraGridWidget` overrides `resizeEvent` and computes
+child geometries directly.
+
+**Algorithm** (widget size `W × H`, grid `R × C`, target image aspect `A`):
+
+1. **Pick target aspect `A`**: use the median of observed per-pane image
+   aspect ratios. Until any frames arrive, default to `16 / 9`.
+2. **Compute tight cell size preserving `A`**:
+   - `cell_h_by_height = H / R`; `cell_w_candidate = cell_h_by_height * A`.
+   - If `C * cell_w_candidate ≤ W`: height-limited. `cell_w = cell_w_candidate`,
+     `cell_h = cell_h_by_height`. Horizontal slack `= W - C*cell_w`.
+   - Else: width-limited. `cell_w = W / C`, `cell_h = cell_w / A`. Vertical
+     slack `= H - R*cell_h`.
+3. **Distribute slack to outer edges only**: split horizontal slack equally
+   between the left of column 0 and the right of column C−1. Same for vertical
+   slack above row 0 and below row R−1. Inner cell boundaries sit at
+   `outer_pad + i * cell_w` / `outer_pad + j * cell_h` — shared, no gap.
+4. **Edge cells get widget geometry that includes the outer padding on their
+   outside edge(s)**; their image render rect is anchored toward the grid
+   interior (`Qt::AlignRight` for the left column, `Qt::AlignLeft` for the
+   right column, etc.). Inner cells have no outer padding — their widget
+   geometry equals their image render rect.
+5. **Staleness border is drawn around the image render rect, not the full
+   cell widget**. Otherwise edge-cell borders would be off-center. The outer
+   padding region of an edge cell paints the plain dark background only.
+6. **Mixed per-pane aspects**: panes whose observed aspect differs from the
+   target `A` letterbox *within their cell's image render rect* (standard
+   `Qt::KeepAspectRatio` inside the rect). This keeps mixed deployments
+   working without sacrificing the clean-fit of the majority.
+7. **Recompute layout** in `resizeEvent` and whenever any pane's observed
+   aspect changes the median.
+
+Example, 2×2 of 16:9 cameras in a 1920×800 widget:
+
+- Tight: `cell_h = 400`, `cell_w = cell_h * 16/9 ≈ 711`. `2*711 = 1422 ≤ 1920`,
+  height-limited. Horizontal slack `= 1920 - 1422 = 498`.
+- Left column widget spans `x ∈ [0, 711 + 249)`, image rect spans
+  `x ∈ [249, 960)`. Right column widget spans `x ∈ [960, 1920)`, image rect
+  spans `x ∈ [960, 1671)`. Inner vertical boundary at `x = 960` — shared.
+  Empty-between-images width: `0`. Empty-at-outside width: `249` left +
+  `249` right.
+
+This is implementable in ~50 lines of `resizeEvent` logic; tests live in
+`test_grid_layout.cpp` (pure function: `(W, H, R, C, A) → per-cell geometry`).
 
 `rclcpp::Node::get_topic_names_and_types()` gives all advertised topics. The
 dialog filters to those whose name ends in a known transport suffix
@@ -332,6 +398,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_config_model test/test_config_model.cpp src/config_model.cpp)
   target_include_directories(test_config_model PRIVATE include)
   target_link_libraries(test_config_model yaml-cpp)
+  ament_add_gtest(test_grid_layout test/test_grid_layout.cpp src/grid_layout.cpp)
+  target_include_directories(test_grid_layout PRIVATE include)
   ament_lint_auto_find_test_dependencies()
 endif()
 
@@ -346,11 +414,11 @@ ament_package()
 2. **`staleness_tracker.{hpp,cpp}`**: pure C++ state machine.
 3. **`config_model.{hpp,cpp}`**: `PaneConfig`, `GridConfig` structs + `yaml-cpp` load/save; defaults.
 4. **`camera_pane_widget.{hpp,cpp}`**: `QFrame` subclass with child `QLabel` for image + top-strip label; `image_transport::Subscriber` member; border color via palette; uses `cv_bridge::toCvShare` for non-rgb8 frames, zero-copy `QImage` view otherwise.
-5. **`camera_grid_widget.{hpp,cpp}`**: `QGridLayout` container; constructs panes from `GridConfig`; owns a shared `image_transport::ImageTransport`; 1 Hz `QTimer` ticks all panes.
+5. **`camera_grid_widget.{hpp,cpp}`**: container that constructs panes from `GridConfig`; owns a shared `image_transport::ImageTransport`; 1 Hz `QTimer` ticks all panes; overrides `resizeEvent` to apply the aspect-aware layout (see "Grid layout"). **Not** `QGridLayout` — child geometries set manually.
 6. **`camera_grid_plugin.{hpp,cpp}`**: `rqt_gui_cpp::Plugin` subclass + `PLUGINLIB_EXPORT_CLASS` macro; `saveSettings`/`restoreSettings`/`triggerConfiguration`.
 7. **`config_dialog.{hpp,cpp}`**: grid-dims spinboxes + pane table with dropdown-or-free-form `(base, transport)` fields, populated via `node->get_topic_names_and_types()`.
 8. **`config/default_camera_grid.yaml`**: empty 2×2 placeholder.
-9. **Tests**: `test_staleness_tracker.cpp` (transitions + boundary ticks), `test_config_model.cpp` (YAML roundtrip + validation), `test_pane_lifecycle.cpp` (construct/destruct `CameraPaneWidget` rapidly with dummy `Image` messages via `QT_QPA_PLATFORM=offscreen` — the regression test for stability rule 6).
+9. **Tests**: `test_staleness_tracker.cpp` (transitions + boundary ticks), `test_config_model.cpp` (YAML roundtrip + validation), `test_grid_layout.cpp` (pure geometry: `(W, H, R, C, A) → per-cell rects`; asserts zero inner gap, slack-to-outside, mixed-aspect letterboxing), `test_pane_lifecycle.cpp` (≥1000 construct/destruct cycles of `CameraPaneWidget` with a 640×480 rgb8 fixture under `QT_QPA_PLATFORM=offscreen`; asserts no crash, RSS growth < 50 MB via `getrusage`, no thread-teardown warnings on stderr — stability rule 6 regression test).
 10. **Repo root `README.md`**: add `rqt_camera_grid` entry AND the missing `rqt_operator_log` entry.
 
 ### Phase 2 — Follow-up issues (file separately)
@@ -358,7 +426,8 @@ ament_package()
 - Click-to-expand a pane to fill the grid.
 - Per-pane FPS limiter (QElapsedTimer-based drop).
 - Recording-status overlay coordinated with `rqt_operator_log`.
-- Auto-threshold from observed frame rate (if manual defaults prove awkward).
+- Adaptive staleness thresholds (if fixed 2s/5s defaults prove misaligned
+  with actual stream cadence — revisit after field use).
 - Standalone (non-rqt) entry point if operators want a bare window. Non-trivial in C++ (`QApplication` + `rclcpp::Node` + event-loop bridging); not worth it unless asked for.
 
 ## Files to Change
