@@ -110,6 +110,27 @@ class TestIndicatorEMA:
         assert w._label.font().pixelSize() <= IndicatorWidget._MAX_FONT_PX
         assert w._value_label.font().pixelSize() <= IndicatorWidget._MAX_FONT_PX
 
+    def test_fit_font_shrinks_below_layout_overhead(self, qapp):
+        """Shrinking past the layout overhead must still update the font.
+
+        Regression for the case where an early-return in _fit_font left a
+        previously-large font in place when ``usable_w <= 0`` — causing
+        severe clipping instead of the intended clamp to _MIN_FONT_PX.
+        """
+        w = IndicatorWidget('name')
+        # First grow the font by fitting into a large cell.
+        w.resize(2000, 600)
+        w.set_status(IndicatorLevel.OK, 'v')
+        large = w._label.font().pixelSize()
+        assert large > IndicatorWidget._MIN_FONT_PX, (
+            'precondition: font should have grown in a large cell'
+        )
+        # Now shrink below the layout overhead (~36 px horizontally).
+        w.resize(10, 10)
+        w._fit_font()
+        assert w._label.font().pixelSize() == IndicatorWidget._MIN_FONT_PX
+        assert w._value_label.font().pixelSize() == IndicatorWidget._MIN_FONT_PX
+
 
 class TestAnnunciatorColumnStretch:
     def test_stretches_reflect_ema_widths(self, qapp):

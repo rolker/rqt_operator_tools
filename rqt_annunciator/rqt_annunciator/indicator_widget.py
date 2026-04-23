@@ -114,8 +114,9 @@ class IndicatorWidget(QFrame):
         ref_font_bold.setBold(True)
         self._reference_metrics_bold = QFontMetrics(ref_font_bold)
 
-        # Seed the EMA from the label text alone so the first layout pass,
-        # before any data has arrived, reflects the natural label width.
+        # Seed the EMA from the label plus the '---' placeholder so the
+        # first layout pass, before any data has arrived, reflects that
+        # cold-start combined width (label + placeholder + gap).
         self._ema_width_px = self._measure_combined_width(name, self._value_text)
 
         self._apply_level()
@@ -202,21 +203,24 @@ class IndicatorWidget(QFrame):
 
         usable_w = self.width() - h_overhead
         usable_h = self.height() - v_overhead
-        if usable_w <= 0 or usable_h <= 0:
-            return
-
         ref_w = self._measure_combined_width(
             self._label.text(), self._value_text)
-        if ref_w <= 0:
-            return
 
-        # Linear scaling: text widths scale roughly linearly with font px.
-        horiz_px = self._REFERENCE_FONT_PX * usable_w / ref_w
-        # Text height ≈ font pixel size × ~1.2 for ascent/descent; use a
-        # conservative ceiling of 0.7·cell_height so descenders don't touch.
-        vert_px = usable_h * 0.7
-        font_px = int(min(horiz_px, vert_px))
-        font_px = max(self._MIN_FONT_PX, min(self._MAX_FONT_PX, font_px))
+        if usable_w <= 0 or usable_h <= 0 or ref_w <= 0:
+            # Widget is tiny or text is empty — fall through with the
+            # minimum font so we still overwrite any previously-large
+            # font (otherwise shrinking the cell below the layout
+            # overhead leaves huge text clipping the cell).
+            font_px = self._MIN_FONT_PX
+        else:
+            # Linear scaling: text widths scale roughly linearly with font px.
+            horiz_px = self._REFERENCE_FONT_PX * usable_w / ref_w
+            # Text height ≈ font pixel size × ~1.2 for ascent/descent; use
+            # a conservative ceiling of 0.7·cell_height so descenders don't
+            # touch.
+            vert_px = usable_h * 0.7
+            font_px = int(min(horiz_px, vert_px))
+            font_px = max(self._MIN_FONT_PX, min(self._MAX_FONT_PX, font_px))
 
         # Start from each label's current font so we preserve any
         # app-wide or theme-applied attributes (family, letter spacing,
