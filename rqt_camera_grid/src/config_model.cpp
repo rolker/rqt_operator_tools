@@ -159,6 +159,10 @@ GridConfig config_from_yaml(const std::string & text)
         throw ConfigParseError(
           "'panes[" + std::to_string(i) + "].warn_s' must be a number");
       }
+      if (p.warn_s < 0.0) {
+        throw ConfigParseError(
+          "'panes[" + std::to_string(i) + "].warn_s' must be >= 0");
+      }
     }
     if (pnode["error_s"]) {
       try {
@@ -167,6 +171,14 @@ GridConfig config_from_yaml(const std::string & text)
         throw ConfigParseError(
           "'panes[" + std::to_string(i) + "].error_s' must be a number");
       }
+      if (p.error_s < 0.0) {
+        throw ConfigParseError(
+          "'panes[" + std::to_string(i) + "].error_s' must be >= 0");
+      }
+    }
+    if (p.error_s < p.warn_s) {
+      throw ConfigParseError(
+        "'panes[" + std::to_string(i) + "]' requires error_s >= warn_s");
     }
     out.panes.push_back(p);
   }

@@ -136,6 +136,33 @@ TEST(ConfigModel, ParseErrorOnNonNumericThreshold)
     ConfigParseError);
 }
 
+TEST(ConfigModel, ParseErrorOnNegativeWarnS)
+{
+  EXPECT_THROW(
+    config_from_yaml(
+      "grid: {rows: 1, cols: 1}\n"
+      "panes:\n  - {base: /x, warn_s: -1.0, error_s: 5.0}\n"),
+    ConfigParseError);
+}
+
+TEST(ConfigModel, ParseErrorOnNegativeErrorS)
+{
+  EXPECT_THROW(
+    config_from_yaml(
+      "grid: {rows: 1, cols: 1}\n"
+      "panes:\n  - {base: /x, warn_s: 1.0, error_s: -2.0}\n"),
+    ConfigParseError);
+}
+
+TEST(ConfigModel, ParseErrorOnReversedThresholds)
+{
+  EXPECT_THROW(
+    config_from_yaml(
+      "grid: {rows: 1, cols: 1}\n"
+      "panes:\n  - {base: /x, warn_s: 5.0, error_s: 1.0}\n"),
+    ConfigParseError);
+}
+
 TEST(ConfigModel, MissingPanesKeyOkYieldsEmpty)
 {
   GridConfig c = config_from_yaml("grid: {rows: 2, cols: 2}\n");

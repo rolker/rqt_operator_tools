@@ -64,6 +64,7 @@ CameraGridWidget::CameraGridWidget(rclcpp::Node::SharedPtr node, QWidget * paren
   // Default to a 2x2 empty grid until a config arrives.
   config_.rows = 2;
   config_.cols = 2;
+  resize_panes(config_, config_.rows, config_.cols);
   build_panes();
 }
 
@@ -78,7 +79,17 @@ void CameraGridWidget::load_config(const GridConfig & config)
 {
   teardown_panes();
   config_ = config;
-  // Ensure panes match grid dimensions.
+  // Warn before resize_panes truncates so the user sees the data loss.
+  // resize_panes is the single source of truth for pane-count/grid-dim
+  // alignment; build_panes just materializes widgets for the already-sized
+  // config_.panes vector.
+  const size_t total = static_cast<size_t>(config_.rows) * config_.cols;
+  if (config_.panes.size() > total) {
+    RCLCPP_WARN(
+      node_->get_logger(),
+      "config has %zu panes but grid has only %zu cells; truncating",
+      config_.panes.size(), total);
+  }
   resize_panes(config_, config_.rows, config_.cols);
   build_panes();
   relayout();
@@ -100,19 +111,10 @@ void CameraGridWidget::teardown_panes()
 
 void CameraGridWidget::build_panes()
 {
-  const size_t total = static_cast<size_t>(config_.rows) * config_.cols;
-  panes_.reserve(total);
-  while (config_.panes.size() < total) {
-    config_.panes.push_back(PaneConfig{});
-  }
-  if (config_.panes.size() > total) {
-    RCLCPP_WARN(
-      node_->get_logger(),
-      "config has %zu panes but grid has only %zu cells; truncating",
-      config_.panes.size(), total);
-    config_.panes.resize(total);
-  }
-  for (size_t i = 0; i < total; ++i) {
+  // Callers must run resize_panes first so config_.panes.size() already
+  // equals config_.rows * config_.cols. Just materialize widgets for each.
+  panes_.reserve(config_.panes.size());
+  for (size_t i = 0; i < config_.panes.size(); ++i) {
     auto * pane = new CameraPaneWidget(node_, it_, config_.panes[i], this);
     connect(pane, &CameraPaneWidget::firstFrameSeen,
             this, &CameraGridWidget::onPaneFirstFrame);

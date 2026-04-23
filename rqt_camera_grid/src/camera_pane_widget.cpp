@@ -52,7 +52,6 @@ const QColor kBgColor(30, 30, 30);
 const QColor kBorderNeutral(60, 60, 60);   // dim gray, blends into background
 const QColor kBorderWarn(255, 180, 0);     // amber
 const QColor kBorderError(220, 40, 40);    // red
-const QColor kLabelColor(200, 200, 200);   // soft white for legibility
 }  // namespace
 
 CameraPaneWidget::CameraPaneWidget(
