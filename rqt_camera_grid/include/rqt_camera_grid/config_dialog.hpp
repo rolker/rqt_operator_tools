@@ -31,7 +31,9 @@
 
 #include <QDialog>  // NOLINT(build/include_order)
 
+#include <map>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <image_transport/image_transport.hpp>
@@ -83,6 +85,15 @@ private:
   void populate_topic_combo();
   void save_current_editor_to_config();
   void load_editor_from_config(int row);
+  // Rebuild config_.panes for new_rows × new_cols while preserving each
+  // cell's (row, col) position — unlike `resize_panes` which just
+  // truncates or pads the flat vector (re-interpreting row-major order
+  // shuffles cells on col shrink/grow). Cells that fall out of bounds
+  // are moved to `removed_cells_`; cells that come into bounds at a
+  // position present in `removed_cells_` are restored from there. So
+  // shrink-then-grow within a single dialog session round-trips
+  // losslessly.
+  void reshape_grid(int new_rows, int new_cols);
   // Tear down and rebuild the thumbnail cells. Called whenever config_
   // changes size (rows/cols spinbox, import) or the pane configs
   // themselves change (clear, swap). Subscription churn is acceptable
@@ -104,6 +115,11 @@ private:
   std::shared_ptr<image_transport::ImageTransport> it_;
   GridConfig config_;
   int current_row_{-1};
+  // Cells that fell out of bounds when the user shrank the grid.
+  // Keyed by (row, col); if the grid later grows back to include the
+  // same (row, col), the cell is restored from here. Cleared on import
+  // (new starting state). Lifetime = dialog lifetime only.
+  std::map<std::pair<int, int>, PaneConfig> removed_cells_;
 
   QSpinBox * rows_spin_;
   QSpinBox * cols_spin_;

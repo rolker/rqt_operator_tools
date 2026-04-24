@@ -276,17 +276,24 @@ void CameraPaneWidget::set_image_rect(const QRect & rect)
     cached_scaled_ = QPixmap();
   }
   image_rect_ = rect;
+  image_rect_explicit_ = true;
   update();
 }
 
 void CameraPaneWidget::resizeEvent(QResizeEvent * event)
 {
   QFrame::resizeEvent(event);
-  // If the grid widget hasn't set an explicit image_rect, default to full
-  // widget area (useful for the lifecycle test where the pane isn't parented
-  // to a grid).
-  if (image_rect_.isEmpty()) {
-    image_rect_ = QRect(0, 0, width(), height());
+  // Auto-track the full widget area unless an owner has explicitly
+  // laid us out via set_image_rect. CameraGridWidget does that on every
+  // relayout; ThumbnailCell (and the lifecycle test) does not, and
+  // relies on this path so the image scales to match the widget on
+  // every resize, not just the first one.
+  if (!image_rect_explicit_) {
+    const QRect full(0, 0, width(), height());
+    if (full.size() != image_rect_.size()) {
+      cached_scaled_ = QPixmap();
+    }
+    image_rect_ = full;
   }
   label_->move(image_rect_.x() + 4, image_rect_.y() + 4);
   label_->adjustSize();

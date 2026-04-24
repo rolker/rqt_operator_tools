@@ -284,22 +284,20 @@ void ConfigDialog::onBaseEditChanged(int index)
 void ConfigDialog::onRowsChanged(int value)
 {
   save_current_editor_to_config();
-  resize_panes(config_, value, config_.cols);
+  reshape_grid(value, config_.cols);
   rebuild_thumbnail_grid();
   const int new_row = std::min<int>(
     current_row_, static_cast<int>(config_.panes.size()) - 1);
   // Suppress the save inside set_selected_row for the re-select of
   // the same row (we just saved above and haven't touched the editor).
-  const int old_current = current_row_;
   current_row_ = -1;
   set_selected_row(new_row);
-  (void)old_current;
 }
 
 void ConfigDialog::onColsChanged(int value)
 {
   save_current_editor_to_config();
-  resize_panes(config_, config_.rows, value);
+  reshape_grid(config_.rows, value);
   rebuild_thumbnail_grid();
   const int new_row = std::min<int>(
     current_row_, static_cast<int>(config_.panes.size()) - 1);
@@ -370,6 +368,63 @@ void ConfigDialog::move_pane(int dst_row)
   current_row_ = -1;
   rebuild_thumbnail_grid();
   set_selected_row(dst_row);
+}
+
+void ConfigDialog::reshape_grid(int new_rows, int new_cols)
+{
+  // Snapshot the current grid as a (row, col) -> PaneConfig map so we
+  // can rebuild at the new dimensions without the flat-vector shuffle
+  // that resize_panes produces when cols changes.
+  std::map<std::pair<int, int>, PaneConfig> current;
+  for (int r = 0; r < config_.rows; ++r) {
+    for (int c = 0; c < config_.cols; ++c) {
+      const int idx = r * config_.cols + c;
+      if (idx < static_cast<int>(config_.panes.size())) {
+        current[{r, c}] = config_.panes[idx];
+      }
+    }
+  }
+
+  // Start the new removed buffer from the existing one (unchanged
+  // out-of-bounds cells stay remembered) and push any cells that are
+  // now falling out of bounds into it too.
+  std::map<std::pair<int, int>, PaneConfig> new_removed = removed_cells_;
+  for (const auto & [key, pane] : current) {
+    const auto & [r, c] = key;
+    if (r >= new_rows || c >= new_cols) {
+      new_removed[key] = pane;
+    }
+  }
+
+  // Build the new flat vector in row-major order. For each new (r, c):
+  //   - take from the current in-bounds snapshot if available
+  //   - else restore from the removed buffer if we have a match there
+  //   - else fall back to a default PaneConfig{}
+  std::vector<PaneConfig> new_panes;
+  new_panes.reserve(static_cast<size_t>(new_rows) * new_cols);
+  for (int r = 0; r < new_rows; ++r) {
+    for (int c = 0; c < new_cols; ++c) {
+      const auto key = std::make_pair(r, c);
+      auto cur_it = current.find(key);
+      if (cur_it != current.end()) {
+        new_panes.push_back(cur_it->second);
+        new_removed.erase(key);  // in case it was stale there
+        continue;
+      }
+      auto rem_it = new_removed.find(key);
+      if (rem_it != new_removed.end()) {
+        new_panes.push_back(rem_it->second);
+        new_removed.erase(rem_it);  // consumed on restore
+        continue;
+      }
+      new_panes.push_back(PaneConfig{});
+    }
+  }
+
+  config_.panes = std::move(new_panes);
+  config_.rows = new_rows;
+  config_.cols = new_cols;
+  removed_cells_ = std::move(new_removed);
 }
 
 void ConfigDialog::rebuild_thumbnail_grid()
@@ -444,6 +499,9 @@ void ConfigDialog::onImportYaml()
   try {
     GridConfig loaded = config_from_file(path.toStdString());
     config_ = loaded;
+    // Fresh starting state — forget cells removed under the previous
+    // config, they aren't relevant to the imported one.
+    removed_cells_.clear();
     // Restore the dialog's panes.size() == rows*cols invariant. YAML
     // authors can hand-edit a file where panes and grid dimensions
     // disagree; pad or truncate to match so every cell has an editable

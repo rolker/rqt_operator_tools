@@ -122,6 +122,11 @@ private:
   QSize cached_scaled_size_{0, 0};
 
   QRect image_rect_;  // logical pixels inside this widget
+  // True once set_image_rect() has been called — tells resizeEvent to
+  // keep hands off. False means the widget's owner hasn't explicitly
+  // laid us out, so we auto-track the full widget area (used by
+  // ThumbnailCell and any standalone host).
+  bool image_rect_explicit_{false};
   double observed_aspect_{0.0};
   bool first_frame_seen_{false};
   bool encoding_warned_{false};
