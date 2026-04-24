@@ -358,9 +358,17 @@ in-memory model, and the same OK-then-save mechanism persists it.
 `config_dialog.cpp` exposes:
 
 - **Grid dims**: two `QSpinBox`es for rows × cols; applying either resizes
-  the pane list (truncate / append empty panes).
-- **Pane list** (`QListWidget`): select a pane to edit; **+** / **−**
-  buttons add/remove panes. Pane label = `base` (or `(empty)` if unset).
+  the pane list (truncate / append empty panes). These spinboxes are the
+  *only* control that changes `panes.size()`.
+- **Pane list** (`QListWidget`): select a pane to edit. Pane label =
+  `base` (or `(empty)` if unset). Toolbar below the list:
+  - **`↑ ← → ↓`** — swap the selected pane with its row-major neighbor
+    in that direction. Selection follows the moved pane so arrows can
+    be chained. Invalid directions (out-of-bounds, or neighbor index
+    ≥ `panes.size()`) are disabled.
+  - **Clear** — reset the selected pane to a default `PaneConfig{}`
+    (empty base, transport `raw`, default thresholds). Same cell
+    stays; only the contents are reset.
 - **Pane editor** (right pane of dialog):
   - **Base topic**: `QComboBox` (editable) populated from a snapshot of
     `node->get_topic_names_and_types()` at dialog-open — see stability rule
@@ -394,13 +402,18 @@ them directly:
 
 - **`void resize_panes(GridConfig&, int new_rows, int new_cols)`** — applies
   the row-major rule: truncate trailing panes when shrinking, append
-  default-constructed `PaneConfig{}` entries when growing. Every dialog
-  operation that mutates `config_` (`onAddPane`, `onRemovePane`,
-  `onImportYaml`, rows/cols spinbox change) calls this to maintain the
+  default-constructed `PaneConfig{}` entries when growing. The rows/cols
+  spinboxes and `onImportYaml` call this to maintain the
   `panes.size() == rows*cols` invariant, so each grid cell always has
   exactly one editable list entry. The widget also calls it in
   `load_config` (logging a warning via `RCLCPP_WARN` before if the
-  incoming config has more panes than cells).
+  incoming config has more panes than cells). Note: the dialog has no
+  add/remove buttons — grid size is controlled exclusively by the
+  spinboxes, and the per-cell toolbar offers direction arrows
+  (`↑ ← → ↓`, each swaps the selected pane with its row-major
+  neighbor, invalid directions disabled) plus a Clear button (reset
+  the selected pane to a default `PaneConfig{}`). Neither button
+  ever changes `panes.size()`, so the invariant holds automatically.
 - **`GridConfig parse_yaml(const std::string& text)`** — already the
   `config_model` `from_yaml` entry point, but ensure it throws a typed
   `ConfigParseError` (derived from `std::runtime_error`) with a descriptive

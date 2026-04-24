@@ -99,21 +99,43 @@ ConfigDialog::ConfigDialog(
   auto * left = new QVBoxLayout();
   list_ = new QListWidget();
   left->addWidget(list_);
+  // Pane-edit toolbar: four direction arrows (swap with row-major
+  // neighbor) + Clear (reset to default PaneConfig{}). Grid *size* is
+  // controlled entirely by the rows/cols spinboxes above; these
+  // buttons only rearrange and reset existing cells, keeping
+  // panes.size() == rows*cols invariant by construction.
   auto * list_btns = new QHBoxLayout();
-  auto * add_btn = new QPushButton("+");
-  add_btn->setFixedWidth(30);
-  auto * rm_btn = new QPushButton("-");
-  rm_btn->setFixedWidth(30);
-  list_btns->addWidget(add_btn);
-  list_btns->addWidget(rm_btn);
+  move_up_btn_ = new QPushButton(QString::fromUtf8("↑"));
+  move_up_btn_->setFixedWidth(30);
+  move_up_btn_->setToolTip("Move pane up (swap with neighbor above)");
+  move_left_btn_ = new QPushButton(QString::fromUtf8("←"));
+  move_left_btn_->setFixedWidth(30);
+  move_left_btn_->setToolTip("Move pane left (swap with neighbor)");
+  move_right_btn_ = new QPushButton(QString::fromUtf8("→"));
+  move_right_btn_->setFixedWidth(30);
+  move_right_btn_->setToolTip("Move pane right (swap with neighbor)");
+  move_down_btn_ = new QPushButton(QString::fromUtf8("↓"));
+  move_down_btn_->setFixedWidth(30);
+  move_down_btn_->setToolTip("Move pane down (swap with neighbor below)");
+  clear_btn_ = new QPushButton("Clear");
+  clear_btn_->setToolTip("Clear the selected pane's configuration");
+  list_btns->addWidget(move_up_btn_);
+  list_btns->addWidget(move_left_btn_);
+  list_btns->addWidget(move_right_btn_);
+  list_btns->addWidget(move_down_btn_);
+  list_btns->addSpacing(8);
+  list_btns->addWidget(clear_btn_);
   list_btns->addStretch();
   left->addLayout(list_btns);
   body->addLayout(left, 1);
 
   connect(list_, &QListWidget::currentRowChanged,
           this, &ConfigDialog::onSelectionChanged);
-  connect(add_btn, &QPushButton::clicked, this, &ConfigDialog::onAddPane);
-  connect(rm_btn, &QPushButton::clicked, this, &ConfigDialog::onRemovePane);
+  connect(move_up_btn_, &QPushButton::clicked, this, &ConfigDialog::onMoveUp);
+  connect(move_down_btn_, &QPushButton::clicked, this, &ConfigDialog::onMoveDown);
+  connect(move_left_btn_, &QPushButton::clicked, this, &ConfigDialog::onMoveLeft);
+  connect(move_right_btn_, &QPushButton::clicked, this, &ConfigDialog::onMoveRight);
+  connect(clear_btn_, &QPushButton::clicked, this, &ConfigDialog::onClearPane);
 
   // Right: pane editor.
   auto * right_form = new QFormLayout();
@@ -198,6 +220,8 @@ ConfigDialog::ConfigDialog(
   refresh_list();
   if (!config_.panes.empty()) {
     list_->setCurrentRow(0);
+  } else {
+    update_edit_buttons(-1);
   }
 }
 
@@ -250,6 +274,7 @@ void ConfigDialog::onRowsChanged(int value)
   refresh_list();
   const int new_row = std::min<int>(current_row_, static_cast<int>(config_.panes.size()) - 1);
   if (new_row >= 0) {list_->setCurrentRow(new_row);}
+  update_edit_buttons(new_row);
 }
 
 void ConfigDialog::onColsChanged(int value)
@@ -259,6 +284,7 @@ void ConfigDialog::onColsChanged(int value)
   refresh_list();
   const int new_row = std::min<int>(current_row_, static_cast<int>(config_.panes.size()) - 1);
   if (new_row >= 0) {list_->setCurrentRow(new_row);}
+  update_edit_buttons(new_row);
 }
 
 void ConfigDialog::onSelectionChanged(int row)
@@ -266,66 +292,93 @@ void ConfigDialog::onSelectionChanged(int row)
   save_current_editor_to_config();
   current_row_ = row;
   load_editor_from_config(row);
+  update_edit_buttons(row);
 }
 
-void ConfigDialog::onAddPane()
+void ConfigDialog::onMoveUp()
 {
-  save_current_editor_to_config();
-  // Project grid growth needed for one additional pane. Prefer growing
-  // cols first (usually more screen width than height). Refuse the add if
-  // the projection would push either dimension past the spinbox cap —
-  // otherwise config_ and the UI widgets would silently disagree.
-  constexpr int kMaxDim = 16;
-  int new_rows = config_.rows;
-  int new_cols = config_.cols;
-  const int needed = static_cast<int>(config_.panes.size()) + 1;
-  while (new_rows * new_cols < needed) {
-    if (new_cols <= new_rows) {
-      new_cols += 1;
-    } else {
-      new_rows += 1;
-    }
-  }
-  if (new_rows > kMaxDim || new_cols > kMaxDim) {
-    RCLCPP_WARN(
-      node_->get_logger(),
-      "cannot add pane: would exceed %dx%d grid limit", kMaxDim, kMaxDim);
+  const int row = list_->currentRow();
+  if (row < 0 || row < config_.cols) {return;}
+  move_pane(row - config_.cols);
+}
+
+void ConfigDialog::onMoveDown()
+{
+  const int row = list_->currentRow();
+  if (row < 0) {return;}
+  const int dst = row + config_.cols;
+  if (dst >= static_cast<int>(config_.panes.size())) {return;}
+  move_pane(dst);
+}
+
+void ConfigDialog::onMoveLeft()
+{
+  const int row = list_->currentRow();
+  if (row < 0 || (row % config_.cols) == 0) {return;}
+  move_pane(row - 1);
+}
+
+void ConfigDialog::onMoveRight()
+{
+  const int row = list_->currentRow();
+  if (row < 0 || (row % config_.cols) == config_.cols - 1) {return;}
+  const int dst = row + 1;
+  if (dst >= static_cast<int>(config_.panes.size())) {return;}
+  move_pane(dst);
+}
+
+void ConfigDialog::onClearPane()
+{
+  const int row = list_->currentRow();
+  if (row < 0 || row >= static_cast<int>(config_.panes.size())) {return;}
+  // Suppress save_current_editor_to_config on the selection change
+  // below — we're deliberately replacing the pane, not copying the
+  // editor's stale values into it.
+  current_row_ = -1;
+  config_.panes[row] = PaneConfig{};
+  refresh_list();
+  list_->setCurrentRow(row);  // triggers load_editor_from_config + update_edit_buttons
+}
+
+void ConfigDialog::move_pane(int dst_row)
+{
+  const int src = list_->currentRow();
+  if (src < 0 ||
+    src >= static_cast<int>(config_.panes.size()) ||
+    dst_row < 0 ||
+    dst_row >= static_cast<int>(config_.panes.size()))
+  {
     return;
   }
-  config_.panes.push_back(PaneConfig{});
-  config_.rows = new_rows;
-  config_.cols = new_cols;
-  // Restore the dialog's panes.size() == rows*cols invariant: the grow
-  // loop can leave rows*cols > panes.size() (e.g. 2x2+1 grows to 2x3 but
-  // we only added one pane), which would leave the extra cell non-editable
-  // from the dialog until OK/reload.
-  resize_panes(config_, config_.rows, config_.cols);
-  rows_spin_->blockSignals(true);
-  cols_spin_->blockSignals(true);
-  rows_spin_->setValue(config_.rows);
-  cols_spin_->setValue(config_.cols);
-  rows_spin_->blockSignals(false);
-  cols_spin_->blockSignals(false);
+  // Flush any pending edits into the source pane so the swap carries
+  // them along, then suppress the about-to-fire save on the
+  // setCurrentRow(dst_row) below (dst is now the source's config;
+  // we don't want to overwrite it with the editor's pre-swap values).
+  save_current_editor_to_config();
+  std::swap(config_.panes[src], config_.panes[dst_row]);
+  current_row_ = -1;
   refresh_list();
-  list_->setCurrentRow(static_cast<int>(config_.panes.size()) - 1);
+  list_->setCurrentRow(dst_row);
 }
 
-void ConfigDialog::onRemovePane()
+void ConfigDialog::update_edit_buttons(int row)
 {
-  if (config_.panes.empty()) {return;}
-  int row = list_->currentRow();
-  if (row < 0) {return;}
-  current_row_ = -1;  // prevent save to about-to-delete slot
-  config_.panes.erase(config_.panes.begin() + row);
-  // Restore the dialog's panes.size() == rows*cols invariant (symmetric
-  // with onAddPane). Erase shrank panes below rows*cols; resize_panes
-  // pads back with a default pane. The user can shrink the grid itself
-  // via the rows/cols spinboxes.
-  resize_panes(config_, config_.rows, config_.cols);
-  refresh_list();
-  if (!config_.panes.empty()) {
-    list_->setCurrentRow(std::min<int>(row, static_cast<int>(config_.panes.size()) - 1));
+  const int n = static_cast<int>(config_.panes.size());
+  const bool selected = row >= 0 && row < n;
+  clear_btn_->setEnabled(selected);
+  if (!selected) {
+    move_up_btn_->setEnabled(false);
+    move_down_btn_->setEnabled(false);
+    move_left_btn_->setEnabled(false);
+    move_right_btn_->setEnabled(false);
+    return;
   }
+  const int r = row / config_.cols;
+  const int c = row % config_.cols;
+  move_up_btn_->setEnabled(r > 0);
+  move_down_btn_->setEnabled(r < config_.rows - 1 && row + config_.cols < n);
+  move_left_btn_->setEnabled(c > 0);
+  move_right_btn_->setEnabled(c < config_.cols - 1 && row + 1 < n);
 }
 
 void ConfigDialog::onImportYaml()
@@ -353,7 +406,11 @@ void ConfigDialog::onImportYaml()
     rows_spin_->blockSignals(false);
     cols_spin_->blockSignals(false);
     refresh_list();
-    if (!config_.panes.empty()) {list_->setCurrentRow(0);}
+    if (!config_.panes.empty()) {
+      list_->setCurrentRow(0);
+    } else {
+      update_edit_buttons(-1);
+    }
   } catch (const ConfigParseError & e) {
     QMessageBox::warning(
       this, "Import error", QString::fromStdString(e.what()));

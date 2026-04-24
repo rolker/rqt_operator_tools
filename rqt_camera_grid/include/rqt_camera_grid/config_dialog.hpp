@@ -38,6 +38,7 @@
 class QComboBox;
 class QDoubleSpinBox;
 class QListWidget;
+class QPushButton;
 class QSpinBox;
 
 namespace rqt_camera_grid
@@ -64,8 +65,11 @@ private slots:
   void onRowsChanged(int value);
   void onColsChanged(int value);
   void onSelectionChanged(int row);
-  void onAddPane();
-  void onRemovePane();
+  void onMoveUp();
+  void onMoveDown();
+  void onMoveLeft();
+  void onMoveRight();
+  void onClearPane();
   void onImportYaml();
   void onExportYaml();
   void onBaseEditChanged(int index);
@@ -75,6 +79,13 @@ private:
   void save_current_editor_to_config();
   void load_editor_from_config(int row);
   void refresh_list();
+  // Swap the selected pane with its row-major neighbor and track focus
+  // to the new cell. Called by the four arrow-button slots.
+  void move_pane(int dst_row);
+  // Recompute enabled state of the arrow/Clear buttons for `row` (or -1
+  // when nothing is selected). Call from selection / grid-dim / import
+  // paths, i.e. any time `row` or `rows*cols` might change.
+  void update_edit_buttons(int row);
 
   rclcpp::Node::SharedPtr node_;
   GridConfig config_;
@@ -87,6 +98,11 @@ private:
   QComboBox * transport_combo_;
   QDoubleSpinBox * warn_spin_;
   QDoubleSpinBox * error_spin_;
+  QPushButton * move_up_btn_{nullptr};
+  QPushButton * move_down_btn_{nullptr};
+  QPushButton * move_left_btn_{nullptr};
+  QPushButton * move_right_btn_{nullptr};
+  QPushButton * clear_btn_{nullptr};
 };
 
 }  // namespace rqt_camera_grid
