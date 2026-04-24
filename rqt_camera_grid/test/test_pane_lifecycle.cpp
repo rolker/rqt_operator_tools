@@ -27,20 +27,29 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 // Anti-regression test for stability rule 6: rapid construct/destruct of
-// CameraPaneWidget must not crash, leak unbounded memory, or emit
-// thread-teardown warnings. Regression signal for the topic-refresh class
-// of crashes seen in rqt_image_view.
+// CameraPaneWidget must not crash, leak unbounded memory, or emit Qt
+// thread-teardown warnings. Regression signal for the topic-refresh
+// class of crashes seen in rqt_image_view — those presented as
+// cross-thread QObject destruction, which Qt flags via warnings like
+// "QObject::~QObject: Timers cannot be stopped from another thread".
+// We capture those warnings via qInstallMessageHandler and assert the
+// thread-teardown patterns are absent after 1000 cycles.
 
 #include <gtest/gtest.h>
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QMessageLogContext>
+#include <QString>
+#include <QtGlobal>
 
 #include <sys/resource.h>
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <vector>
 
 #include <image_transport/image_transport.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -61,6 +70,26 @@ int64_t peak_rss_kb()
   struct rusage usage;
   if (getrusage(RUSAGE_SELF, &usage) != 0) {return -1;}
   return usage.ru_maxrss;
+}
+
+// Qt message capture — qInstallMessageHandler takes a C function pointer,
+// so the capture state must live at file scope. Reset per test via
+// SetUp/TearDown. The mutex protects against warnings emitted from
+// non-main threads (unlikely in this test but cheap insurance).
+std::vector<std::string> g_captured_qt_messages;
+std::mutex g_qt_messages_mutex;
+QtMessageHandler g_original_qt_handler = nullptr;
+
+void capture_qt_messages(
+  QtMsgType type, const QMessageLogContext & ctx, const QString & msg)
+{
+  if (type == QtWarningMsg || type == QtCriticalMsg || type == QtFatalMsg) {
+    std::lock_guard<std::mutex> lk(g_qt_messages_mutex);
+    g_captured_qt_messages.push_back(msg.toStdString());
+  }
+  if (g_original_qt_handler) {
+    g_original_qt_handler(type, ctx, msg);
+  }
 }
 
 }  // namespace
@@ -92,10 +121,20 @@ protected:
     }
     node_ = std::make_shared<rclcpp::Node>("test_pane_lifecycle_node");
     it_ = std::make_shared<image_transport::ImageTransport>(node_);
+
+    // Install Qt message capture before any panes are constructed so
+    // thread-teardown warnings emitted during destruction are recorded.
+    {
+      std::lock_guard<std::mutex> lk(g_qt_messages_mutex);
+      g_captured_qt_messages.clear();
+    }
+    g_original_qt_handler = qInstallMessageHandler(capture_qt_messages);
   }
 
   void TearDown() override
   {
+    qInstallMessageHandler(g_original_qt_handler);
+    g_original_qt_handler = nullptr;
     it_.reset();
     node_.reset();
   }
@@ -123,7 +162,7 @@ TEST_F(PaneLifecycleTest, RapidConstructDestruct)
     (void)pane;
   }
   const int64_t baseline_peak_rss = peak_rss_kb();
-  ASSERT_GE(baseline_peak_rss, 0) << "getrusage failed before warmup";
+  ASSERT_GE(baseline_peak_rss, 0) << "getrusage failed after warmup";
 
   for (int i = 0; i < kIterations; ++i) {
     CameraPaneWidget pane(node_, it_, config);
@@ -137,6 +176,38 @@ TEST_F(PaneLifecycleTest, RapidConstructDestruct)
   EXPECT_LT(growth, kMaxRssGrowthKb)
     << "peak RSS grew by " << growth << " KB across " << kIterations
     << " construct/destruct cycles (baseline peak " << baseline_peak_rss << " KB).";
+
+  // Stability rule 6: the rqt_image_view topic-refresh regression class
+  // surfaces as cross-thread QObject destruction. Crashes are caught by
+  // the absence of a gtest death signal above; non-crashing warnings need
+  // an explicit check. Match the specific Qt diagnostic patterns that
+  // indicate unsafe teardown — don't assert on all warnings, because
+  // offscreen Qt can emit benign ones (e.g. about pixmap threading) that
+  // are unrelated to the failure mode we're guarding against.
+  std::vector<std::string> thread_warnings;
+  {
+    std::lock_guard<std::mutex> lk(g_qt_messages_mutex);
+    for (const auto & m : g_captured_qt_messages) {
+      if (m.find("another thread") != std::string::npos ||
+        m.find("Timers cannot be stopped") != std::string::npos ||
+        m.find("Cannot create children") != std::string::npos)
+      {
+        thread_warnings.push_back(m);
+      }
+    }
+  }
+  if (!thread_warnings.empty()) {
+    std::string joined;
+    for (const auto & w : thread_warnings) {
+      joined += "  - ";
+      joined += w;
+      joined += "\n";
+    }
+    ADD_FAILURE()
+      << "Qt emitted " << thread_warnings.size()
+      << " thread-teardown warning(s) during " << kIterations
+      << " construct/destruct cycles:\n" << joined;
+  }
 }
 
 TEST_F(PaneLifecycleTest, ConstructDestructWithEmptyBaseNeverSubscribes)
