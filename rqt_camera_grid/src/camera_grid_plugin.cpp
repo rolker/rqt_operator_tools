@@ -62,10 +62,10 @@ void CameraGridPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
 
 void CameraGridPlugin::shutdownPlugin()
 {
-  // Widget ownership is transferred to context.addWidget; it gets destroyed
-  // when the container closes. Explicit nullification here keeps later
-  // callbacks from touching a dead pointer.
-  widget_ = nullptr;
+  // widget_ is a QPointer — when the PluginContext destroys the widget
+  // (either before or after this call), the pointer auto-nulls and
+  // subsequent lifecycle callbacks become safe no-ops. No explicit
+  // bookkeeping needed here.
 }
 
 void CameraGridPlugin::load_default_config_if_shipped()

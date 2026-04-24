@@ -507,6 +507,14 @@ ament_target_dependencies(${PROJECT_NAME}
   ament_index_cpp)
 target_link_libraries(${PROJECT_NAME} Qt5::Widgets yaml-cpp)
 
+ament_export_include_directories(include)
+ament_export_libraries(${PROJECT_NAME})
+ament_export_targets(export_${PROJECT_NAME})
+ament_export_dependencies(
+  rclcpp rqt_gui_cpp qt_gui_cpp pluginlib image_transport sensor_msgs cv_bridge
+  ament_index_cpp Qt5 yaml-cpp
+)
+
 pluginlib_export_plugin_description_file(rqt_gui plugin.xml)
 
 install(TARGETS ${PROJECT_NAME}

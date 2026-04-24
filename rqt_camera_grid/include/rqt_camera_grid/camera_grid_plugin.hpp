@@ -30,6 +30,7 @@
 #define RQT_CAMERA_GRID__CAMERA_GRID_PLUGIN_HPP_
 
 #include <QObject>  // NOLINT(build/include_order)
+#include <QPointer>
 
 #include <rqt_gui_cpp/plugin.h>
 
@@ -61,7 +62,12 @@ public:
 private:
   void load_default_config_if_shipped();
 
-  CameraGridWidget * widget_{nullptr};
+  // QPointer auto-nulls when the referenced QObject is destroyed. The
+  // widget's lifetime is owned by qt_gui_cpp's PluginContext (via
+  // addWidget), so if rqt ever destroys the widget before or after
+  // shutdownPlugin, the guard `if (widget_)` remains correct under
+  // both orderings instead of leaving a dangling raw pointer.
+  QPointer<CameraGridWidget> widget_;
 };
 
 }  // namespace rqt_camera_grid

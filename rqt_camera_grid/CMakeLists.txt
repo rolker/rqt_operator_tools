@@ -134,7 +134,7 @@ ament_export_libraries(${PROJECT_NAME})
 ament_export_targets(export_${PROJECT_NAME})
 ament_export_dependencies(
   rclcpp rqt_gui_cpp qt_gui_cpp pluginlib image_transport sensor_msgs cv_bridge
-  ament_index_cpp
+  ament_index_cpp Qt5 yaml-cpp
 )
 
 ament_package()
