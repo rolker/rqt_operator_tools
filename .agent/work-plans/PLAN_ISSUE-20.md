@@ -616,7 +616,69 @@ ament_package()
 
 ## Open Questions
 
-_None — all planning decisions resolved. See `Resolved During Planning`._
+_None — all planning decisions resolved. See `Resolved During Planning`.
+Design decisions made *during* implementation are captured in
+`Resolved During Implementation` below._
+
+## Resolved During Implementation
+
+Design decisions that came up during coding and hands-on UX verification,
+after the initial plan was frozen. Listed for decision-trail visibility;
+each is already reflected inline in the sections above.
+
+- **Config dialog cell picker: thumbnail grid, not QListWidget.**
+  Initial plan used a `QListWidget` showing `[r,c] topic` text entries.
+  Hands-on testing with the six-source webcam demo showed the list was
+  awkward — near-identical topic strings are hard to tell apart.
+  Replaced with a `QGridLayout` of `ThumbnailCell` widgets (each hosts
+  a live `CameraPaneWidget`), giving the operator visual confirmation
+  of what's in each cell before rearranging. Dialog owns its own
+  `image_transport::ImageTransport` so preview subscriptions tear
+  down with the dialog.
+- **Grid reshape preserves cell positions.** `resize_panes` just
+  truncates/pads the flat vector, which causes row-major
+  reinterpretation to shuffle cells on col shrink/grow. Added
+  `ConfigDialog::reshape_grid` that operates on `(row, col)`
+  coordinates so cells stay in place. Out-of-bounds cells go to a
+  `removed_cells_` map and are restored if the user grows back within
+  the same dialog session (cleared on YAML import).
+- **Editor commits refresh the selected thumbnail in place.** When
+  the user edits the base/transport/thresholds and commits (dropdown
+  pick, Enter, focus-loss), `commit_current_editor` saves the config
+  and rebuilds just that cell so subscription changes take effect
+  immediately without navigating away. `rebuild_thumbnail_cell`
+  preserves selected state; a `before == after` short-circuit avoids
+  churn when nothing actually changed.
+- **Dialog toolbar: direction arrows + Clear, not `+` / `−`.**
+  Original plan showed `+` and `−` buttons for add/remove. The
+  remove semantics (erase + shift, erase + pad, or clear-in-place?)
+  triggered a multi-round Copilot debate. Resolved by removing the
+  ambiguity: grid *size* is the rows/cols spinboxes' sole job, and
+  per-cell editing uses `↑ ← → ↓` (swap with row-major neighbor,
+  focus follows the moved pane) plus `Clear` (reset to default
+  `PaneConfig{}` in place). None of the toolbar buttons change
+  `panes.size()`, so the invariant holds by construction.
+- **Drop Qt 5's default `?` titlebar help button.** Qt 5 dialogs
+  ship with `Qt::WindowContextHelpButtonHint` on by default — a
+  "?" titlebar button that opens What's This mode. The package
+  registers no What's This hints, so clicking it did nothing and
+  confused users. Cleared via `setWindowFlags(...)`.
+- **Demo launch + config added.** `launch/demo_webcam_grid.launch.py`
+  + `scripts/demo_transform.py` + `config/demo_webcam_grid.yaml`
+  fan a single webcam into six visually distinct streams (raw +
+  flip_h + grayscale + crop_left + crop_right + negative) and a
+  2×3 grid config. Enables hands-on verification without boat
+  hardware and becomes the user-testing substrate for future
+  iteration. Added `v4l2_camera`, `rclpy`, `python3-opencv` as
+  exec_depends so `rosdep install` is self-contained.
+- **Test infrastructure tweak.** `test_pane_lifecycle` initially
+  asserted peak-RSS growth via `getrusage` as a leak signal.
+  `ru_maxrss` is monotonic and noisy (Qt font caches, glibc
+  arenas), so the RSS assertion was dropped; leak detection is
+  deferred to ASan / Valgrind runs. The lifecycle test's remaining
+  assertions (no crash, no Qt thread-teardown warnings captured
+  via `qInstallMessageHandler`) are the load-bearing signals for
+  stability rule 6.
 
 ## Resolved During Planning
 
