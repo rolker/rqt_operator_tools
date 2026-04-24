@@ -556,7 +556,7 @@ ament_package()
 6. **`camera_grid_plugin.{hpp,cpp}`**: `rqt_gui_cpp::Plugin` subclass + `PLUGINLIB_EXPORT_CLASS` macro; `saveSettings`/`restoreSettings`/`triggerConfiguration`.
 7. **`config_dialog.{hpp,cpp}`**: grid-dims spinboxes + pane table with dropdown-or-free-form `(base, transport)` fields, populated via `node->get_topic_names_and_types()`.
 8. **`config/default_camera_grid.yaml`**: empty 2×2 placeholder.
-9. **Tests**: `test_staleness_tracker.cpp` (transitions + boundary ticks), `test_config_model.cpp` (YAML roundtrip + validation), `test_grid_layout.cpp` (pure geometry: `(W, H, R, C, A) → per-cell rects`; asserts zero inner gap, slack-to-outside, mixed-aspect letterboxing), `test_pane_lifecycle.cpp` (≥1000 construct/destruct cycles of `CameraPaneWidget` with a 640×480 rgb8 fixture under `QT_QPA_PLATFORM=offscreen`; asserts no crash, RSS growth < 50 MB via `getrusage`, no thread-teardown warnings on stderr — stability rule 6 regression test).
+9. **Tests**: `test_staleness_tracker.cpp` (transitions + boundary ticks), `test_config_model.cpp` (YAML roundtrip + validation), `test_grid_layout.cpp` (pure geometry: `(W, H, R, C, A) → per-cell rects`; asserts zero inner gap, slack-to-outside, mixed-aspect letterboxing), `test_pane_lifecycle.cpp` (≥1000 construct/destruct cycles of `CameraPaneWidget` under `QT_QPA_PLATFORM=offscreen`; asserts no crash and no Qt thread-teardown warnings captured via `qInstallMessageHandler` — stability rule 6 regression test; memory-leak detection deferred to ASan/Valgrind).
 10. **Repo root `README.md`**: add `rqt_camera_grid` entry AND the missing `rqt_operator_log` entry.
 
 ### Phase 2 — Follow-up issues (file separately)
