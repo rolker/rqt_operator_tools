@@ -10,9 +10,10 @@ Add a new `rqt_camera_grid` package to this repo: a **C++ rqt plugin**
 (`rqt_gui_cpp`) that displays N `image_transport` streams in a configurable
 grid, with a per-pane staleness border (neutral / amber / red) that matches
 `rqt_annunciator`'s dark-until-problem convention. Secondary goal: declare
-`ffmpeg_image_transport` as `exec_depend` so a fresh `rosdep install` on an
-operator station pulls the H.265 decoder needed by the bizzyboat / izzyboat
-rollout
+the image_transport plugins (`compressed`, `compressedDepth`, `theora`,
+`ffmpeg`) as `exec_depend` so a fresh `rosdep install` on an operator
+station pulls every transport the config dialog advertises, including the
+H.265 decoder needed by the bizzyboat / izzyboat rollout
 ([unh_marine_perception#4](https://github.com/rolker/unh_marine_perception/issues/4),
 [unh_echoboats_project11#78](https://github.com/rolker/unh_echoboats_project11/issues/78)).
 
@@ -451,6 +452,9 @@ annunciator's `config_dialog.py`). Integration happens at manual acceptance.
 <depend>yaml-cpp</depend>
 <depend>ament_index_cpp</depend>
 
+<exec_depend>compressed_image_transport</exec_depend>
+<exec_depend>compressed_depth_image_transport</exec_depend>
+<exec_depend>theora_image_transport</exec_depend>
 <exec_depend>ffmpeg_image_transport</exec_depend>
 
 <test_depend>ament_cmake_gtest</test_depend>
@@ -463,9 +467,13 @@ annunciator's `config_dialog.py`). Integration happens at manual acceptance.
 </export>
 ```
 
-`ffmpeg_image_transport` as `exec_depend` is the secondary goal: `rosdep
-install` on a fresh salmon pulls the H.265 decoder plugin. Binary is available
-on jazzy (`ros-jazzy-ffmpeg-image-transport`), verified.
+The four image_transport plugin packages as `exec_depend` are the secondary
+goal: `rosdep install` on a fresh salmon pulls every transport the config
+dialog advertises (`raw`, `compressed`, `compressedDepth`, `theora`,
+`ffmpeg`), so the user can never pick a transport whose plugin isn't
+installed. `ffmpeg_image_transport` is the primary deployment target
+(H.265 decoder binary available on jazzy as
+`ros-jazzy-ffmpeg-image-transport`, verified).
 
 The Qt5 key is `qtbase5-dev` (verified against
 `/opt/ros/jazzy/share/rqt_image_view/package.xml`). `rqt_image_view` uses it
