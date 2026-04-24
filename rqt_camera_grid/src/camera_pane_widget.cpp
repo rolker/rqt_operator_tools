@@ -277,6 +277,14 @@ void CameraPaneWidget::set_image_rect(const QRect & rect)
   }
   image_rect_ = rect;
   image_rect_explicit_ = true;
+  // CameraGridWidget::relayout() calls setGeometry() (which fires
+  // resizeEvent → label move) BEFORE calling set_image_rect(), so the
+  // label above was positioned using the previous image_rect_. Redo
+  // the label positioning here so it follows image_rect_'s latest
+  // value after every reconfigure.
+  label_->move(image_rect_.x() + 4, image_rect_.y() + 4);
+  label_->adjustSize();
+  label_->raise();
   update();
 }
 
