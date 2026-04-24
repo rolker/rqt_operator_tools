@@ -501,6 +501,9 @@ add_library(${PROJECT_NAME} SHARED
   src/config_model.cpp
   src/config_dialog.cpp
 )
+# Per-target C/C++ standard enforcement, matching the current ros2 pkg
+# create template on Rolling (superseded the older CMAKE_CXX_STANDARD guard).
+target_compile_features(${PROJECT_NAME} PUBLIC c_std_99 cxx_std_17)
 target_include_directories(${PROJECT_NAME} PUBLIC include)
 ament_target_dependencies(${PROJECT_NAME}
   rclcpp rqt_gui_cpp qt_gui_cpp pluginlib image_transport sensor_msgs cv_bridge

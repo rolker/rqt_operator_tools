@@ -1,10 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
 project(rqt_camera_grid)
 
-if(NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 17)
-  set(CMAKE_CXX_STANDARD_REQUIRED ON)
-endif()
+# C++ standard is enforced per-target via target_compile_features below
+# (matches the current ros2 pkg create template on Rolling, which replaced
+# the older `if(NOT CMAKE_CXX_STANDARD) set(... 17) endif()` guard).
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -47,6 +46,9 @@ add_library(${PROJECT_NAME} SHARED
   ${${PROJECT_NAME}_SOURCES}
   ${${PROJECT_NAME}_HEADERS}
 )
+
+# Require C99 and C++17 — propagates to anyone who links this library.
+target_compile_features(${PROJECT_NAME} PUBLIC c_std_99 cxx_std_17)
 
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
