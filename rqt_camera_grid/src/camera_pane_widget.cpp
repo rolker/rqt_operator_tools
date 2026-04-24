@@ -146,7 +146,12 @@ void CameraPaneWidget::onImageReceived(sensor_msgs::msg::Image::ConstSharedPtr m
   if (!msg || msg->width == 0 || msg->height == 0) {
     return;
   }
+  const auto clock_type = node_->get_clock()->get_clock_type();
   const rclcpp::Time now = node_->get_clock()->now();
+  // Construct the header stamp with the node's clock type so that
+  // (hdr - now) does not throw rclcpp::exceptions::InvalidClockType.
+  // builtin_interfaces::msg::Time carries no clock_type tag of its own.
+  const rclcpp::Time hdr(msg->header.stamp, clock_type);
 
   // EWMA inter-arrival interval for the rate label.
   if (first_frame_seen_) {
@@ -161,7 +166,23 @@ void CameraPaneWidget::onImageReceived(sensor_msgs::msg::Image::ConstSharedPtr m
   }
   last_frame_time_ = now;
 
-  staleness_.mark_frame(now);
+  // Validate header.stamp. Two broken-publisher modes we can detect:
+  //   (a) zero stamp — uninitialized builtin_interfaces::msg::Time{}
+  //   (b) far-future stamp — publisher clock is unsynchronized with ours,
+  //       so stamp_age would be meaningless (or negative forever)
+  // Small negative skew (stamp a fraction of a second ahead of us)
+  // is fine and commonly caused by normal network delay vs. local
+  // clock drift; only flag stamps more than kMaxFutureSkewS ahead.
+  constexpr double kMaxFutureSkewS = 60.0;
+  const bool stamp_zero =
+    (msg->header.stamp.sec == 0 && msg->header.stamp.nanosec == 0);
+  double future_skew_s = 0.0;
+  if (!stamp_zero) {
+    future_skew_s = (hdr - now).seconds();
+  }
+  const bool stamp_valid = !stamp_zero && future_skew_s < kMaxFutureSkewS;
+
+  staleness_.mark_frame(now, hdr, stamp_valid);
 
   // Drop to Neutral immediately on frame arrival instead of waiting up to
   // 1s for the next QTimer tick. Matches operator expectation that a pane
@@ -172,29 +193,7 @@ void CameraPaneWidget::onImageReceived(sensor_msgs::msg::Image::ConstSharedPtr m
   // Source changed; invalidate the cached scaled pixmap.
   cached_scaled_ = QPixmap();
 
-  // Update rate portion of the label — throttled to 1 Hz and guarded on
-  // a text-changed check so high-rate streams × many panes don't churn
-  // Qt layout on the main thread.
-  if (rate_ready_ && ewma_interval_s_ > 0.0) {
-    constexpr double kRateLabelPeriodS = 1.0;
-    const double since_update =
-      (last_rate_label_update_.nanoseconds() == 0) ?
-      std::numeric_limits<double>::infinity() :
-      (now - last_rate_label_update_).seconds();
-    if (since_update >= kRateLabelPeriodS) {
-      const double rate_hz = 1.0 / ewma_interval_s_;
-      const QString text =
-        QString("%1  %2 Hz")
-        .arg(QString::fromStdString(config_.base))
-        .arg(rate_hz, 0, 'f', 1);
-      if (text != last_rate_label_text_) {
-        label_->setText(text);
-        label_->adjustSize();
-        last_rate_label_text_ = text;
-      }
-      last_rate_label_update_ = now;
-    }
-  }
+  update_label(now);
 
   // Track aspect for the grid widget to pick up in firstFrameSeen.
   const double aspect = (msg->height > 0) ?
@@ -206,6 +205,49 @@ void CameraPaneWidget::onImageReceived(sensor_msgs::msg::Image::ConstSharedPtr m
     emit firstFrameSeen();
   }
   update();
+}
+
+void CameraPaneWidget::update_label(const rclcpp::Time & now)
+{
+  if (!staleness_.has_frames()) {
+    // Keep the base-only label the constructor set until a frame arrives.
+    return;
+  }
+
+  constexpr double kLabelPeriodS = 1.0;
+  const double since_update =
+    (last_label_update_.nanoseconds() == 0) ?
+    std::numeric_limits<double>::infinity() :
+    (now - last_label_update_).seconds();
+  if (since_update < kLabelPeriodS) {
+    return;
+  }
+
+  QString text = QString::fromStdString(config_.base);
+  if (rate_ready_ && ewma_interval_s_ > 0.0) {
+    const double rate_hz = 1.0 / ewma_interval_s_;
+    text += QString("  %1 Hz").arg(rate_hz, 0, 'f', 1);
+  }
+
+  // Clamp negative ages (small skew / clock jitter) to 0 for display; the
+  // tracker still reports Error for truly negative worst-of-both ages, so
+  // the border already conveys the discontinuity.
+  const double arr_age = std::max(0.0, staleness_.arrival_age(now));
+  if (staleness_.last_stamp_valid()) {
+    const double hdr_age = std::max(0.0, staleness_.stamp_age(now));
+    text += QString("  rx %1s | hdr %2s")
+      .arg(arr_age, 0, 'f', 1)
+      .arg(hdr_age, 0, 'f', 1);
+  } else {
+    text += QString("  rx %1s | [no stamp]").arg(arr_age, 0, 'f', 1);
+  }
+
+  if (text != last_label_text_) {
+    label_->setText(text);
+    label_->adjustSize();
+    last_label_text_ = text;
+  }
+  last_label_update_ = now;
 }
 
 QPixmap CameraPaneWidget::toPixmap(const sensor_msgs::msg::Image::ConstSharedPtr & msg)
@@ -257,11 +299,16 @@ QPixmap CameraPaneWidget::toPixmap(const sensor_msgs::msg::Image::ConstSharedPtr
 
 void CameraPaneWidget::tick()
 {
-  auto level = staleness_.tick(node_->get_clock()->now());
+  const auto now = node_->get_clock()->now();
+  auto level = staleness_.tick(now);
   if (level != current_level_) {
     current_level_ = level;
     update();
   }
+  // Refresh the label so the arrival/header ages keep climbing visibly
+  // when frames stop arriving — otherwise the last onImageReceived write
+  // would freeze on screen and defeat the purpose of the age readout.
+  update_label(now);
 }
 
 double CameraPaneWidget::observed_aspect() const

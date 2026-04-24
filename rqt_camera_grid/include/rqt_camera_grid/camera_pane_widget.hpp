@@ -100,6 +100,11 @@ private:
   void handleImage(const sensor_msgs::msg::Image::ConstSharedPtr & msg);
   void subscribe();
   void unsubscribe();
+  // Recompute and apply the pane label (base + rate + ages). Throttled to
+  // 1 Hz internally so high-rate onImageReceived paths don't churn Qt
+  // layout; tick() also calls this so the ages keep climbing visibly when
+  // frames stop arriving.
+  void update_label(const rclcpp::Time & now);
   // Convert a ROS image to a QPixmap in a single copy. QPixmap::fromImage
   // is documented to return a pixmap that is a copy of the given image,
   // so the temporary QImage view into msg (or the cv_bridge buffer) does
@@ -137,11 +142,11 @@ private:
   double ewma_interval_s_{0.0};
   bool rate_ready_{false};
 
-  // Rate label throttling: refresh at 1 Hz and only when the rendered
-  // text actually changes, so high-rate cameras with many panes don't
-  // churn Qt layout on the main thread.
-  rclcpp::Time last_rate_label_update_{0, 0, RCL_ROS_TIME};
-  QString last_rate_label_text_;
+  // Label throttling: refresh at 1 Hz and only when the rendered text
+  // actually changes, so high-rate cameras with many panes don't churn
+  // Qt layout on the main thread.
+  rclcpp::Time last_label_update_{0, 0, RCL_ROS_TIME};
+  QString last_label_text_;
 
   QLabel * label_{nullptr};
 };
