@@ -229,22 +229,31 @@ per-stream-rate adaptation for v1. If operators later find fixed
 thresholds don't match actual stream behavior, adaptive thresholds remain
 an easy follow-up (see Phase 2).
 
-### Image rendering: zero-copy QImage view
+### Image rendering: single-copy via QPixmap::fromImage
 
 For `sensor_msgs::msg::Image` with `encoding == "rgb8"`:
 
 ```cpp
 QImage view(msg->data.data(), msg->width, msg->height, msg->step, QImage::Format_RGB888);
-pixmap_ = QPixmap::fromImage(view.scaled(label_->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+pixmap_ = QPixmap::fromImage(view);   // one copy to the display format
 ```
 
-For `bgr8` and other common encodings, convert via `cv_bridge` (fallback path).
-`ffmpeg_image_transport` decodes to `bgr8` by default, so the `cv_bridge` path
-is exercised for our primary deployment — `cv_bridge::toCvShare(msg, "rgb8")`
-then wrap the `cv::Mat` buffer as a `QImage`.
+`QPixmap::fromImage` is documented to return a pixmap that is a copy of the
+input, so the temporary `view` aliasing the ROS buffer does not need to
+outlive the conversion — the returned pixmap owns its pixels. Scaling to
+the pane's image rect is deferred to `paintEvent` via a cached scaled
+pixmap (rebuilt on new frame or rect change), keeping repaints cheap.
+
+For `bgr8` and other common encodings, convert via `cv_bridge` (fallback
+path). `ffmpeg_image_transport` decodes to `bgr8` by default, so the
+`cv_bridge` path is exercised for our primary deployment —
+`cv_bridge::toCvCopy(msg, "rgb8")` (`toCvShare` cannot help across encoding
+conversion), then wrap the `cv::Mat` buffer as a `QImage` and hand it to
+`QPixmap::fromImage` inside the try scope so the `cv_ptr` outlives the
+fromImage copy.
 
 **Unsupported-encoding policy**: `rgb8` and `bgr8` render. `mono8` renders
-via `cv_bridge::toCvShare(msg, "rgb8")` (automatic grayscale → RGB
+via `cv_bridge::toCvCopy(msg, "rgb8")` (automatic grayscale → RGB
 conversion). Any other encoding (`16UC1`, `32FC1`, depth formats, unknown
 strings) triggers a one-time `RCLCPP_WARN` per pane naming the encoding, and
 the pane renders a plain dark background with its topic label and staleness
@@ -264,7 +273,10 @@ child geometries directly.
 **Algorithm** (widget size `W × H`, grid `R × C`, target image aspect `A`):
 
 1. **Pick target aspect `A`**: use the median of observed per-pane image
-   aspect ratios. Until any frames arrive, default to `16 / 9`.
+   aspect ratios. Until any frames arrive, default to `16 / 9`. On
+   `load_config` (reconfigure), target_aspect is reset to the `16 / 9`
+   default so the new panes don't inherit the previous config's median —
+   the first new pane's `firstFrameSeen` will adjust it.
 2. **Compute tight cell size preserving `A`**:
    - `cell_h_by_height = H / R`; `cell_w_candidate = cell_h_by_height * A`.
    - If `C * cell_w_candidate ≤ W`: height-limited. `cell_w = cell_w_candidate`,
@@ -381,10 +393,13 @@ them directly:
 
 - **`void resize_panes(GridConfig&, int new_rows, int new_cols)`** — applies
   the row-major rule: truncate trailing panes when shrinking, append
-  default-constructed `PaneConfig{}` entries when growing. The dialog calls
-  this on rows/cols spinbox change; the widget calls it when loading config
-  whose `len(panes)` disagrees with `rows*cols` (log a warning via
-  `RCLCPP_WARN` in that path).
+  default-constructed `PaneConfig{}` entries when growing. Every dialog
+  operation that mutates `config_` (`onAddPane`, `onRemovePane`,
+  `onImportYaml`, rows/cols spinbox change) calls this to maintain the
+  `panes.size() == rows*cols` invariant, so each grid cell always has
+  exactly one editable list entry. The widget also calls it in
+  `load_config` (logging a warning via `RCLCPP_WARN` before if the
+  incoming config has more panes than cells).
 - **`GridConfig parse_yaml(const std::string& text)`** — already the
   `config_model` `from_yaml` entry point, but ensure it throws a typed
   `ConfigParseError` (derived from `std::runtime_error`) with a descriptive
@@ -525,7 +540,7 @@ ament_package()
 1. **Scaffolding**: `package.xml`, `CMakeLists.txt`, `plugin.xml` (single file — pluginlib class export + rqt `qtgui` block in one, matching `rqt_image_view`), `README.md`.
 2. **`staleness_tracker.{hpp,cpp}`**: pure C++ state machine.
 3. **`config_model.{hpp,cpp}`**: `PaneConfig`, `GridConfig` structs + `yaml-cpp` load/save; defaults.
-4. **`camera_pane_widget.{hpp,cpp}`**: `QFrame` subclass with child `QLabel` for image + top-strip label; `image_transport::Subscriber` member; border color via palette; uses `cv_bridge::toCvShare` for non-rgb8 frames, zero-copy `QImage` view otherwise.
+4. **`camera_pane_widget.{hpp,cpp}`**: `QFrame` subclass with child `QLabel` for image + top-strip label; `image_transport::Subscriber` member; border color via palette; uses `cv_bridge::toCvCopy` for non-rgb8 frames, wraps the ROS buffer in a QImage view for rgb8; both paths feed `QPixmap::fromImage` (single-copy to display format).
 5. **`camera_grid_widget.{hpp,cpp}`**: container that constructs panes from `GridConfig`; owns a shared `image_transport::ImageTransport`; 1 Hz `QTimer` ticks all panes; overrides `resizeEvent` to apply the aspect-aware layout (see "Grid layout"). **Not** `QGridLayout` — child geometries set manually.
 6. **`camera_grid_plugin.{hpp,cpp}`**: `rqt_gui_cpp::Plugin` subclass + `PLUGINLIB_EXPORT_CLASS` macro; `saveSettings`/`restoreSettings`/`triggerConfiguration`.
 7. **`config_dialog.{hpp,cpp}`**: grid-dims spinboxes + pane table with dropdown-or-free-form `(base, transport)` fields, populated via `node->get_topic_names_and_types()`.

@@ -100,7 +100,12 @@ private:
   void handleImage(const sensor_msgs::msg::Image::ConstSharedPtr & msg);
   void subscribe();
   void unsubscribe();
-  QImage toQImage(const sensor_msgs::msg::Image::ConstSharedPtr & msg);
+  // Convert a ROS image to a QPixmap in a single copy. QPixmap::fromImage
+  // is documented to return a pixmap that is a copy of the given image,
+  // so the temporary QImage view into msg (or the cv_bridge buffer) does
+  // not need to be pre-copied — the lifetime crosses fromImage, not the
+  // returned pixmap. Returns a null QPixmap on unsupported encoding.
+  QPixmap toPixmap(const sensor_msgs::msg::Image::ConstSharedPtr & msg);
 
   rclcpp::Node::SharedPtr node_;
   std::shared_ptr<image_transport::ImageTransport> it_;

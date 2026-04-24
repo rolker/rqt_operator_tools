@@ -38,6 +38,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -142,6 +143,30 @@ ConfigDialog::ConfigDialog(
   error_spin_->setRange(0.0, 600.0);
   error_spin_->setSuffix(" s");
   right_form->addRow("Error threshold:", error_spin_);
+
+  // Keep error_s >= warn_s at all times — config_from_yaml rejects the
+  // reversed case, so a dialog that lets the user save error < warn would
+  // persist a config the dialog itself can't reload. Coordinate the two
+  // spinboxes: raising warn pushes error up with it; lowering error below
+  // warn pulls it back up.
+  connect(warn_spin_,
+          QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+          this,
+    [this](double v) {
+      if (error_spin_->value() < v) {
+        const QSignalBlocker block(error_spin_);
+        error_spin_->setValue(v);
+      }
+    });
+  connect(error_spin_,
+          QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+          this,
+    [this](double v) {
+      if (v < warn_spin_->value()) {
+        const QSignalBlocker block(error_spin_);
+        error_spin_->setValue(warn_spin_->value());
+      }
+    });
   body->addLayout(right_form, 2);
   main->addLayout(body);
 
@@ -311,6 +336,11 @@ void ConfigDialog::onImportYaml()
   try {
     GridConfig loaded = config_from_file(path.toStdString());
     config_ = loaded;
+    // Restore the dialog's panes.size() == rows*cols invariant (symmetric
+    // with onAddPane / onRemovePane). YAML authors can hand-edit a file
+    // where panes and grid dimensions disagree; pad or truncate to match
+    // so every cell is editable from the list.
+    resize_panes(config_, config_.rows, config_.cols);
     // Prevent the setCurrentRow(0) below from firing onSelectionChanged,
     // which would call save_current_editor_to_config() with the pre-import
     // current_row_ and the editor's stale values and overwrite the freshly

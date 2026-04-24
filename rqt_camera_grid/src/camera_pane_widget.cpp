@@ -168,12 +168,7 @@ void CameraPaneWidget::onImageReceived(sensor_msgs::msg::Image::ConstSharedPtr m
   // returning to Neutral (recovery) tracks the frame, not the wall clock.
   current_level_ = staleness_.tick(now);
 
-  QImage qimg = toQImage(msg);
-  if (!qimg.isNull()) {
-    pixmap_ = QPixmap::fromImage(qimg);
-  } else {
-    pixmap_ = QPixmap();
-  }
+  pixmap_ = toPixmap(msg);
   // Source changed; invalidate the cached scaled pixmap.
   cached_scaled_ = QPixmap();
 
@@ -213,36 +208,38 @@ void CameraPaneWidget::onImageReceived(sensor_msgs::msg::Image::ConstSharedPtr m
   update();
 }
 
-QImage CameraPaneWidget::toQImage(const sensor_msgs::msg::Image::ConstSharedPtr & msg)
+QPixmap CameraPaneWidget::toPixmap(const sensor_msgs::msg::Image::ConstSharedPtr & msg)
 {
-  // rgb8: wrap the message buffer in a QImage view (no encoding conversion),
-  // then deep-copy so the pixels outlive the ConstSharedPtr. Single-copy,
-  // not zero-copy — the copy is required because Qt may render the pixmap
-  // after the ROS message has been released.
+  // rgb8: wrap the ROS buffer in a QImage view and convert directly to
+  // QPixmap. QPixmap::fromImage copies pixels into the display-native
+  // format, so the returned pixmap is independent of msg. No view.copy()
+  // needed — previous form did one full-frame copy via QImage::copy()
+  // followed by another via QPixmap::fromImage(). One copy per frame now.
   if (msg->encoding == "rgb8") {
     QImage view(
       msg->data.data(), msg->width, msg->height,
       static_cast<int>(msg->step), QImage::Format_RGB888);
-    return view.copy();
+    return QPixmap::fromImage(view);
   }
 
   // cv_bridge fallback for common encodings.
   if (msg->encoding == "bgr8" || msg->encoding == "mono8") {
     try {
-      // Pass the ConstSharedPtr directly. toCvCopy still allocates for the
-      // encoding conversion (bgr8/mono8 -> rgb8 is never zero-copy); this
-      // just avoids the pointless intermediate make_shared<Image>(msg) copy
-      // that the previous form did before handing off to cv_bridge.
+      // toCvCopy already allocates for the encoding conversion. Wrap the
+      // converted cv::Mat in a QImage view and hand directly to
+      // QPixmap::fromImage — still inside the try scope so cv_ptr is
+      // alive through the conversion.
       auto cv_ptr = cv_bridge::toCvCopy(msg, "rgb8");
-      return QImage(
+      QImage view(
         cv_ptr->image.data, cv_ptr->image.cols, cv_ptr->image.rows,
-        static_cast<int>(cv_ptr->image.step), QImage::Format_RGB888).copy();
+        static_cast<int>(cv_ptr->image.step), QImage::Format_RGB888);
+      return QPixmap::fromImage(view);
     } catch (const cv_bridge::Exception & e) {
       // Fall through to unsupported-encoding handling below.
       RCLCPP_WARN(
         node_->get_logger(), "cv_bridge failed on pane '%s' (%s): %s",
         config_.base.c_str(), msg->encoding.c_str(), e.what());
-      return QImage();
+      return QPixmap();
     }
   }
 
@@ -255,7 +252,7 @@ QImage CameraPaneWidget::toQImage(const sensor_msgs::msg::Image::ConstSharedPtr 
     encoding_warned_ = true;
     last_warned_encoding_ = msg->encoding;
   }
-  return QImage();
+  return QPixmap();
 }
 
 void CameraPaneWidget::tick()

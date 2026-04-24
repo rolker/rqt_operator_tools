@@ -79,6 +79,11 @@ void CameraGridWidget::load_config(const GridConfig & config)
 {
   teardown_panes();
   config_ = config;
+  // Reset the target aspect to the neutral 16:9 default so the new
+  // panes don't lay out against the previous config's median until
+  // their first frames arrive. The first new pane's firstFrameSeen
+  // will update target_aspect_ from its actual observed aspect.
+  target_aspect_ = 16.0 / 9.0;
   // Warn before resize_panes truncates so the user sees the data loss.
   // resize_panes is the single source of truth for pane-count/grid-dim
   // alignment; build_panes just materializes widgets for the already-sized
