@@ -33,9 +33,9 @@
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -47,6 +47,8 @@
 #include <map>
 #include <string>
 #include <vector>
+
+#include "rqt_camera_grid/thumbnail_cell.hpp"
 
 namespace rqt_camera_grid
 {
@@ -66,7 +68,19 @@ ConfigDialog::ConfigDialog(
   config_(initial)
 {
   setWindowTitle("Camera Grid Settings");
-  setMinimumSize(600, 400);
+  // Drop Qt 5's default "?" (WhatsThisHelp) titlebar button — nothing in
+  // this dialog registers What's This hints, so clicking it was a no-op
+  // that confused users.
+  setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
+  // Thumbnail grid needs meaningful minimum sizes per cell; a 3x3 of
+  // the ThumbnailCell minimums fits comfortably in 800x500.
+  setMinimumSize(800, 500);
+
+  // Dedicated ImageTransport for the preview thumbnails — separate from
+  // the CameraGridWidget's so subscription lifecycle is tied to the
+  // dialog. Destroyed with the dialog; thumbnails unsubscribe as part
+  // of normal QObject child teardown.
+  it_ = std::make_shared<image_transport::ImageTransport>(node_);
 
   auto * main = new QVBoxLayout(this);
 
@@ -95,10 +109,16 @@ ConfigDialog::ConfigDialog(
 
   auto * body = new QHBoxLayout();
 
-  // Left: pane list + add/remove.
+  // Left: thumbnail preview grid + toolbar. The grid mirrors the target
+  // layout at thumbnail scale, with each cell showing the corresponding
+  // pane's live frame. Click a cell to select it; the toolbar arrows /
+  // Clear then operate on the selection.
   auto * left = new QVBoxLayout();
-  list_ = new QListWidget();
-  left->addWidget(list_);
+  auto * thumb_host = new QWidget();
+  thumbnail_grid_ = new QGridLayout(thumb_host);
+  thumbnail_grid_->setSpacing(2);
+  thumbnail_grid_->setContentsMargins(0, 0, 0, 0);
+  left->addWidget(thumb_host, 1);
   // Pane-edit toolbar: four direction arrows (swap with row-major
   // neighbor) + Clear (reset to default PaneConfig{}). Grid *size* is
   // controlled entirely by the rows/cols spinboxes above; these
@@ -129,8 +149,6 @@ ConfigDialog::ConfigDialog(
   left->addLayout(list_btns);
   body->addLayout(left, 1);
 
-  connect(list_, &QListWidget::currentRowChanged,
-          this, &ConfigDialog::onSelectionChanged);
   connect(move_up_btn_, &QPushButton::clicked, this, &ConfigDialog::onMoveUp);
   connect(move_down_btn_, &QPushButton::clicked, this, &ConfigDialog::onMoveDown);
   connect(move_left_btn_, &QPushButton::clicked, this, &ConfigDialog::onMoveLeft);
@@ -217,12 +235,8 @@ ConfigDialog::ConfigDialog(
   // Seed pane list + topic combo.
   populate_topic_combo();
   resize_panes(config_, config_.rows, config_.cols);
-  refresh_list();
-  if (!config_.panes.empty()) {
-    list_->setCurrentRow(0);
-  } else {
-    update_edit_buttons(-1);
-  }
+  rebuild_thumbnail_grid();
+  set_selected_row(config_.panes.empty() ? -1 : 0);
 }
 
 void ConfigDialog::populate_topic_combo()
@@ -271,78 +285,76 @@ void ConfigDialog::onRowsChanged(int value)
 {
   save_current_editor_to_config();
   resize_panes(config_, value, config_.cols);
-  refresh_list();
-  const int new_row = std::min<int>(current_row_, static_cast<int>(config_.panes.size()) - 1);
-  if (new_row >= 0) {list_->setCurrentRow(new_row);}
-  update_edit_buttons(new_row);
+  rebuild_thumbnail_grid();
+  const int new_row = std::min<int>(
+    current_row_, static_cast<int>(config_.panes.size()) - 1);
+  // Suppress the save inside set_selected_row for the re-select of
+  // the same row (we just saved above and haven't touched the editor).
+  const int old_current = current_row_;
+  current_row_ = -1;
+  set_selected_row(new_row);
+  (void)old_current;
 }
 
 void ConfigDialog::onColsChanged(int value)
 {
   save_current_editor_to_config();
   resize_panes(config_, config_.rows, value);
-  refresh_list();
-  const int new_row = std::min<int>(current_row_, static_cast<int>(config_.panes.size()) - 1);
-  if (new_row >= 0) {list_->setCurrentRow(new_row);}
-  update_edit_buttons(new_row);
-}
-
-void ConfigDialog::onSelectionChanged(int row)
-{
-  save_current_editor_to_config();
-  current_row_ = row;
-  load_editor_from_config(row);
-  update_edit_buttons(row);
+  rebuild_thumbnail_grid();
+  const int new_row = std::min<int>(
+    current_row_, static_cast<int>(config_.panes.size()) - 1);
+  current_row_ = -1;
+  set_selected_row(new_row);
 }
 
 void ConfigDialog::onMoveUp()
 {
-  const int row = list_->currentRow();
-  if (row < 0 || row < config_.cols) {return;}
-  move_pane(row - config_.cols);
+  if (current_row_ < 0 || current_row_ < config_.cols) {return;}
+  move_pane(current_row_ - config_.cols);
 }
 
 void ConfigDialog::onMoveDown()
 {
-  const int row = list_->currentRow();
-  if (row < 0) {return;}
-  const int dst = row + config_.cols;
+  if (current_row_ < 0) {return;}
+  const int dst = current_row_ + config_.cols;
   if (dst >= static_cast<int>(config_.panes.size())) {return;}
   move_pane(dst);
 }
 
 void ConfigDialog::onMoveLeft()
 {
-  const int row = list_->currentRow();
-  if (row < 0 || (row % config_.cols) == 0) {return;}
-  move_pane(row - 1);
+  if (current_row_ < 0 || (current_row_ % config_.cols) == 0) {return;}
+  move_pane(current_row_ - 1);
 }
 
 void ConfigDialog::onMoveRight()
 {
-  const int row = list_->currentRow();
-  if (row < 0 || (row % config_.cols) == config_.cols - 1) {return;}
-  const int dst = row + 1;
+  if (current_row_ < 0 ||
+    (current_row_ % config_.cols) == config_.cols - 1)
+  {
+    return;
+  }
+  const int dst = current_row_ + 1;
   if (dst >= static_cast<int>(config_.panes.size())) {return;}
   move_pane(dst);
 }
 
 void ConfigDialog::onClearPane()
 {
-  const int row = list_->currentRow();
+  const int row = current_row_;
   if (row < 0 || row >= static_cast<int>(config_.panes.size())) {return;}
-  // Suppress save_current_editor_to_config on the selection change
-  // below — we're deliberately replacing the pane, not copying the
-  // editor's stale values into it.
+  // Suppress save_current_editor_to_config on the reselect below — we're
+  // deliberately replacing the pane, not copying the editor's stale
+  // values into it.
   current_row_ = -1;
   config_.panes[row] = PaneConfig{};
-  refresh_list();
-  list_->setCurrentRow(row);  // triggers load_editor_from_config + update_edit_buttons
+  rebuild_thumbnail_grid();
+  set_selected_row(row);
 }
 
 void ConfigDialog::move_pane(int dst_row)
 {
-  const int src = list_->currentRow();
+  const int src = current_row_;
   if (src < 0 ||
     src >= static_cast<int>(config_.panes.size()) ||
     dst_row < 0 ||
@@ -350,15 +362,58 @@ void ConfigDialog::move_pane(int dst_row)
   {
     return;
   }
-  // Flush any pending edits into the source pane so the swap carries
-  // them along, then suppress the about-to-fire save on the
-  // setCurrentRow(dst_row) below (dst is now the source's config;
-  // we don't want to overwrite it with the editor's pre-swap values).
+  // Flush pending edits into the source pane so the swap carries them
+  // along. Then clear current_row_ so set_selected_row(dst) below
+  // doesn't overwrite the moved pane with the editor's pre-swap values.
   save_current_editor_to_config();
   std::swap(config_.panes[src], config_.panes[dst_row]);
   current_row_ = -1;
-  refresh_list();
-  list_->setCurrentRow(dst_row);
+  rebuild_thumbnail_grid();
+  set_selected_row(dst_row);
+}
+
+void ConfigDialog::rebuild_thumbnail_grid()
+{
+  for (auto * cell : thumbnails_) {
+    thumbnail_grid_->removeWidget(cell);
+    cell->deleteLater();
+  }
+  thumbnails_.clear();
+  for (int r = 0; r < config_.rows; ++r) {
+    for (int c = 0; c < config_.cols; ++c) {
+      const int idx = r * config_.cols + c;
+      if (idx >= static_cast<int>(config_.panes.size())) {break;}
+      auto * cell = new ThumbnailCell(
+        node_, it_, config_.panes[idx], idx,
+        [this](int i) {set_selected_row(i);}, nullptr);
+      thumbnail_grid_->addWidget(cell, r, c);
+      thumbnails_.push_back(cell);
+    }
+  }
+  // Re-apply any pre-existing selection (used when rebuild happens
+  // inside a handler that set current_row_ beforehand).
+  if (current_row_ >= 0 &&
+    current_row_ < static_cast<int>(thumbnails_.size()))
+  {
+    thumbnails_[current_row_]->set_selected(true);
+  }
+}
+
+void ConfigDialog::set_selected_row(int row)
+{
+  save_current_editor_to_config();
+  // Clear previous cell's selected state.
+  if (current_row_ >= 0 &&
+    current_row_ < static_cast<int>(thumbnails_.size()))
+  {
+    thumbnails_[current_row_]->set_selected(false);
+  }
+  current_row_ = row;
+  if (row >= 0 && row < static_cast<int>(thumbnails_.size())) {
+    thumbnails_[row]->set_selected(true);
+  }
+  load_editor_from_config(row);
+  update_edit_buttons(row);
 }
 
 void ConfigDialog::update_edit_buttons(int row)
@@ -389,15 +444,13 @@ void ConfigDialog::onImportYaml()
   try {
     GridConfig loaded = config_from_file(path.toStdString());
     config_ = loaded;
-    // Restore the dialog's panes.size() == rows*cols invariant (symmetric
-    // with onAddPane / onRemovePane). YAML authors can hand-edit a file
-    // where panes and grid dimensions disagree; pad or truncate to match
-    // so every cell is editable from the list.
+    // Restore the dialog's panes.size() == rows*cols invariant. YAML
+    // authors can hand-edit a file where panes and grid dimensions
+    // disagree; pad or truncate to match so every cell has an editable
+    // thumbnail.
     resize_panes(config_, config_.rows, config_.cols);
-    // Prevent the setCurrentRow(0) below from firing onSelectionChanged,
-    // which would call save_current_editor_to_config() with the pre-import
-    // current_row_ and the editor's stale values and overwrite the freshly
-    // imported config_.panes[old_row_].
+    // Clear current_row_ so set_selected_row(0) below doesn't save the
+    // editor's pre-import values into the freshly loaded config.
     current_row_ = -1;
     rows_spin_->blockSignals(true);
     cols_spin_->blockSignals(true);
@@ -405,12 +458,8 @@ void ConfigDialog::onImportYaml()
     cols_spin_->setValue(config_.cols);
     rows_spin_->blockSignals(false);
     cols_spin_->blockSignals(false);
-    refresh_list();
-    if (!config_.panes.empty()) {
-      list_->setCurrentRow(0);
-    } else {
-      update_edit_buttons(-1);
-    }
+    rebuild_thumbnail_grid();
+    set_selected_row(config_.panes.empty() ? -1 : 0);
   } catch (const ConfigParseError & e) {
     QMessageBox::warning(
       this, "Import error", QString::fromStdString(e.what()));
@@ -457,23 +506,6 @@ void ConfigDialog::load_editor_from_config(int row)
   transport_combo_->setCurrentText(QString::fromStdString(p.transport));
   warn_spin_->setValue(p.warn_s);
   error_spin_->setValue(p.error_s);
-}
-
-void ConfigDialog::refresh_list()
-{
-  list_->blockSignals(true);
-  list_->clear();
-  for (size_t i = 0; i < config_.panes.size(); ++i) {
-    const int row = static_cast<int>(i) / std::max(1, config_.cols);
-    const int col = static_cast<int>(i) % std::max(1, config_.cols);
-    const QString prefix =
-      QString("[%1,%2] ").arg(row).arg(col);
-    const QString base = config_.panes[i].base.empty() ?
-      QString("(empty)") :
-      QString::fromStdString(config_.panes[i].base);
-    list_->addItem(prefix + base);
-  }
-  list_->blockSignals(false);
 }
 
 GridConfig ConfigDialog::get_config()

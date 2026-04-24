@@ -360,8 +360,13 @@ in-memory model, and the same OK-then-save mechanism persists it.
 - **Grid dims**: two `QSpinBox`es for rows × cols; applying either resizes
   the pane list (truncate / append empty panes). These spinboxes are the
   *only* control that changes `panes.size()`.
-- **Pane list** (`QListWidget`): select a pane to edit. Pane label =
-  `base` (or `(empty)` if unset). Toolbar below the list:
+- **Thumbnail grid** (`QGridLayout` of `ThumbnailCell`): mirrors the
+  target layout at thumbnail size, each cell a live `CameraPaneWidget`
+  subscribing to that pane's topic. Click a cell to select it; the
+  selected cell gets a highlighted border. Rebuilt on rows/cols change
+  and on YAML import. Dedicated `image_transport::ImageTransport`
+  tied to the dialog's lifetime so subscriptions tear down on close.
+  Toolbar below the grid:
   - **`↑ ← → ↓`** — swap the selected pane with its row-major neighbor
     in that direction. Selection follows the moved pane so arrows can
     be chained. Invalid directions (out-of-bounds, or neighbor index

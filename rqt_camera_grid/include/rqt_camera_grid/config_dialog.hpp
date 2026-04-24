@@ -31,18 +31,24 @@
 
 #include <QDialog>  // NOLINT(build/include_order)
 
+#include <memory>
+#include <vector>
+
+#include <image_transport/image_transport.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include "rqt_camera_grid/config_model.hpp"
 
 class QComboBox;
 class QDoubleSpinBox;
-class QListWidget;
+class QGridLayout;
 class QPushButton;
 class QSpinBox;
 
 namespace rqt_camera_grid
 {
+
+class ThumbnailCell;
 
 class ConfigDialog : public QDialog
 {
@@ -64,7 +70,6 @@ public:
 private slots:
   void onRowsChanged(int value);
   void onColsChanged(int value);
-  void onSelectionChanged(int row);
   void onMoveUp();
   void onMoveDown();
   void onMoveLeft();
@@ -78,7 +83,15 @@ private:
   void populate_topic_combo();
   void save_current_editor_to_config();
   void load_editor_from_config(int row);
-  void refresh_list();
+  // Tear down and rebuild the thumbnail cells. Called whenever config_
+  // changes size (rows/cols spinbox, import) or the pane configs
+  // themselves change (clear, swap). Subscription churn is acceptable
+  // because the dialog is short-lived.
+  void rebuild_thumbnail_grid();
+  // Selection helper: highlight cell at `row`, load its pane into the
+  // editor fields, refresh toolbar button states. `row == -1` clears
+  // selection and editor.
+  void set_selected_row(int row);
   // Swap the selected pane with its row-major neighbor and track focus
   // to the new cell. Called by the four arrow-button slots.
   void move_pane(int dst_row);
@@ -88,12 +101,14 @@ private:
   void update_edit_buttons(int row);
 
   rclcpp::Node::SharedPtr node_;
+  std::shared_ptr<image_transport::ImageTransport> it_;
   GridConfig config_;
   int current_row_{-1};
 
   QSpinBox * rows_spin_;
   QSpinBox * cols_spin_;
-  QListWidget * list_;
+  QGridLayout * thumbnail_grid_;
+  std::vector<ThumbnailCell *> thumbnails_;
   QComboBox * base_combo_;
   QComboBox * transport_combo_;
   QDoubleSpinBox * warn_spin_;

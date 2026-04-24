@@ -30,6 +30,7 @@ set(${PROJECT_NAME}_HEADERS
   include/${PROJECT_NAME}/camera_grid_widget.hpp
   include/${PROJECT_NAME}/camera_pane_widget.hpp
   include/${PROJECT_NAME}/config_dialog.hpp
+  include/${PROJECT_NAME}/thumbnail_cell.hpp
 )
 
 set(${PROJECT_NAME}_SOURCES
@@ -40,6 +41,7 @@ set(${PROJECT_NAME}_SOURCES
   src/grid_layout.cpp
   src/config_model.cpp
   src/config_dialog.cpp
+  src/thumbnail_cell.cpp
 )
 
 add_library(${PROJECT_NAME} SHARED
