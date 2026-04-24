@@ -1,0 +1,88 @@
+// Copyright 2026 University of New Hampshire
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are met:
+//
+//    * Redistributions of source code must retain the above copyright
+//      notice, this list of conditions and the following disclaimer.
+//
+//    * Redistributions in binary form must reproduce the above copyright
+//      notice, this list of conditions and the following disclaimer in the
+//      documentation and/or other materials provided with the distribution.
+//
+//    * Neither the name of the University of New Hampshire nor the names of its
+//      contributors may be used to endorse or promote products derived from
+//      this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+// POSSIBILITY OF SUCH DAMAGE.
+
+#ifndef RQT_CAMERA_GRID__THUMBNAIL_CELL_HPP_
+#define RQT_CAMERA_GRID__THUMBNAIL_CELL_HPP_
+
+#include <QWidget>
+
+#include <functional>
+#include <memory>
+
+#include <image_transport/image_transport.hpp>
+#include <rclcpp/rclcpp.hpp>
+
+#include "rqt_camera_grid/config_model.hpp"
+
+class QMouseEvent;
+class QPaintEvent;
+
+namespace rqt_camera_grid
+{
+
+class CameraPaneWidget;
+
+// A clickable cell in the config dialog's preview grid. Wraps a live
+// CameraPaneWidget so the operator sees the actual camera feed at
+// thumbnail size (rather than picking from a list of near-identical
+// topic strings), plus a selected/unselected visual border that the
+// dialog toolbar (arrows, Clear) operates on.
+//
+// No Q_OBJECT / signals: click delivery is via a std::function callback
+// passed at construction, keeping the class header-only-friendly and
+// avoiding an extra MOC translation unit.
+class ThumbnailCell : public QWidget
+{
+public:
+  using ClickHandler = std::function<void (int)>;
+
+  ThumbnailCell(
+    rclcpp::Node::SharedPtr node,
+    std::shared_ptr<image_transport::ImageTransport> it,
+    const PaneConfig & config,
+    int index,
+    ClickHandler on_click,
+    QWidget * parent = nullptr);
+
+  int index() const {return index_;}
+  void set_selected(bool selected);
+
+protected:
+  void mousePressEvent(QMouseEvent * event) override;
+  void paintEvent(QPaintEvent * event) override;
+
+private:
+  CameraPaneWidget * pane_;
+  int index_;
+  ClickHandler on_click_;
+  bool selected_{false};
+};
+
+}  // namespace rqt_camera_grid
+
+#endif  // RQT_CAMERA_GRID__THUMBNAIL_CELL_HPP_

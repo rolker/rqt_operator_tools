@@ -1,0 +1,17 @@
+<library path="rqt_camera_grid">
+  <class name="rqt_camera_grid/CameraGrid"
+         type="rqt_camera_grid::CameraGridPlugin"
+         base_class_type="rqt_gui_cpp::Plugin">
+    <description>
+      Multi-stream image_transport grid view with per-pane staleness border.
+    </description>
+    <qtgui>
+      <group>
+        <label>Robot Tools</label>
+      </group>
+      <label>Camera Grid</label>
+      <icon type="theme">camera-video</icon>
+      <statustip>Display multiple camera streams in a grid with staleness indicators.</statustip>
+    </qtgui>
+  </class>
+</library>

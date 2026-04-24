@@ -1,0 +1,15 @@
+# Default rqt_camera_grid config: empty 2x2 placeholder.
+#
+# On first launch the grid shows four empty dark cells with staleness
+# borders (red, since no frames are arriving). Open rqt's wrench to add
+# panes, or Import YAML... to load a platform-specific config.
+#
+# Schema:
+#   grid: { rows: <int>, cols: <int> }
+#   panes:
+#     - { base: <topic>, transport: <raw|compressed|compressedDepth|theora|ffmpeg>,
+#         warn_s: <float>, error_s: <float> }
+#
+# Defaults: warn_s=2.0, error_s=5.0 for operator-station consistency.
+grid: { rows: 2, cols: 2 }
+panes: []
