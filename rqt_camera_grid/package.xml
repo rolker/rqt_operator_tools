@@ -35,6 +35,13 @@
   <exec_depend>theora_image_transport</exec_depend>
   <exec_depend>ffmpeg_image_transport</exec_depend>
 
+  <!-- Demo dependencies: webcam source + Python transform node in
+       scripts/demo_transform.py (launched via
+       launch/demo_webcam_grid.launch.py). -->
+  <exec_depend>v4l2_camera</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

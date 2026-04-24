@@ -18,6 +18,45 @@ Click rqt's wrench icon on the plugin to open the config dialog; use
 **Import YAML...** to load a config file, or edit panes in-place. OK applies
 the config and rqt persists it in the current perspective.
 
+## Demo
+
+For hands-on testing without boat hardware, the package ships a demo
+launch file that fans a local webcam into six visually distinct streams
+and a matching 2×3 grid config:
+
+```bash
+ros2 launch rqt_camera_grid demo_webcam_grid.launch.py
+```
+
+The launch starts `v4l2_camera` on `/dev/video0` (override with
+`video_device:=/dev/videoN`) and five `demo_transform.py` instances,
+producing:
+
+| Source | Pane topic                       | Transform        |
+|--------|----------------------------------|------------------|
+| 1      | `/demo/webcam/image_raw`         | raw webcam       |
+| 2      | `/demo/flip_h/image_raw`         | horizontal flip  |
+| 3      | `/demo/grayscale/image_raw`      | grayscale → rgb8 |
+| 4      | `/demo/crop_left/image_raw`      | left half only   |
+| 5      | `/demo/crop_right/image_raw`     | right half only  |
+| 6      | `/demo/negative/image_raw`       | color negative   |
+
+In a separate terminal, launch rqt and load the matching config:
+
+```bash
+rqt --force-discover        # first-time: ensures Camera Grid is listed
+# Plugins -> Visualization -> Camera Grid
+# wrench icon -> Import YAML...
+#   -> <install-space>/share/rqt_camera_grid/config/demo_webcam_grid.yaml
+```
+
+The cropped panes have different aspect ratios than the full-frame
+panes, which exercises the aspect-aware layout's letterboxing.
+
+Additional transforms available via the `transform` parameter on
+`demo_transform.py`: `flip_v`, `blur`, `edge`, `none` — edit the
+launch file or YAML to substitute them.
+
 ## Configuration
 
 ### Schema

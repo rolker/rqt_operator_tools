@@ -1,0 +1,18 @@
+# Demo grid config: 6 sources fanned from one webcam.
+#
+# Pair with launch/demo_webcam_grid.launch.py. The launch starts
+# v4l2_camera publishing to /demo/webcam/image_raw and five
+# demo_transform.py instances that republish transformed copies.
+#
+# Layout is 2 rows x 3 cols (rows=2, cols=3). Edit rows/cols to
+# re-shape; the dialog will maintain panes.size() == rows*cols.
+#
+# warn_s=2.0, error_s=5.0 per operator-station-consistent defaults.
+grid: { rows: 2, cols: 3 }
+panes:
+  - { base: /demo/webcam/image_raw,     transport: raw, warn_s: 2.0, error_s: 5.0 }
+  - { base: /demo/flip_h/image_raw,     transport: raw, warn_s: 2.0, error_s: 5.0 }
+  - { base: /demo/grayscale/image_raw,  transport: raw, warn_s: 2.0, error_s: 5.0 }
+  - { base: /demo/crop_left/image_raw,  transport: raw, warn_s: 2.0, error_s: 5.0 }
+  - { base: /demo/crop_right/image_raw, transport: raw, warn_s: 2.0, error_s: 5.0 }
+  - { base: /demo/negative/image_raw,   transport: raw, warn_s: 2.0, error_s: 5.0 }

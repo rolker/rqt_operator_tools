@@ -85,8 +85,12 @@ install(FILES plugin.xml
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(DIRECTORY config
+install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME}
+)
+
+install(PROGRAMS scripts/demo_transform.py
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 install(FILES resource/${PROJECT_NAME}

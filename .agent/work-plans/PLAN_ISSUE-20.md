@@ -581,6 +581,9 @@ ament_package()
 | File | Change |
 |------|--------|
 | `rqt_camera_grid/**` | New C++ package (all files listed above) |
+| `rqt_camera_grid/scripts/demo_transform.py` | Python demo: OpenCV transform node for fanning one webcam into visually distinct streams |
+| `rqt_camera_grid/launch/demo_webcam_grid.launch.py` | Python launch: v4l2_camera + five demo_transform.py instances |
+| `rqt_camera_grid/config/demo_webcam_grid.yaml` | 2×3 demo grid config matching the launch's six sources |
 | `README.md` | Add `rqt_camera_grid` entry; add missing `rqt_operator_log` entry |
 | `.agent/work-plans/PLAN_ISSUE-20.md` | This plan |
 
