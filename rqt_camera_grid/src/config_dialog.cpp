@@ -36,6 +36,7 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -214,6 +215,21 @@ ConfigDialog::ConfigDialog(
           QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &ConfigDialog::onBaseEditChanged);
 
+  // Commit editor edits into config_.panes and refresh the affected
+  // thumbnail as soon as a field is committed (dropdown pick, free-text
+  // Enter/focus-loss, transport dropdown, threshold editingFinished).
+  // Using editingFinished rather than every-keystroke signals keeps
+  // the rebuild count low — once per user commit, not per character.
+  connect(base_combo_->lineEdit(), &QLineEdit::editingFinished,
+          this, &ConfigDialog::commit_current_editor);
+  connect(transport_combo_,
+          QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, &ConfigDialog::commit_current_editor);
+  connect(warn_spin_, &QDoubleSpinBox::editingFinished,
+          this, &ConfigDialog::commit_current_editor);
+  connect(error_spin_, &QDoubleSpinBox::editingFinished,
+          this, &ConfigDialog::commit_current_editor);
+
   // Import / Export.
   auto * io = new QHBoxLayout();
   auto * import_btn = new QPushButton("Import YAML...");
@@ -270,15 +286,23 @@ void ConfigDialog::onBaseEditChanged(int index)
   const QString base = base_combo_->itemData(index).toString();
   if (!base.isEmpty()) {
     base_combo_->setEditText(base);
-    // Auto-select the transport hinted by the combo label.
+    // Auto-select the transport hinted by the combo label. Block
+    // transport_combo_ signals during the update so commit_current_editor
+    // fires only once (below), not twice.
     const QString label = base_combo_->itemText(index);
-    for (const auto & t : kTransports) {
-      if (label.contains("[" + t + "]")) {
-        transport_combo_->setCurrentText(t);
-        break;
+    {
+      QSignalBlocker block(transport_combo_);
+      for (const auto & t : kTransports) {
+        if (label.contains("[" + t + "]")) {
+          transport_combo_->setCurrentText(t);
+          break;
+        }
       }
     }
   }
+  // Dropdown pick is a user commit — save + refresh the thumbnail now
+  // so the operator sees the new topic render without tabbing away.
+  commit_current_editor();
 }
 
 void ConfigDialog::onRowsChanged(int value)
@@ -427,6 +451,45 @@ void ConfigDialog::reshape_grid(int new_rows, int new_cols)
   removed_cells_ = std::move(new_removed);
 }
 
+void ConfigDialog::commit_current_editor()
+{
+  if (current_row_ < 0 ||
+    current_row_ >= static_cast<int>(config_.panes.size()))
+  {
+    return;
+  }
+  // Snapshot the saved pane so we can skip the rebuild if nothing
+  // actually changed. Subscription-affecting fields are base and
+  // transport; warn_s/error_s drive the staleness tracker which is
+  // constructed with the pane so a rebuild picks them up too.
+  const PaneConfig before = config_.panes[current_row_];
+  save_current_editor_to_config();
+  if (before == config_.panes[current_row_]) {
+    return;
+  }
+  rebuild_thumbnail_cell(current_row_);
+}
+
+void ConfigDialog::rebuild_thumbnail_cell(int row)
+{
+  if (row < 0 || row >= static_cast<int>(thumbnails_.size())) {return;}
+  if (row >= static_cast<int>(config_.panes.size())) {return;}
+  const int r = row / config_.cols;
+  const int c = row % config_.cols;
+  const bool was_selected = (current_row_ == row);
+  ThumbnailCell * old_cell = thumbnails_[row];
+  thumbnail_grid_->removeWidget(old_cell);
+  old_cell->deleteLater();
+  auto * new_cell = new ThumbnailCell(
+    node_, it_, config_.panes[row], row,
+    [this](int i) {set_selected_row(i);}, nullptr);
+  thumbnail_grid_->addWidget(new_cell, r, c);
+  thumbnails_[row] = new_cell;
+  if (was_selected) {
+    new_cell->set_selected(true);
+  }
+}
+
 void ConfigDialog::rebuild_thumbnail_grid()
 {
   for (auto * cell : thumbnails_) {
@@ -552,6 +615,13 @@ void ConfigDialog::save_current_editor_to_config()
 
 void ConfigDialog::load_editor_from_config(int row)
 {
+  // Block transport_combo signals: setCurrentText fires
+  // currentIndexChanged when it lands on a matching item, which would
+  // re-enter commit_current_editor mid-load and overwrite the pane's
+  // warn/error with stale editor values (those fields haven't been
+  // repopulated yet — setValue calls below). setEditText / setValue
+  // don't fire editingFinished, so no other blockers needed.
+  QSignalBlocker block_transport(transport_combo_);
   if (row < 0 || row >= static_cast<int>(config_.panes.size())) {
     base_combo_->setEditText("");
     transport_combo_->setCurrentText("raw");

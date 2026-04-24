@@ -80,6 +80,11 @@ private slots:
   void onImportYaml();
   void onExportYaml();
   void onBaseEditChanged(int index);
+  // Commit the editor's current field values into config_.panes and
+  // rebuild the selected cell's thumbnail so subscription changes
+  // (base / transport edits) take effect without needing to
+  // navigate away first.
+  void commit_current_editor();
 
 private:
   void populate_topic_combo();
@@ -99,6 +104,11 @@ private:
   // themselves change (clear, swap). Subscription churn is acceptable
   // because the dialog is short-lived.
   void rebuild_thumbnail_grid();
+  // Rebuild a single thumbnail cell in place. Cheaper than
+  // rebuild_thumbnail_grid when only one pane's config changed
+  // (editor commit, clear, etc.). Preserves the selected state if
+  // the rebuilt cell was the selected one.
+  void rebuild_thumbnail_cell(int row);
   // Selection helper: highlight cell at `row`, load its pane into the
   // editor fields, refresh toolbar button states. `row == -1` clears
   // selection and editor.
