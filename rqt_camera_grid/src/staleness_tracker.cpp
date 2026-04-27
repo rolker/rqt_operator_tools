@@ -29,6 +29,8 @@
 #include "rqt_camera_grid/staleness_tracker.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 namespace rqt_camera_grid
 {
@@ -36,7 +38,8 @@ namespace rqt_camera_grid
 StalenessTracker::StalenessTracker(double warn_s, double error_s)
 : warn_s_(std::max(0.0, warn_s)),
   error_s_(std::max(warn_s_, error_s)),
-  last_frame_(0, 0, RCL_ROS_TIME)
+  last_arrival_(0, 0, RCL_ROS_TIME),
+  last_valid_stamp_(0, 0, RCL_ROS_TIME)
 {
 }
 
@@ -46,10 +49,18 @@ void StalenessTracker::set_thresholds(double warn_s, double error_s)
   error_s_ = std::max(warn_s_, error_s);
 }
 
-void StalenessTracker::mark_frame(const rclcpp::Time & now)
+void StalenessTracker::mark_frame(
+  const rclcpp::Time & arrival,
+  const rclcpp::Time & header_stamp,
+  bool stamp_valid)
 {
-  last_frame_ = now;
+  last_arrival_ = arrival;
   has_frames_ = true;
+  last_frame_stamp_valid_ = stamp_valid;
+  if (stamp_valid) {
+    last_valid_stamp_ = header_stamp;
+    has_valid_stamp_ = true;
+  }
 }
 
 bool StalenessTracker::has_frames() const
@@ -57,15 +68,30 @@ bool StalenessTracker::has_frames() const
   return has_frames_;
 }
 
+bool StalenessTracker::last_stamp_valid() const
+{
+  return last_frame_stamp_valid_;
+}
+
 StalenessTracker::Level StalenessTracker::tick(const rclcpp::Time & now) const
 {
   if (!has_frames_) {
     return Level::Error;
   }
-  const double age = (now - last_frame_).seconds();
-  // Negative age means time ran backwards (e.g. use_sim_time + clock restart).
-  // Prefer Error so the operator sees a conservative signal through the
-  // discontinuity; the next frame in the new clock domain clears it naturally.
+  // A stream we can't vet must not look healthy. The operator sees the
+  // red border and the [no stamp] label together and knows this pane's
+  // latency is unverifiable.
+  if (!last_frame_stamp_valid_) {
+    return Level::Error;
+  }
+  const double arr_age = (now - last_arrival_).seconds();
+  const double hdr_age = (now - last_valid_stamp_).seconds();
+  const double age = std::max(arr_age, hdr_age);
+  // Negative worst-of-both age means time ran backwards across both
+  // tracked timestamps (e.g. use_sim_time + clock restart affecting
+  // arrival time as well — a header stamp slightly ahead of "now"
+  // alone is masked by arrival_age in the max). Prefer Error so the
+  // operator sees a conservative signal through the discontinuity.
   if (age < 0.0 || age >= error_s_) {
     return Level::Error;
   }
@@ -73,6 +99,22 @@ StalenessTracker::Level StalenessTracker::tick(const rclcpp::Time & now) const
     return Level::Warn;
   }
   return Level::Neutral;
+}
+
+double StalenessTracker::arrival_age(const rclcpp::Time & now) const
+{
+  if (!has_frames_) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  return (now - last_arrival_).seconds();
+}
+
+double StalenessTracker::stamp_age(const rclcpp::Time & now) const
+{
+  if (!has_valid_stamp_) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  return (now - last_valid_stamp_).seconds();
 }
 
 }  // namespace rqt_camera_grid
