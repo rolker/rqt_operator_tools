@@ -118,15 +118,27 @@ void CameraPaneWidget::subscribe()
 
   image_transport::TransportHints hints(node_.get(), config_.transport);
 
-  sub_ = it_->subscribe(
-    config_.base,
-    qos,
-    [this](const sensor_msgs::msg::Image::ConstSharedPtr & msg) {
-      this->handleImage(msg);
-    },
-    image_transport::ImageTransport::VoidPtr(),
-    &hints,
-    rclcpp::SubscriptionOptions());
+  // image_transport::subscribe forwards into rclcpp which validates the
+  // topic name and can throw (InvalidTopicNameError, plus fastcdr / dds
+  // exceptions for malformed strings). Catch here so a single bad pane
+  // config can't terminate() the whole rqt process — the staleness
+  // tracker will surface the missing-data state visually.
+  try {
+    sub_ = it_->subscribe(
+      config_.base,
+      qos,
+      [this](const sensor_msgs::msg::Image::ConstSharedPtr & msg) {
+        this->handleImage(msg);
+      },
+      image_transport::ImageTransport::VoidPtr(),
+      &hints,
+      rclcpp::SubscriptionOptions());
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR(
+      node_->get_logger(),
+      "rqt_camera_grid: failed to subscribe to '%s' (transport='%s'): %s",
+      config_.base.c_str(), config_.transport.c_str(), e.what());
+  }
 }
 
 void CameraPaneWidget::unsubscribe()
