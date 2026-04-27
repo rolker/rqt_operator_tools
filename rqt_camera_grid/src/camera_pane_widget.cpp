@@ -32,6 +32,7 @@
 #include <QHBoxLayout>
 #include <QPainter>
 #include <QPalette>
+#include <QPointer>
 #include <QResizeEvent>
 
 #include <rmw/qos_profiles.h>
@@ -123,12 +124,27 @@ void CameraPaneWidget::subscribe()
   // exceptions for malformed strings). Catch here so a single bad pane
   // config can't terminate() the whole rqt process — the staleness
   // tracker will surface the missing-data state visually.
+  //
+  // Capture a QPointer rather than raw `this`: the ROS spin thread can
+  // deliver an in-flight message to this lambda after the widget has
+  // been destroyed (e.g. a config-apply tears down old panes while
+  // frames are still arriving on the wire). image_transport's shutdown
+  // is not a synchronous drain of pending callbacks — without this
+  // guard the lambda dereferences a freed QObject and segfaults inside
+  // the Qt signal-emit machinery (QObjectPrivate::maybeSignalConnected).
+  // QPointer auto-nulls in ~QObject's clearGuards() so the lambda can
+  // early-return. A narrow residual race remains between the null
+  // check and the emit if destruction begins concurrently; for full
+  // safety the destructor would need to synchronize with the callback
+  // path. Acceptable in practice; standard Qt+ROS idiom.
+  QPointer<CameraPaneWidget> self(this);
   try {
     sub_ = it_->subscribe(
       config_.base,
       qos,
-      [this](const sensor_msgs::msg::Image::ConstSharedPtr & msg) {
-        this->handleImage(msg);
+      [self](const sensor_msgs::msg::Image::ConstSharedPtr & msg) {
+        if (!self) {return;}
+        self->handleImage(msg);
       },
       image_transport::ImageTransport::VoidPtr(),
       &hints,
