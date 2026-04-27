@@ -87,10 +87,11 @@ StalenessTracker::Level StalenessTracker::tick(const rclcpp::Time & now) const
   const double arr_age = (now - last_arrival_).seconds();
   const double hdr_age = (now - last_valid_stamp_).seconds();
   const double age = std::max(arr_age, hdr_age);
-  // Negative age means time ran backwards (e.g. use_sim_time + clock
-  // restart) or a publisher's stamp is slightly ahead of ours within
-  // the 60 s tolerance — prefer Error so the operator sees a
-  // conservative signal through the discontinuity.
+  // Negative worst-of-both age means time ran backwards across both
+  // tracked timestamps (e.g. use_sim_time + clock restart affecting
+  // arrival time as well — a header stamp slightly ahead of "now"
+  // alone is masked by arrival_age in the max). Prefer Error so the
+  // operator sees a conservative signal through the discontinuity.
   if (age < 0.0 || age >= error_s_) {
     return Level::Error;
   }

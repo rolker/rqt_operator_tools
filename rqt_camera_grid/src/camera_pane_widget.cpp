@@ -219,7 +219,10 @@ void CameraPaneWidget::update_label(const rclcpp::Time & now)
     (last_label_update_.nanoseconds() == 0) ?
     std::numeric_limits<double>::infinity() :
     (now - last_label_update_).seconds();
-  if (since_update < kLabelPeriodS) {
+  // If the clock jumps backwards (e.g. use_sim_time reset), since_update
+  // goes negative — force a refresh rather than throttle indefinitely
+  // against a "future" last_label_update_.
+  if (since_update >= 0.0 && since_update < kLabelPeriodS) {
     return;
   }
 
