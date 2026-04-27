@@ -607,7 +607,23 @@ void ConfigDialog::save_current_editor_to_config()
     return;
   }
   PaneConfig & p = config_.panes[current_row_];
-  p.base = base_combo_->currentText().toStdString();
+  // base_combo_ items use a display label "<base>  [<transport>]" with the
+  // clean base in itemData. lineEdit::editingFinished can fire (on combo
+  // popup-close focus shifts, or autocomplete Enter/Tab) before the
+  // currentIndexChanged → onBaseEditChanged → setEditText(clean) chain has
+  // overwritten the line edit. In that window currentText() is the dirty
+  // display label, which then leaks into config_.base and the subsequent
+  // image_transport::subscribe(base, ...) throws on the bracketed name.
+  // Read from itemData when the line edit still matches a known item's
+  // display text; otherwise (free-typed custom topic, or already-cleaned
+  // line edit) trust the line edit.
+  const int idx = base_combo_->currentIndex();
+  const QString edit = base_combo_->currentText();
+  if (idx > 0 && edit == base_combo_->itemText(idx)) {
+    p.base = base_combo_->itemData(idx).toString().toStdString();
+  } else {
+    p.base = edit.toStdString();
+  }
   p.transport = transport_combo_->currentText().toStdString();
   p.warn_s = warn_spin_->value();
   p.error_s = error_spin_->value();
