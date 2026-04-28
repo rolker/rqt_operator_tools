@@ -111,9 +111,3 @@ TEST(ResolveBaseFromCombo, EmptyEverythingProducesEmptyString)
     resolve_base_from_combo(0, "", "", ""),
     "");
 }
-
-int main(int argc, char ** argv)
-{
-  ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}

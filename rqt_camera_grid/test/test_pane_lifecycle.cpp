@@ -252,15 +252,27 @@ TEST_F(PaneLifecycleTest, SubscribeWithMalformedTransportSurvives)
 
 TEST_F(PaneLifecycleTest, RapidConstructDestructWithSubscribe)
 {
-  // Variant of RapidConstructDestruct that exercises the subscribe()
-  // path and the QPointer-protected lambda's lifecycle on every cycle.
-  // Without the d936384 fix, in-flight image-transport callbacks on
-  // the ROS spin thread could dispatch to a destroyed widget and
-  // SIGSEGV inside QObjectPrivate::maybeSignalConnected. The base
-  // topic is unpublished, so no real frames arrive — the regression
-  // signal is the absence of crashes / Qt thread-teardown warnings
-  // under churn alone, and the absence of Subscriber::shutdown()
-  // misbehavior under repeated construct/destruct.
+  // Variant of RapidConstructDestruct that calls subscribe() each
+  // cycle. What this actually exercises:
+  //   * subscribe() exception-safety under churn (the try/catch from
+  //     7f1d78b runs every iteration);
+  //   * Subscriber lifecycle — construction, immediate destruction
+  //     before any frame arrives, repeated 500 times — verifying
+  //     image_transport's shutdown handles back-to-back create/destroy
+  //     without leaking timers or emitting cross-thread Qt warnings;
+  //   * the QPointer capture path through `it_->subscribe(...)` (i.e.
+  //     the lambda is *built and registered* under load, even if
+  //     never called).
+  //
+  // What this does NOT exercise: the actual callback-after-destruction
+  // race that the QPointer guard targets. No executor is spinning and
+  // no publisher exists, so the lambda body is never reached and the
+  // null-self early-return is never taken. Forcing that race in a unit
+  // test requires a threaded executor + a publisher + careful timing
+  // around tear-down — high cost, and the QPointer pattern is the
+  // standard Qt+ROS idiom (well-trodden enough that code review is the
+  // primary safeguard, not gtest). Documenting the gap honestly here
+  // so a future reader doesn't trust this test for more than it gives.
   using rqt_camera_grid::CameraPaneWidget;
   using rqt_camera_grid::PaneConfig;
 
