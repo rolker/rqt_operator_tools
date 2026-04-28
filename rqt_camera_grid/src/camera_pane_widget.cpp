@@ -117,11 +117,12 @@ void CameraPaneWidget::subscribe()
   rmw_qos_profile_t qos = rmw_qos_profile_sensor_data;
   qos.depth = 1;  // we only paint the latest frame
 
-  image_transport::TransportHints hints(node_.get(), config_.transport);
-
   // image_transport::subscribe forwards into rclcpp which validates the
   // topic name and can throw (InvalidTopicNameError, plus fastcdr / dds
-  // exceptions for malformed strings). Catch here so a single bad pane
+  // exceptions for malformed strings). TransportHints itself can also
+  // throw — its constructor declares the `image_transport` parameter
+  // and surfaces ParameterAlreadyDeclared / InvalidParameterType — so
+  // it lives inside the try block too. Catch here so a single bad pane
   // config can't terminate() the whole rqt process — the staleness
   // tracker will surface the missing-data state visually.
   //
@@ -139,6 +140,7 @@ void CameraPaneWidget::subscribe()
   // path. Acceptable in practice; standard Qt+ROS idiom.
   QPointer<CameraPaneWidget> self(this);
   try {
+    image_transport::TransportHints hints(node_.get(), config_.transport);
     sub_ = it_->subscribe(
       config_.base,
       qos,
