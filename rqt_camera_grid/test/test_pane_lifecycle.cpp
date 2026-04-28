@@ -202,3 +202,120 @@ TEST_F(PaneLifecycleTest, ConstructDestructWithEmptyBaseNeverSubscribes)
   }
   SUCCEED();
 }
+
+TEST_F(PaneLifecycleTest, SubscribeWithInvalidTopicSurvives)
+{
+  // Anti-regression for #27. Before the b449acb / 7f1d78b fixes the
+  // dialog could leak the "<base>  [<transport>]" display label into
+  // PaneConfig::base. The constructor's subscribe() then handed that
+  // bracketed string to image_transport, which surfaced an
+  // InvalidTopicNameError out of rclcpp / fastcdr that nothing caught
+  // — terminate() on the main thread, killing the whole rqt process.
+  //
+  // The fix catches std::exception in subscribe() and logs. This test
+  // pins that contract: a malformed base must not throw out of the
+  // CameraPaneWidget constructor, and the widget must destroy cleanly
+  // afterwards.
+  using rqt_camera_grid::CameraPaneWidget;
+  using rqt_camera_grid::PaneConfig;
+
+  PaneConfig config;
+  config.base = "/bizzy/sensors/cameras/oak_port/segmentation  [raw]";  // exact #27 form
+  config.transport = "raw";
+
+  ASSERT_NO_THROW({
+    CameraPaneWidget pane(node_, it_, config);
+    pane.resize(160, 120);
+    QCoreApplication::processEvents();
+  });
+}
+
+TEST_F(PaneLifecycleTest, SubscribeWithMalformedTransportSurvives)
+{
+  // Companion to the above: TransportHints constructs an internal
+  // parameter, and a malformed transport string can throw out of that
+  // path too. Pre-fix, TransportHints lived above the try block; it now
+  // sits inside it. Pin that.
+  using rqt_camera_grid::CameraPaneWidget;
+  using rqt_camera_grid::PaneConfig;
+
+  PaneConfig config;
+  config.base = "/test/image_raw";
+  config.transport = "no such transport";
+
+  ASSERT_NO_THROW({
+    CameraPaneWidget pane(node_, it_, config);
+    pane.resize(160, 120);
+    QCoreApplication::processEvents();
+  });
+}
+
+TEST_F(PaneLifecycleTest, RapidConstructDestructWithSubscribe)
+{
+  // Variant of RapidConstructDestruct that calls subscribe() each
+  // cycle. What this actually exercises:
+  //   * subscribe() exception-safety under churn (the try/catch from
+  //     7f1d78b runs every iteration);
+  //   * Subscriber lifecycle — construction, immediate destruction
+  //     before any frame arrives, repeated 500 times — verifying
+  //     image_transport's shutdown handles back-to-back create/destroy
+  //     without leaking timers or emitting cross-thread Qt warnings;
+  //   * the QPointer capture path through `it_->subscribe(...)` (i.e.
+  //     the lambda is *built and registered* under load, even if
+  //     never called).
+  //
+  // What this does NOT exercise: the actual callback-after-destruction
+  // race that the QPointer guard targets. No executor is spinning and
+  // no publisher exists, so the lambda body is never reached and the
+  // null-self early-return is never taken. Forcing that race in a unit
+  // test requires a threaded executor + a publisher + careful timing
+  // around tear-down — high cost, and the QPointer pattern is the
+  // standard Qt+ROS idiom (well-trodden enough that code review is the
+  // primary safeguard, not gtest). Documenting the gap honestly here
+  // so a future reader doesn't trust this test for more than it gives.
+  using rqt_camera_grid::CameraPaneWidget;
+  using rqt_camera_grid::PaneConfig;
+
+  constexpr int kIterations = 500;
+
+  PaneConfig config;
+  config.base = "/test/image_raw_rapid_subscribe";
+  config.transport = "raw";
+
+  // Warm up — same justification as RapidConstructDestruct.
+  {
+    CameraPaneWidget pane(node_, it_, config);
+    (void)pane;
+  }
+
+  for (int i = 0; i < kIterations; ++i) {
+    CameraPaneWidget pane(node_, it_, config);
+    pane.resize(320, 240);
+    QCoreApplication::processEvents();
+  }
+
+  std::vector<std::string> thread_warnings;
+  {
+    std::lock_guard<std::mutex> lk(g_qt_messages_mutex);
+    for (const auto & m : g_captured_qt_messages) {
+      if (m.find("another thread") != std::string::npos ||
+        m.find("Timers cannot be stopped") != std::string::npos ||
+        m.find("Cannot create children") != std::string::npos)
+      {
+        thread_warnings.push_back(m);
+      }
+    }
+  }
+  if (!thread_warnings.empty()) {
+    std::string joined;
+    for (const auto & w : thread_warnings) {
+      joined += "  - ";
+      joined += w;
+      joined += "\n";
+    }
+    ADD_FAILURE()
+      << "Qt emitted " << thread_warnings.size()
+      << " thread-teardown warning(s) during " << kIterations
+      << " subscribe/destruct cycles:\n" << joined;
+  }
+}

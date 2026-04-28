@@ -32,6 +32,7 @@
 #include <QHBoxLayout>
 #include <QPainter>
 #include <QPalette>
+#include <QPointer>
 #include <QResizeEvent>
 
 #include <rmw/qos_profiles.h>
@@ -116,17 +117,46 @@ void CameraPaneWidget::subscribe()
   rmw_qos_profile_t qos = rmw_qos_profile_sensor_data;
   qos.depth = 1;  // we only paint the latest frame
 
-  image_transport::TransportHints hints(node_.get(), config_.transport);
-
-  sub_ = it_->subscribe(
-    config_.base,
-    qos,
-    [this](const sensor_msgs::msg::Image::ConstSharedPtr & msg) {
-      this->handleImage(msg);
-    },
-    image_transport::ImageTransport::VoidPtr(),
-    &hints,
-    rclcpp::SubscriptionOptions());
+  // image_transport::subscribe forwards into rclcpp which validates the
+  // topic name and can throw (InvalidTopicNameError, plus fastcdr / dds
+  // exceptions for malformed strings). TransportHints itself can also
+  // throw — its constructor declares the `image_transport` parameter
+  // and surfaces ParameterAlreadyDeclared / InvalidParameterType — so
+  // it lives inside the try block too. Catch here so a single bad pane
+  // config can't terminate() the whole rqt process — the staleness
+  // tracker will surface the missing-data state visually.
+  //
+  // Capture a QPointer rather than raw `this`: the ROS spin thread can
+  // deliver an in-flight message to this lambda after the widget has
+  // been destroyed (e.g. a config-apply tears down old panes while
+  // frames are still arriving on the wire). image_transport's shutdown
+  // is not a synchronous drain of pending callbacks — without this
+  // guard the lambda dereferences a freed QObject and segfaults inside
+  // the Qt signal-emit machinery (QObjectPrivate::maybeSignalConnected).
+  // QPointer auto-nulls in ~QObject's clearGuards() so the lambda can
+  // early-return. A narrow residual race remains between the null
+  // check and the emit if destruction begins concurrently; for full
+  // safety the destructor would need to synchronize with the callback
+  // path. Acceptable in practice; standard Qt+ROS idiom.
+  QPointer<CameraPaneWidget> self(this);
+  try {
+    image_transport::TransportHints hints(node_.get(), config_.transport);
+    sub_ = it_->subscribe(
+      config_.base,
+      qos,
+      [self](const sensor_msgs::msg::Image::ConstSharedPtr & msg) {
+        if (!self) {return;}
+        self->handleImage(msg);
+      },
+      image_transport::ImageTransport::VoidPtr(),
+      &hints,
+      rclcpp::SubscriptionOptions());
+  } catch (const std::exception & e) {
+    RCLCPP_ERROR(
+      node_->get_logger(),
+      "rqt_camera_grid: failed to subscribe to '%s' (transport='%s'): %s",
+      config_.base.c_str(), config_.transport.c_str(), e.what());
+  }
 }
 
 void CameraPaneWidget::unsubscribe()

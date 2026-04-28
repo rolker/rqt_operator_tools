@@ -134,6 +134,12 @@ if(BUILD_TESTING)
   set_tests_properties(test_pane_lifecycle PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+  ament_add_gtest(test_config_dialog_helpers
+    test/test_config_dialog_helpers.cpp
+  )
+  target_include_directories(test_config_dialog_helpers PRIVATE include)
+  target_link_libraries(test_config_dialog_helpers Qt5::Core)
+
   ament_lint_auto_find_test_dependencies()
 endif()
 

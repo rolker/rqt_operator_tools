@@ -28,6 +28,8 @@
 
 #include "rqt_camera_grid/config_dialog.hpp"
 
+#include "rqt_camera_grid/detail/config_dialog_helpers.hpp"
+
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -607,7 +609,16 @@ void ConfigDialog::save_current_editor_to_config()
     return;
   }
   PaneConfig & p = config_.panes[current_row_];
-  p.base = base_combo_->currentText().toStdString();
+  // See detail/config_dialog_helpers.hpp for the contract behind this
+  // resolution. Pulled out so the four cases (idx == -1, idx == 0,
+  // idx > 0 with text matching the item, idx > 0 with free-typed text)
+  // can be unit-tested without standing up the full dialog.
+  const int idx = base_combo_->currentIndex();
+  p.base = detail::resolve_base_from_combo(
+    idx,
+    base_combo_->currentText(),
+    idx >= 0 ? base_combo_->itemText(idx) : QString(),
+    idx >= 0 ? base_combo_->itemData(idx).toString() : QString());
   p.transport = transport_combo_->currentText().toStdString();
   p.warn_s = warn_spin_->value();
   p.error_s = error_spin_->value();
