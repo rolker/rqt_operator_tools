@@ -84,6 +84,40 @@ class TestIndicatorWidgetSizeInvariants:
         assert w.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
         assert w.sizePolicy().verticalPolicy() == QSizePolicy.Expanding
 
+    def test_stretch_factors_track_text_widths(self, qapp):
+        """Short label + long value must give the value the larger slot.
+
+        Without per-cell stretch the QHBoxLayout splits the cell evenly
+        and the wider side clips, even though _fit_font already shrinks
+        the font to fit the combined text.
+        """
+        from rqt_annunciator.config_model import IndicatorLevel
+        w = IndicatorWidget('PWR')
+        w.set_status(IndicatorLevel.OK, '23.875 V (low)')
+        layout = w.layout()
+        label_stretch = layout.stretch(w._label_layout_index)
+        value_stretch = layout.stretch(w._value_layout_index)
+        assert value_stretch > label_stretch, (
+            f'long value must claim more of the cell than a short label; '
+            f'got label_stretch={label_stretch}, value_stretch={value_stretch}'
+        )
+
+        # Symmetric case: long label, short value flips the relationship.
+        w2 = IndicatorWidget('Bizzy left thruster RPM')
+        w2.set_status(IndicatorLevel.OK, '0')
+        layout2 = w2.layout()
+        assert (layout2.stretch(w2._label_layout_index)
+                > layout2.stretch(w2._value_layout_index))
+
+    def test_stretch_factors_never_zero(self, qapp):
+        """Both slots must be claimable even if one side's text is empty."""
+        w = IndicatorWidget('X')
+        layout = w.layout()
+        w._value_text = ''
+        w._apply_stretch_factors()
+        assert layout.stretch(w._label_layout_index) >= 1
+        assert layout.stretch(w._value_layout_index) >= 1
+
 
 class TestAnnunciatorWidgetSizeInvariants:
     def _make_widget(self, n_indicators=6):
