@@ -100,7 +100,9 @@ class IndicatorWidget(QFrame):
         layout.setSizeConstraint(QLayout.SetNoConstraint)
         layout.addWidget(self._color_bar)
         layout.addWidget(self._label)
+        self._label_layout_index = layout.indexOf(self._label)
         layout.addWidget(self._value_label)
+        self._value_layout_index = layout.indexOf(self._value_label)
 
         # Cached reference font metrics at a fixed pixel size.  Using a
         # fixed size keeps the EMA decoupled from the rendered font
@@ -126,6 +128,7 @@ class IndicatorWidget(QFrame):
         )
 
         self._apply_level()
+        self._apply_stretch_factors()
 
     def minimumSizeHint(self):  # noqa: N802 (Qt API)
         return self._MIN_HINT
@@ -161,6 +164,7 @@ class IndicatorWidget(QFrame):
             + (1.0 - self._EMA_ALPHA) * self._ema_width
         )
         self._fit_font()
+        self._apply_stretch_factors()
         new_int = self.ema_width_px
         if new_int != old_int:
             self.width_sample_changed.emit(self._name, new_int)
@@ -182,6 +186,7 @@ class IndicatorWidget(QFrame):
             # what the user actually sees.
             self._rebuild_reference_metrics()
             self._fit_font()
+            self._apply_stretch_factors()
 
     # -- Internals -------------------------------------------------------------
 
@@ -228,6 +233,25 @@ class IndicatorWidget(QFrame):
         label_w = self._reference_metrics.horizontalAdvance(label_text)
         value_w = self._reference_metrics_bold.horizontalAdvance(value_text)
         return label_w + value_w
+
+    def _apply_stretch_factors(self):
+        """Set HBox stretch on label/value proportional to their text widths.
+
+        With ``QSizePolicy.Ignored`` on both labels and no stretch set,
+        QHBoxLayout falls back to splitting the cell evenly — so a short
+        label paired with a long value gives each side half the width and
+        the value clips.  ``_fit_font`` already shrinks the font so the
+        combined text fits the cell, but only proportional stretch makes
+        each side actually receive the room ``_fit_font`` assumed.
+        """
+        layout = self.layout()
+        if layout is None:
+            return
+        label_w = self._reference_metrics.horizontalAdvance(self._label.text())
+        value_w = self._reference_metrics_bold.horizontalAdvance(self._value_text)
+        # Floor at 1 so neither side collapses to zero when one is empty.
+        layout.setStretch(self._label_layout_index, max(1, label_w))
+        layout.setStretch(self._value_layout_index, max(1, value_w))
 
     def _fit_font(self):
         """Pick the largest font that fits ``label + value`` in the cell."""
