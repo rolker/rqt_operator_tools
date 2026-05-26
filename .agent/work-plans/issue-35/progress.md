@@ -50,3 +50,13 @@ issue: 35
 - [x] static analysis: no project flake8/ruff config or ament lint tests; ad-hoc flake8 findings all pre-existing / out-of-profile; workspace pre-commit clean
 - [x] governance: principles Pass; ADR-0008 (diagnostic_msgs KeyValue) + ADR-0013 (progress.md) compliant; echoboats#162 consumer + config_dialog consequences handled
 - [x] plan drift: none — plan synced to landed code (4 source/test files match)
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-05-26 10:19 -04:00
+**By**: Claude Code Agent (Claude Opus 4.7 (1M context))
+**PR**: #36 at `a3f1c24`
+**Sources**: Copilot PR review (1 inline comment)
+
+### Findings
+- [x] (valid, fixed) `value_key` matched verbatim — benign trailing space (e.g. `"Voltage "`) would fail the exact match and drive the row to ERROR. Normalized with `strip()` at match time, on serialization, and in flag text; added round-trip + whitespace-match tests. `config_model.py:select_keyvalue`/`to_dict` `a3f1c24`
