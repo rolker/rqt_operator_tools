@@ -1,12 +1,19 @@
 """Tests for threshold expression evaluation."""
 
+from collections import namedtuple
+
 import pytest
 
 from rqt_annunciator.config_model import (
+    IndicatorConfig,
+    IndicatorLevel,
     evaluate_threshold,
     validate_expression,
     preview_expression,
 )
+
+# Stand-in for diagnostic_msgs/KeyValue (key/value string pair).
+_KV = namedtuple('_KV', ['key', 'value'])
 
 
 class TestEvaluateThreshold:
@@ -99,3 +106,83 @@ class TestPreviewExpression:
     def test_error(self):
         result = preview_expression('value >', 5)
         assert 'Error' in result
+
+
+class TestEvaluateDiagnostic:
+    """End-to-end of the diagnostics threshold path (issue #35)."""
+
+    def _battery(self):
+        return IndicatorConfig(
+            name='Battery',
+            source='diagnostics',
+            diagnostic_name='mavros: Battery',
+            value_key='Voltage',
+            format='{:.1f} V',
+            threshold_warn='value < 23.0',
+            threshold_error='value < 21.5',
+        )
+
+    def _values(self, voltage):
+        return [_KV('Current', '0.0'), _KV('Voltage', str(voltage))]
+
+    def test_native_ok_healthy_value_ok(self):
+        level, text = self._battery().evaluate_diagnostic(
+            IndicatorLevel.OK, self._values(24.0))
+        assert level == IndicatorLevel.OK
+        assert text == '24.0 V'
+
+    def test_native_ok_warn_value_warn(self):
+        level, _ = self._battery().evaluate_diagnostic(
+            IndicatorLevel.OK, self._values(22.4))
+        assert level == IndicatorLevel.WARN
+
+    def test_native_ok_error_value_error(self):
+        level, _ = self._battery().evaluate_diagnostic(
+            IndicatorLevel.OK, self._values(21.0))
+        assert level == IndicatorLevel.ERROR
+
+    def test_native_error_healthy_value_stays_error(self):
+        # Producer ERROR is never downgraded by a healthy threshold value.
+        level, _ = self._battery().evaluate_diagnostic(
+            IndicatorLevel.ERROR, self._values(24.0))
+        assert level == IndicatorLevel.ERROR
+
+    def test_native_warn_error_value_escalates(self):
+        level, _ = self._battery().evaluate_diagnostic(
+            IndicatorLevel.WARN, self._values(21.0))
+        assert level == IndicatorLevel.ERROR
+
+    def test_native_stale_masks_threshold_error(self):
+        # Stale diagnostic isn't trusted for thresholding (deliberate).
+        level, _ = self._battery().evaluate_diagnostic(
+            IndicatorLevel.STALE, self._values(21.0))
+        assert level == IndicatorLevel.STALE
+
+    def test_missing_key_is_error(self):
+        level, text = self._battery().evaluate_diagnostic(
+            IndicatorLevel.OK, [_KV('Current', '0.0')])
+        assert level == IndicatorLevel.ERROR
+        assert text == 'Voltage?'
+
+    def test_non_numeric_value_is_error(self):
+        level, text = self._battery().evaluate_diagnostic(
+            IndicatorLevel.OK, [_KV('Voltage', 'n/a')])
+        assert level == IndicatorLevel.ERROR
+        assert text == 'Voltage?'
+
+    def test_no_thresholds_passes_native_level_and_first_value(self):
+        # Backward compat: no thresholds → native level, first KeyValue text.
+        config = IndicatorConfig(
+            name='GPS', source='diagnostics', diagnostic_name='mavros: GPS')
+        level, text = config.evaluate_diagnostic(
+            IndicatorLevel.WARN, [_KV('Satellites', '12')], message='ok')
+        assert level == IndicatorLevel.WARN
+        assert text == '12.0'  # float-formatted with default '{}'
+
+    def test_no_thresholds_no_values_falls_back_to_message(self):
+        config = IndicatorConfig(
+            name='GPS', source='diagnostics', diagnostic_name='mavros: GPS')
+        level, text = config.evaluate_diagnostic(
+            IndicatorLevel.OK, [], message='No fix')
+        assert level == IndicatorLevel.OK
+        assert text == 'No fix'

@@ -313,19 +313,12 @@ class AnnunciatorWidget(QWidget):
                 if widget is None:
                     continue
 
-                level = _diagnostic_level_to_indicator(status.level)
-                # Try to format a value from key-value pairs.
-                value_text = ''
-                if status.values:
-                    # Use the first value by default.
-                    try:
-                        val = float(status.values[0].value)
-                        value_text = config.format.format(val)
-                    except (ValueError, IndexError, KeyError):
-                        value_text = status.message or status.values[0].value
-
-                if not value_text:
-                    value_text = status.message or level.name
+                native_level = _diagnostic_level_to_indicator(status.level)
+                # When the indicator has value thresholds, the selected
+                # KeyValue drives the level (combined with the native level);
+                # otherwise this reproduces the historical first-value display.
+                level, value_text = config.evaluate_diagnostic(
+                    native_level, status.values, status.message)
 
                 widget.set_status(level, value_text)
                 self._last_update[name] = time.monotonic()
