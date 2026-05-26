@@ -223,9 +223,10 @@ class IndicatorConfig:
         """
         if not values:
             return None
-        if self.value_key:
+        key = self.value_key.strip()
+        if key:
             for kv in values:
-                if kv.key == self.value_key:
+                if kv.key == key:
                     return kv.value
             return None
         return values[0].value
@@ -261,7 +262,7 @@ class IndicatorConfig:
         formatted, falling back to *message* / the level name).
         """
         if self.has_thresholds:
-            flag = f'{self.value_key or "value"}?'
+            flag = f'{self.value_key.strip() or "value"}?'
             selected = self.select_keyvalue(values)
             if selected is None:
                 return IndicatorLevel.ERROR, flag
@@ -294,8 +295,8 @@ class IndicatorConfig:
             d['diagnostic_name'] = self.diagnostic_name
             if self.match_mode != MatchMode.SUBSTRING:
                 d['match_mode'] = self.match_mode.value
-            if self.value_key:
-                d['value_key'] = self.value_key
+            if self.value_key.strip():
+                d['value_key'] = self.value_key.strip()
             if self.format != '{}':
                 d['format'] = self.format
             thresholds = {}

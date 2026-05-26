@@ -121,6 +121,11 @@ class TestIndicatorConfig:
         assert 'value_key' not in d
         assert 'thresholds' not in d
 
+    def test_to_dict_normalizes_value_key(self):
+        config = IndicatorConfig(
+            name='B', source='diagnostics', diagnostic_name='t', value_key=' Voltage ')
+        assert config.to_dict()['value_key'] == 'Voltage'
+
     def test_to_dict_omits_whitespace_only_thresholds(self):
         # Whitespace-only thresholds are "no threshold" — don't serialize them
         # (keeps to_dict consistent with has_thresholds/evaluate_level).
@@ -150,6 +155,13 @@ class TestSelectKeyValue:
     def test_no_values_returns_none(self):
         config = IndicatorConfig(name='B', source='diagnostics', value_key='Voltage')
         assert config.select_keyvalue([]) is None
+
+    def test_value_key_whitespace_tolerant(self):
+        # Benign surrounding whitespace in value_key must still match (else the
+        # row would wrongly go ERROR). Copilot review finding, PR #36.
+        config = IndicatorConfig(name='B', source='diagnostics', value_key='Voltage ')
+        values = [_KV('Current', '0.0'), _KV('Voltage', '22.4')]
+        assert config.select_keyvalue(values) == '22.4'
 
 
 class TestCombineLevels:
