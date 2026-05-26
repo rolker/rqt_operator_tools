@@ -32,3 +32,21 @@ issue: 35
 - [x] (suggestion) document deliberate STALE-masks-threshold-ERROR semantics + producer-STALE is the only STALE `combine_levels` sees; add STALE×threshold test `61bbeb3`
 - [x] (suggestion) expand combine test matrix (OK/WARN/ERROR/STALE × value) + no-thresholds backward-compat assertion `61bbeb3`
 - [x] (suggestion) note live `value_key` casing check (publisher uses lowercase `voltage`) before echoboats consumer ships `61bbeb3`
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-05-26 09:59 -04:00
+**By**: Claude Code Agent (Claude Opus 4.7 (1M context))
+**Verdict**: approved (all findings addressed pre-push)
+
+**Branch**: feature/issue-35 at `dfba3f5`
+**Mode**: pre-push
+**Depth**: Standard (reason: medium change to operator-safety display logic)
+**Must-fix**: 0 | **Suggestions**: 0 (2 adversarial findings found + fixed before push)
+
+### Findings
+- [x] (fixed) whitespace-only threshold routed a healthy value to ERROR while the dialog validator showed it blank — `has_thresholds`/`evaluate_level` now strip (Claude adversarial) `dfba3f5`
+- [x] (fixed) `to_dict` emitted whitespace-only thresholds while `has_thresholds` treated them absent — `to_dict` now strip-guards both branches; added omit test (Copilot adversarial) `dfba3f5`
+- [x] static analysis: no project flake8/ruff config or ament lint tests; ad-hoc flake8 findings all pre-existing / out-of-profile; workspace pre-commit clean
+- [x] governance: principles Pass; ADR-0008 (diagnostic_msgs KeyValue) + ADR-0013 (progress.md) compliant; echoboats#162 consumer + config_dialog consequences handled
+- [x] plan drift: none — plan synced to landed code (4 source/test files match)
