@@ -102,6 +102,35 @@ class _IndicatorEditor(QWidget):
         self._diag_format_edit.setText('{}')
         diag_layout.addRow('Format:', self._diag_format_edit)
 
+        # Optional value thresholds on a selected KeyValue. When set, the row
+        # colors by the threshold result combined with the diagnostic's own
+        # level instead of by the level alone.
+        self._diag_value_key_edit = QLineEdit()
+        self._diag_value_key_edit.setPlaceholderText('e.g. Voltage (KeyValue key)')
+        diag_layout.addRow('Value key:', self._diag_value_key_edit)
+
+        self._diag_thresh_warn_edit = QLineEdit()
+        self._diag_thresh_warn_edit.setPlaceholderText('e.g. value < 23.0')
+        self._diag_thresh_warn_edit.textChanged.connect(
+            lambda text: self._validate_threshold(
+                self._diag_thresh_warn_edit, self._diag_warn_status))
+        self._diag_warn_status = QLabel()
+        diag_warn_row = QHBoxLayout()
+        diag_warn_row.addWidget(self._diag_thresh_warn_edit)
+        diag_warn_row.addWidget(self._diag_warn_status)
+        diag_layout.addRow('Warn if:', diag_warn_row)
+
+        self._diag_thresh_error_edit = QLineEdit()
+        self._diag_thresh_error_edit.setPlaceholderText('e.g. value < 21.5')
+        self._diag_thresh_error_edit.textChanged.connect(
+            lambda text: self._validate_threshold(
+                self._diag_thresh_error_edit, self._diag_error_status))
+        self._diag_error_status = QLabel()
+        diag_error_row = QHBoxLayout()
+        diag_error_row.addWidget(self._diag_thresh_error_edit)
+        diag_error_row.addWidget(self._diag_error_status)
+        diag_layout.addRow('Error if:', diag_error_row)
+
         layout.addRow(self._diag_group)
 
         # -- Common fields --
@@ -142,6 +171,9 @@ class _IndicatorEditor(QWidget):
 
         self._diag_name_edit.setText(config.diagnostic_name)
         self._match_mode_combo.setCurrentText(config.match_mode.value)
+        self._diag_value_key_edit.setText(config.value_key)
+        self._diag_thresh_warn_edit.setText(config.threshold_warn)
+        self._diag_thresh_error_edit.setText(config.threshold_error)
 
         fmt = config.format
         if config.source == 'diagnostics':
@@ -155,8 +187,16 @@ class _IndicatorEditor(QWidget):
 
     def get_config(self) -> IndicatorConfig:
         source = self._source_combo.currentText()
-        fmt = (self._diag_format_edit.text() if source == 'diagnostics'
-               else self._format_edit.text())
+        if source == 'diagnostics':
+            fmt = self._diag_format_edit.text()
+            threshold_warn = self._diag_thresh_warn_edit.text()
+            threshold_error = self._diag_thresh_error_edit.text()
+            value_key = self._diag_value_key_edit.text()
+        else:
+            fmt = self._format_edit.text()
+            threshold_warn = self._thresh_warn_edit.text()
+            threshold_error = self._thresh_error_edit.text()
+            value_key = ''
         return IndicatorConfig(
             name=self._name_edit.text() or 'Unnamed',
             source=source,
@@ -164,10 +204,11 @@ class _IndicatorEditor(QWidget):
             msg_type=self._msg_type_edit.text(),
             value_field=self._value_field_edit.text() or 'data',
             format=fmt or '{}',
-            threshold_warn=self._thresh_warn_edit.text(),
-            threshold_error=self._thresh_error_edit.text(),
+            threshold_warn=threshold_warn,
+            threshold_error=threshold_error,
             diagnostic_name=self._diag_name_edit.text(),
             match_mode=MatchMode(self._match_mode_combo.currentText()),
+            value_key=value_key,
             stale_timeout=self._stale_timeout_spin.value(),
         )
 

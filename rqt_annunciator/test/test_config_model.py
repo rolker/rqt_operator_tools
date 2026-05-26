@@ -1,5 +1,7 @@
 """Tests for config_model: parsing, serialization, and matching."""
 
+from collections import namedtuple
+
 import pytest
 
 from rqt_annunciator.config_model import (
@@ -8,6 +10,10 @@ from rqt_annunciator.config_model import (
     IndicatorLevel,
     MatchMode,
 )
+
+# Stand-in for diagnostic_msgs/KeyValue (key/value string pair) so these
+# stay pure-Python unit tests with no ROS message dependency.
+_KV = namedtuple('_KV', ['key', 'value'])
 
 
 class TestIndicatorConfig:
@@ -88,6 +94,106 @@ class TestIndicatorConfig:
         )
         assert config.matches_diagnostic('NTP offset from router.op')
         assert not config.matches_diagnostic('NTP offset from salmon')
+
+    def test_diagnostics_value_key_thresholds_roundtrip(self):
+        original = IndicatorConfig(
+            name='Battery',
+            source='diagnostics',
+            diagnostic_name='mavros: Battery',
+            value_key='Voltage',
+            threshold_warn='value < 23.0',
+            threshold_error='value < 21.5',
+        )
+        d = original.to_dict()
+        assert d['value_key'] == 'Voltage'
+        assert d['thresholds'] == {'warn': 'value < 23.0', 'error': 'value < 21.5'}
+        restored = IndicatorConfig.from_dict(d)
+        assert restored.source == 'diagnostics'
+        assert restored.value_key == 'Voltage'
+        assert restored.threshold_warn == 'value < 23.0'
+        assert restored.threshold_error == 'value < 21.5'
+
+    def test_to_dict_diagnostics_minimal_omits_new_keys(self):
+        # Backward compat: a plain diagnostics row emits no value_key/thresholds.
+        config = IndicatorConfig(
+            name='GPS', source='diagnostics', diagnostic_name='mavros: GPS')
+        d = config.to_dict()
+        assert 'value_key' not in d
+        assert 'thresholds' not in d
+
+    def test_to_dict_omits_whitespace_only_thresholds(self):
+        # Whitespace-only thresholds are "no threshold" — don't serialize them
+        # (keeps to_dict consistent with has_thresholds/evaluate_level).
+        config = IndicatorConfig(
+            name='B', source='diagnostics', diagnostic_name='test',
+            threshold_warn='   ', threshold_error='\t\n')
+        d = config.to_dict()
+        assert 'thresholds' not in d
+
+
+class TestSelectKeyValue:
+    def test_exact_match(self):
+        config = IndicatorConfig(name='B', source='diagnostics', value_key='Voltage')
+        values = [_KV('Current', '0.0'), _KV('Voltage', '22.4')]
+        assert config.select_keyvalue(values) == '22.4'
+
+    def test_empty_value_key_uses_first(self):
+        config = IndicatorConfig(name='B', source='diagnostics')
+        values = [_KV('Voltage', '22.4'), _KV('Current', '0.0')]
+        assert config.select_keyvalue(values) == '22.4'
+
+    def test_value_key_not_found_returns_none(self):
+        config = IndicatorConfig(name='B', source='diagnostics', value_key='Voltage')
+        values = [_KV('Current', '0.0')]
+        assert config.select_keyvalue(values) is None
+
+    def test_no_values_returns_none(self):
+        config = IndicatorConfig(name='B', source='diagnostics', value_key='Voltage')
+        assert config.select_keyvalue([]) is None
+
+
+class TestCombineLevels:
+    def test_native_ok_keeps_threshold(self):
+        assert IndicatorConfig.combine_levels(
+            IndicatorLevel.OK, IndicatorLevel.WARN) == IndicatorLevel.WARN
+        assert IndicatorConfig.combine_levels(
+            IndicatorLevel.OK, IndicatorLevel.ERROR) == IndicatorLevel.ERROR
+
+    def test_native_error_not_downgraded(self):
+        assert IndicatorConfig.combine_levels(
+            IndicatorLevel.ERROR, IndicatorLevel.OK) == IndicatorLevel.ERROR
+
+    def test_more_severe_wins(self):
+        assert IndicatorConfig.combine_levels(
+            IndicatorLevel.WARN, IndicatorLevel.ERROR) == IndicatorLevel.ERROR
+        assert IndicatorConfig.combine_levels(
+            IndicatorLevel.WARN, IndicatorLevel.OK) == IndicatorLevel.WARN
+
+    def test_stale_native_masks_threshold(self):
+        # A stale diagnostic is not trustworthy for thresholding — STALE wins
+        # even over a threshold-computed ERROR (deliberate).
+        assert IndicatorConfig.combine_levels(
+            IndicatorLevel.STALE, IndicatorLevel.ERROR) == IndicatorLevel.STALE
+        assert IndicatorConfig.combine_levels(
+            IndicatorLevel.STALE, IndicatorLevel.OK) == IndicatorLevel.STALE
+
+
+class TestHasThresholds:
+    def test_warn_only(self):
+        assert IndicatorConfig(name='B', threshold_warn='value < 1').has_thresholds
+
+    def test_error_only(self):
+        assert IndicatorConfig(name='B', threshold_error='value < 1').has_thresholds
+
+    def test_none(self):
+        assert not IndicatorConfig(name='B').has_thresholds
+
+    def test_whitespace_only_is_absent(self):
+        # A whitespace-only threshold is treated as "no threshold" (matches
+        # the dialog validator), so a healthy value is not forced to ERROR.
+        config = IndicatorConfig(name='B', threshold_warn='   ')
+        assert not config.has_thresholds
+        assert config.evaluate_level(42) == IndicatorLevel.OK
 
 
 class TestAnnunciatorConfig:

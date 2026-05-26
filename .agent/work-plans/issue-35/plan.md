@@ -23,26 +23,30 @@ Goal: let a diagnostics row optionally evaluate `thresholds` against a chosen `K
    `IndicatorConfig.value_key: str = ''`; in `from_dict` read `value_key` and stop gating
    `thresholds` to topic-only; in `to_dict` emit `value_key`/`thresholds` for diagnostics
    rows too. No change to existing topic serialization.
-2. **Pure, testable helpers on `IndicatorConfig`** (`config_model.py`) — keep the new logic
-   out of the Qt widget:
+2. **Pure, testable helpers on `IndicatorConfig`** (`config_model.py`) — keep all the new
+   logic out of the Qt widget so it is unit-testable directly:
+   - `has_thresholds` property: `True` when `threshold_warn`/`threshold_error` is set.
    - `select_keyvalue(values) -> Optional[str]`: return the value string for `value_key`
      (exact key match); if `value_key` empty, fall back to `values[0]` (current display
-     default); `None` if not found.
-   - `combine_levels(diag_level, threshold_level) -> IndicatorLevel`: deliberate
-     severity-max over `OK < WARN < ERROR`; if `diag_level is STALE`, return `STALE`
-     (a stale diagnostic is not trustworthy for thresholds — this **deliberately masks**
-     a threshold-computed ERROR; documented + tested). Note producer-STALE (byte 3 →
+     default); `None` if not found / empty.
+   - `combine_levels(diag_level, threshold_level) -> IndicatorLevel` (staticmethod):
+     deliberate severity-max over `OK < WARN < ERROR`; if `diag_level is STALE`, return
+     `STALE` (a stale diagnostic is not trustworthy for thresholds — this **deliberately
+     masks** a threshold-computed ERROR; documented + tested). Producer-STALE (byte 3 →
      `IndicatorLevel.STALE`) is the *only* STALE `combine_levels` ever sees: the widget's
      own `_check_stale` timer emits ERROR/WARN with text "no data", never
      `IndicatorLevel.STALE`, and runs on a separate path.
-3. **Wire into `_handle_diagnostics`** (`annunciator_widget.py`) — when the matched config
-   has thresholds configured: `select_keyvalue` → if `None` (key absent) set **ERROR** +
-   flag text; else wrap `float(value_str)` in try/except — on `ValueError` (non-numeric)
-   set **ERROR** + flag text (e.g. `Voltage?`); on success `evaluate_level(val)` then
-   `combine_levels(native_level, threshold_level)` and format display from `val`. Do **not**
-   lean on `evaluate_level` to coerce a string — a numeric-looking string still returns
-   ERROR there, and the `float` is also what `format` needs. When no thresholds:
-   **unchanged** (native level, `values[0]` text).
+   - `evaluate_diagnostic(native_level, values, message='') -> (IndicatorLevel, text)`:
+     the single entry point. With thresholds: `select_keyvalue` → if `None` (key absent)
+     return **ERROR** + flag text; else wrap `float(value_str)` — on `ValueError`/`TypeError`
+     (non-numeric) return **ERROR** + flag text (e.g. `Voltage?`); else
+     `combine_levels(native_level, evaluate_level(val))` + formatted text. Does **not** lean
+     on `evaluate_level` to coerce a string (a numeric string still returns ERROR there, and
+     `float` is what `format` needs). Without thresholds: reproduces today's behavior
+     exactly (native level, first-KeyValue formatted, `message`/level-name fallback).
+3. **Wire into `_handle_diagnostics`** (`annunciator_widget.py`) — map the producer level
+   via `_diagnostic_level_to_indicator`, then delegate to `config.evaluate_diagnostic(...)`
+   and `widget.set_status(...)`. The widget no longer parses KeyValues itself.
 4. **Round-trip the new keys through the config dialog** (`config_dialog.py`) — required so
    editing a thresholded diagnostics row in the GUI doesn't silently drop `value_key`/
    thresholds once `to_dict` emits them (today `get_config` has no `value_key` widget and the
@@ -57,8 +61,8 @@ Goal: let a diagnostics row optionally evaluate `thresholds` against a chosen `K
 
 | File | Change |
 |------|--------|
-| `rqt_annunciator/rqt_annunciator/config_model.py` | `value_key` field; diagnostics threshold (de)serialization; `select_keyvalue` + `combine_levels` helpers |
-| `rqt_annunciator/rqt_annunciator/annunciator_widget.py` | `_handle_diagnostics`: thresholded branch via the helpers (float-wrap + degraded→ERROR); current behavior preserved when no thresholds |
+| `rqt_annunciator/rqt_annunciator/config_model.py` | `value_key` field; diagnostics threshold (de)serialization; `has_thresholds`, `select_keyvalue`, `combine_levels`, `evaluate_diagnostic` |
+| `rqt_annunciator/rqt_annunciator/annunciator_widget.py` | `_handle_diagnostics` delegates to `config.evaluate_diagnostic(native_level, values, message)`; no KeyValue parsing in the widget |
 | `rqt_annunciator/rqt_annunciator/config_dialog.py` | add `value_key` + warn/error threshold fields to the Diagnostics Settings group; round-trip in `load_config`/`get_config` (prevents GUI-edit data loss — Finding 1) |
 | `rqt_annunciator/test/test_config_model.py` | `value_key` round-trip; diagnostics `thresholds` to_dict/from_dict; `select_keyvalue` (found / `value_key` empty→`[0]` / missing); `combine_levels` full matrix incl. STALE×threshold-ERROR |
 | `rqt_annunciator/test/test_threshold.py` | diagnostics-path eval on a synthetic `DiagnosticStatus`: OK level + sub-threshold value → WARN/ERROR; ERROR level + healthy value → stays ERROR; WARN level + ERROR value → ERROR; STALE level + ERROR-computing value → STALE; missing key → ERROR; non-numeric value → ERROR; no-thresholds → byte-for-byte today's behavior |
