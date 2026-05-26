@@ -60,3 +60,30 @@ issue: 35
 
 ### Findings
 - [x] (valid, fixed) `value_key` matched verbatim — benign trailing space (e.g. `"Voltage "`) would fail the exact match and drive the row to ERROR. Normalized with `strip()` at match time, on serialization, and in flag text; added round-trip + whitespace-match tests. `config_model.py:select_keyvalue`/`to_dict` `a3f1c24`
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-05-26 10:44 -04:00
+**By**: Claude Code Agent (Claude Opus 4.7 (1M context))
+
+**PR**: #36 at `2bdf02a`
+**Sources**: 1 (Copilot R1 @ `e8cc544` — now 3 commits stale)
+**Cross-source confirmations**: 0
+**CI**: no check-runs reported for this SHA (repo has no CI workflow)
+
+Re-triage round (prompted while sequencing the BizzyBoat deploy: echoboats
+#179 depends on this engine). No new reviews, inline comments, or
+conversation comments since the prior Integrated Review. The sole Copilot
+finding was already triaged last round and fixed in `a3f1c24`; confirmed the
+fix is present at current HEAD. PR is mergeable / clean.
+
+### Findings
+- [x] (confirmed-addressed, Copilot) `value_key` whitespace — fix from `a3f1c24`
+  verified at HEAD `2bdf02a` (`select_keyvalue` strips before exact match).
+- [ ] (deploy-verification, hand-off to echoboats #179) Live `mavros: Battery`
+  KeyValue **casing**: `select_keyvalue` is case-sensitive exact match by
+  design (user-resolved Q2 = exact); the test publisher emits lowercase
+  `voltage` while #179's config uses `value_key: Voltage`. If the boat's mavros
+  publishes lowercase, #179's Battery row goes ERROR + `Voltage?`. Already
+  flagged in `plan.md:97`; **verify the live key name on the boat before #179
+  ships**. Not a #36 defect.
