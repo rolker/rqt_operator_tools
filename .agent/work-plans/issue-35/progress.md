@@ -14,5 +14,5 @@ issue: 35
 **Phases**: single
 
 ### Open questions
-- [ ] Q1 — degraded data (missing/non-numeric KeyValue): keep native level + flag in text (proposed) vs. escalate to ERROR
-- [ ] Q2 — `value_key` matching: exact (proposed) vs. substring
+- [x] Q1 — degraded data (missing/non-numeric KeyValue): **resolved → escalate to ERROR + flag text** (user, 2026-05-26)
+- [x] Q2 — `value_key` matching: **resolved → exact** (user, 2026-05-26)

@@ -35,7 +35,9 @@ Goal: let a diagnostics row optionally evaluate `thresholds` against a chosen `K
    has thresholds configured: select the KeyValue via `select_keyvalue`, `float()` it,
    `evaluate_level`, then `combine_levels(native_level, threshold_level)`; format display
    text from the selected value. When no thresholds: **unchanged** (native level,
-   `values[0]` text). Handle missing/non-numeric KeyValue per Open Question Q1.
+   `values[0]` text). Missing/non-numeric KeyValue → **ERROR** (consistent with the
+   topic-path `evaluate_level` TypeError convention), with the failure flagged in the
+   display text (e.g. `Voltage?`) so the cause is visible.
 4. **Tests** — see Files to Change; cover serialization, selection, combine matrix, the
    degraded-data branch, and backward-compat.
 
@@ -46,7 +48,7 @@ Goal: let a diagnostics row optionally evaluate `thresholds` against a chosen `K
 | `rqt_annunciator/rqt_annunciator/config_model.py` | `value_key` field; diagnostics threshold (de)serialization; `select_keyvalue` + `combine_levels` helpers |
 | `rqt_annunciator/rqt_annunciator/annunciator_widget.py` | `_handle_diagnostics`: thresholded branch via the helpers; current behavior preserved when no thresholds |
 | `rqt_annunciator/test/test_config_model.py` | `value_key` round-trip; diagnostics `thresholds` to_dict/from_dict; `select_keyvalue` (found / `value_key` empty→`[0]` / missing); `combine_levels` matrix incl. STALE |
-| `rqt_annunciator/test/test_threshold.py` | diagnostics-path eval end-to-end on a synthetic `DiagnosticStatus` (OK level + sub-threshold value → WARN/ERROR; ERROR level + healthy value → stays ERROR) |
+| `rqt_annunciator/test/test_threshold.py` | diagnostics-path eval end-to-end on a synthetic `DiagnosticStatus` (OK level + sub-threshold value → WARN/ERROR; ERROR level + healthy value → stays ERROR; missing/non-numeric `value_key` → ERROR) |
 | `rqt_annunciator/config/*` (if a sample config documents indicator keys) | document `value_key` + diagnostics `thresholds` if such a sample exists; else skip |
 
 ## Principles Self-Check
@@ -77,14 +79,15 @@ Goal: let a diagnostics row optionally evaluate `thresholds` against a chosen `K
 | config-dialog UI for `value_key` | `config_dialog.py` | No — out of scope per issue; follow-up if non-trivial |
 | (gap) rqt_operator_tools has no `.agents/README.md` | onboarding guide | No — pre-existing gap, separate task |
 
-## Open Questions
+## Resolved Decisions
 
-- **Q1 — degraded data:** when `value_key`/thresholds are set but the KeyValue is missing
-  or non-numeric, what should the row show? Proposed default: **keep the native diagnostic
-  level** (don't fabricate OK or ERROR) and flag it in the display text (e.g. `Voltage?`),
-  so the lost safety-check is visible without false alarms. Confirm vs. escalate-to-ERROR.
-- **Q2 — `value_key` match:** exact key match (proposed) vs. substring. Exact is safer for
-  short, well-defined keys like `Voltage`; confirm.
+- **Q1 — degraded data (resolved 2026-05-26):** when `value_key`/thresholds are set but the
+  KeyValue is missing or non-numeric, the row goes **ERROR** (a lost safety value is treated
+  as a fault, not silently green), with the cause flagged in the display text (e.g.
+  `Voltage?`). Consistent with the existing topic-path `evaluate_level` TypeError → ERROR
+  behavior.
+- **Q2 — `value_key` match (resolved 2026-05-26):** **exact** key match — safest for short,
+  well-defined diagnostic keys like `Voltage`.
 
 ## Estimated Scope
 
