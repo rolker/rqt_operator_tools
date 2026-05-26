@@ -28,27 +28,40 @@ Goal: let a diagnostics row optionally evaluate `thresholds` against a chosen `K
    - `select_keyvalue(values) -> Optional[str]`: return the value string for `value_key`
      (exact key match); if `value_key` empty, fall back to `values[0]` (current display
      default); `None` if not found.
-   - `combine_levels(diag_level, threshold_level) -> IndicatorLevel`: severity-max over
-     `OK < WARN < ERROR`; if `diag_level is STALE`, return `STALE` (no fresh value to
-     trust — the threshold path never yields STALE).
+   - `combine_levels(diag_level, threshold_level) -> IndicatorLevel`: deliberate
+     severity-max over `OK < WARN < ERROR`; if `diag_level is STALE`, return `STALE`
+     (a stale diagnostic is not trustworthy for thresholds — this **deliberately masks**
+     a threshold-computed ERROR; documented + tested). Note producer-STALE (byte 3 →
+     `IndicatorLevel.STALE`) is the *only* STALE `combine_levels` ever sees: the widget's
+     own `_check_stale` timer emits ERROR/WARN with text "no data", never
+     `IndicatorLevel.STALE`, and runs on a separate path.
 3. **Wire into `_handle_diagnostics`** (`annunciator_widget.py`) — when the matched config
-   has thresholds configured: select the KeyValue via `select_keyvalue`, `float()` it,
-   `evaluate_level`, then `combine_levels(native_level, threshold_level)`; format display
-   text from the selected value. When no thresholds: **unchanged** (native level,
-   `values[0]` text). Missing/non-numeric KeyValue → **ERROR** (consistent with the
-   topic-path `evaluate_level` TypeError convention), with the failure flagged in the
-   display text (e.g. `Voltage?`) so the cause is visible.
-4. **Tests** — see Files to Change; cover serialization, selection, combine matrix, the
-   degraded-data branch, and backward-compat.
+   has thresholds configured: `select_keyvalue` → if `None` (key absent) set **ERROR** +
+   flag text; else wrap `float(value_str)` in try/except — on `ValueError` (non-numeric)
+   set **ERROR** + flag text (e.g. `Voltage?`); on success `evaluate_level(val)` then
+   `combine_levels(native_level, threshold_level)` and format display from `val`. Do **not**
+   lean on `evaluate_level` to coerce a string — a numeric-looking string still returns
+   ERROR there, and the `float` is also what `format` needs. When no thresholds:
+   **unchanged** (native level, `values[0]` text).
+4. **Round-trip the new keys through the config dialog** (`config_dialog.py`) — required so
+   editing a thresholded diagnostics row in the GUI doesn't silently drop `value_key`/
+   thresholds once `to_dict` emits them (today `get_config` has no `value_key` widget and the
+   threshold edits live in the hidden topic group). Add a `value_key` field + warn/error
+   threshold fields to the **Diagnostics Settings** group; load them in `load_config` and
+   read them in `get_config`. Keeps the GUI a faithful editor of the new schema.
+5. **Tests** — see Files to Change; cover serialization, selection, the full combine matrix
+   (incl. STALE×threshold), the degraded-data → ERROR branch, dialog round-trip, and
+   no-thresholds backward-compat.
 
 ## Files to Change
 
 | File | Change |
 |------|--------|
 | `rqt_annunciator/rqt_annunciator/config_model.py` | `value_key` field; diagnostics threshold (de)serialization; `select_keyvalue` + `combine_levels` helpers |
-| `rqt_annunciator/rqt_annunciator/annunciator_widget.py` | `_handle_diagnostics`: thresholded branch via the helpers; current behavior preserved when no thresholds |
-| `rqt_annunciator/test/test_config_model.py` | `value_key` round-trip; diagnostics `thresholds` to_dict/from_dict; `select_keyvalue` (found / `value_key` empty→`[0]` / missing); `combine_levels` matrix incl. STALE |
-| `rqt_annunciator/test/test_threshold.py` | diagnostics-path eval end-to-end on a synthetic `DiagnosticStatus` (OK level + sub-threshold value → WARN/ERROR; ERROR level + healthy value → stays ERROR; missing/non-numeric `value_key` → ERROR) |
+| `rqt_annunciator/rqt_annunciator/annunciator_widget.py` | `_handle_diagnostics`: thresholded branch via the helpers (float-wrap + degraded→ERROR); current behavior preserved when no thresholds |
+| `rqt_annunciator/rqt_annunciator/config_dialog.py` | add `value_key` + warn/error threshold fields to the Diagnostics Settings group; round-trip in `load_config`/`get_config` (prevents GUI-edit data loss — Finding 1) |
+| `rqt_annunciator/test/test_config_model.py` | `value_key` round-trip; diagnostics `thresholds` to_dict/from_dict; `select_keyvalue` (found / `value_key` empty→`[0]` / missing); `combine_levels` full matrix incl. STALE×threshold-ERROR |
+| `rqt_annunciator/test/test_threshold.py` | diagnostics-path eval on a synthetic `DiagnosticStatus`: OK level + sub-threshold value → WARN/ERROR; ERROR level + healthy value → stays ERROR; WARN level + ERROR value → ERROR; STALE level + ERROR-computing value → STALE; missing key → ERROR; non-numeric value → ERROR; no-thresholds → byte-for-byte today's behavior |
 | `rqt_annunciator/config/*` (if a sample config documents indicator keys) | document `value_key` + diagnostics `thresholds` if such a sample exists; else skip |
 
 ## Principles Self-Check
@@ -76,7 +89,8 @@ Goal: let a diagnostics row optionally evaluate `thresholds` against a chosen `K
 | `IndicatorConfig` shape (`value_key`) | `to_dict`/`from_dict` + their tests | Yes |
 | diagnostics coloring path | backward-compat (no-threshold) behavior + test | Yes |
 | engine config schema | echoboats#162 Battery row consumes `value_key`+`thresholds` | No — separate PR there, after this lands |
-| config-dialog UI for `value_key` | `config_dialog.py` | No — out of scope per issue; follow-up if non-trivial |
+| `to_dict` now emits diagnostics thresholds | `config_dialog.py` must round-trip `value_key`/thresholds or GUI edits silently drop them | **Yes — now in scope** (Finding 1; was wrongly deferred) |
+| exact `value_key` matching | live `mavros: Battery` KeyValue casing (`diagnostic_test_publisher.py` uses lowercase `voltage`) | Verify on the boat before the echoboats consumer config ships (issue already flags this) |
 | (gap) rqt_operator_tools has no `.agents/README.md` | onboarding guide | No — pre-existing gap, separate task |
 
 ## Resolved Decisions
