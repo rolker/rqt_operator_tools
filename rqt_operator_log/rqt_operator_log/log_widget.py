@@ -57,6 +57,15 @@ class LogWidget(QWidget):
         entry_layout.addWidget(self._submit_btn)
         layout.addLayout(entry_layout)
 
+        # Keep keyboard focus on the entry box so the operator can type a log
+        # entry without first clicking it: route the widget's focus to the
+        # entry field, and re-grab focus on show / after each submit.
+        self.setFocusProxy(self._entry_edit)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._entry_edit.setFocus()
+
     def _on_author_changed(self, text):
         self._author = text
 
@@ -66,6 +75,7 @@ class LogWidget(QWidget):
             return
         self._entry_edit.clear()
         self.entry_submitted.emit(text)
+        self._entry_edit.setFocus()
 
     @property
     def author(self) -> str:
