@@ -26,38 +26,54 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-#include "rqt_sonar_waterfall/waterfall_widget.hpp"
+#ifndef RQT_SONAR_WATERFALL__ROW_EXTRACTOR_HPP_
+#define RQT_SONAR_WATERFALL__ROW_EXTRACTOR_HPP_
 
-#include <QColor>
-#include <QPainter>
+#include <optional>
+
+#include <marine_acoustic_msgs/msg/raw_sonar_image.hpp>
+
+#include "rqt_sonar_waterfall/waterfall_model.hpp"
 
 namespace rqt_sonar_waterfall
 {
 
-WaterfallWidget::WaterfallWidget(QWidget * parent)
-: QWidget(parent)
+/// Strategy that turns one RawSonarImage ping into one WaterfallRow.
+///
+/// Different sonar geometries map to the waterfall differently (sidescan keeps
+/// the sample series of a single beam; multibeam backscatter collapses each
+/// beam's samples to one value). Each geometry is a RowExtractor implementation
+/// so the waterfall widget stays geometry-agnostic.
+class RowExtractor
 {
-  setMinimumSize(256, 256);
-}
+public:
+  virtual ~RowExtractor() = default;
 
-WaterfallWidget::~WaterfallWidget() = default;
+  /// Whether this extractor can handle the given ping's geometry.
+  virtual bool accepts(
+    const marine_acoustic_msgs::msg::RawSonarImage & msg) const = 0;
 
-void WaterfallWidget::paintEvent(QPaintEvent * event)
+  /// Extract a row, or std::nullopt if the ping is not acceptable.
+  virtual std::optional<WaterfallRow> extract(
+    const marine_acoustic_msgs::msg::RawSonarImage & msg) const = 0;
+};
+
+/// Sidescan extractor: one beam, samples taken as the across-track profile.
+///
+/// Accepts pings with `beam_count` 0 or 1 (a single beam). The row is the full
+/// decoded sample series; `range_max` is the slant range of the last sample,
+/// `sound_speed * samples / (2 * sample_rate)`, or 0 when those fields are
+/// unavailable.
+class SingleBeamExtractor : public RowExtractor
 {
-  Q_UNUSED(event);
-  QPainter painter(this);
+public:
+  bool accepts(
+    const marine_acoustic_msgs::msg::RawSonarImage & msg) const override;
 
-  if (canvas_.isNull()) {
-    // No data yet: dark placeholder canvas with a centered hint.
-    painter.fillRect(rect(), QColor(20, 20, 24));
-    painter.setPen(QColor(120, 120, 130));
-    painter.drawText(rect(), Qt::AlignCenter, tr("No sonar data"));
-    return;
-  }
-
-  // Stretch the waterfall image to fill the viewport (per-axis scaling and a
-  // range ruler are added with the data path in a later step).
-  painter.drawImage(rect(), canvas_);
-}
+  std::optional<WaterfallRow> extract(
+    const marine_acoustic_msgs::msg::RawSonarImage & msg) const override;
+};
 
 }  // namespace rqt_sonar_waterfall
+
+#endif  // RQT_SONAR_WATERFALL__ROW_EXTRACTOR_HPP_

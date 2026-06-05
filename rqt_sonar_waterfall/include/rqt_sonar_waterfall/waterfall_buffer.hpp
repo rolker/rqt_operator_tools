@@ -26,38 +26,50 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-#include "rqt_sonar_waterfall/waterfall_widget.hpp"
+#ifndef RQT_SONAR_WATERFALL__WATERFALL_BUFFER_HPP_
+#define RQT_SONAR_WATERFALL__WATERFALL_BUFFER_HPP_
 
-#include <QColor>
-#include <QPainter>
+#include <cstddef>
+#include <deque>
+
+#include "rqt_sonar_waterfall/waterfall_model.hpp"
 
 namespace rqt_sonar_waterfall
 {
 
-WaterfallWidget::WaterfallWidget(QWidget * parent)
-: QWidget(parent)
+/// Fixed-capacity history of waterfall rows (the scrollback).
+///
+/// Newest rows are pushed at the back; once capacity is exceeded the oldest
+/// (front) rows are evicted. Rows may differ in width — the renderer maps each
+/// to the viewport independently. Capacity is clamped to at least 1.
+class WaterfallBuffer
 {
-  setMinimumSize(256, 256);
-}
+public:
+  static constexpr std::size_t kDefaultCapacity = 600;
 
-WaterfallWidget::~WaterfallWidget() = default;
+  explicit WaterfallBuffer(std::size_t capacity = kDefaultCapacity);
 
-void WaterfallWidget::paintEvent(QPaintEvent * event)
-{
-  Q_UNUSED(event);
-  QPainter painter(this);
+  /// Change the scrollback depth, evicting oldest rows if shrinking.
+  void set_capacity(std::size_t capacity);
+  std::size_t capacity() const {return capacity_;}
 
-  if (canvas_.isNull()) {
-    // No data yet: dark placeholder canvas with a centered hint.
-    painter.fillRect(rect(), QColor(20, 20, 24));
-    painter.setPen(QColor(120, 120, 130));
-    painter.drawText(rect(), Qt::AlignCenter, tr("No sonar data"));
-    return;
-  }
+  std::size_t size() const {return rows_.size();}
+  bool empty() const {return rows_.empty();}
+  void clear() {rows_.clear();}
 
-  // Stretch the waterfall image to fill the viewport (per-axis scaling and a
-  // range ruler are added with the data path in a later step).
-  painter.drawImage(rect(), canvas_);
-}
+  /// Append the newest row, evicting the oldest if at capacity.
+  void push(WaterfallRow row);
+
+  /// Stored rows, front = oldest, back = newest.
+  const std::deque<WaterfallRow> & rows() const {return rows_;}
+
+private:
+  void trim();
+
+  std::size_t capacity_;
+  std::deque<WaterfallRow> rows_;
+};
 
 }  // namespace rqt_sonar_waterfall
+
+#endif  // RQT_SONAR_WATERFALL__WATERFALL_BUFFER_HPP_

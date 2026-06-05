@@ -26,38 +26,66 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-#include "rqt_sonar_waterfall/waterfall_widget.hpp"
+#include <gtest/gtest.h>
 
-#include <QColor>
-#include <QPainter>
+#include "rqt_sonar_waterfall/waterfall_buffer.hpp"
 
-namespace rqt_sonar_waterfall
+namespace
 {
 
-WaterfallWidget::WaterfallWidget(QWidget * parent)
-: QWidget(parent)
+using rqt_sonar_waterfall::WaterfallBuffer;
+using rqt_sonar_waterfall::WaterfallRow;
+
+// A row tagged by stamp so eviction order is observable.
+WaterfallRow tagged(double stamp)
 {
-  setMinimumSize(256, 256);
+  WaterfallRow r;
+  r.stamp = stamp;
+  return r;
 }
 
-WaterfallWidget::~WaterfallWidget() = default;
+}  // namespace
 
-void WaterfallWidget::paintEvent(QPaintEvent * event)
+TEST(WaterfallBuffer, PushEvictsOldestBeyondCapacity)
 {
-  Q_UNUSED(event);
-  QPainter painter(this);
+  WaterfallBuffer buf(3);
+  buf.push(tagged(1));
+  buf.push(tagged(2));
+  buf.push(tagged(3));
+  buf.push(tagged(4));  // evicts stamp 1
+  ASSERT_EQ(buf.size(), 3u);
+  EXPECT_DOUBLE_EQ(buf.rows().front().stamp, 2.0);  // oldest retained
+  EXPECT_DOUBLE_EQ(buf.rows().back().stamp, 4.0);   // newest
+}
 
-  if (canvas_.isNull()) {
-    // No data yet: dark placeholder canvas with a centered hint.
-    painter.fillRect(rect(), QColor(20, 20, 24));
-    painter.setPen(QColor(120, 120, 130));
-    painter.drawText(rect(), Qt::AlignCenter, tr("No sonar data"));
-    return;
+TEST(WaterfallBuffer, SetCapacityShrinkEvictsOldest)
+{
+  WaterfallBuffer buf(5);
+  for (int i = 1; i <= 5; ++i) {
+    buf.push(tagged(i));
   }
-
-  // Stretch the waterfall image to fill the viewport (per-axis scaling and a
-  // range ruler are added with the data path in a later step).
-  painter.drawImage(rect(), canvas_);
+  buf.set_capacity(2);
+  ASSERT_EQ(buf.size(), 2u);
+  EXPECT_DOUBLE_EQ(buf.rows().front().stamp, 4.0);
+  EXPECT_DOUBLE_EQ(buf.rows().back().stamp, 5.0);
 }
 
-}  // namespace rqt_sonar_waterfall
+TEST(WaterfallBuffer, CapacityClampedToAtLeastOne)
+{
+  WaterfallBuffer buf(0);
+  EXPECT_EQ(buf.capacity(), 1u);
+  buf.push(tagged(1));
+  buf.push(tagged(2));
+  EXPECT_EQ(buf.size(), 1u);
+  EXPECT_DOUBLE_EQ(buf.rows().back().stamp, 2.0);
+}
+
+TEST(WaterfallBuffer, ClearEmpties)
+{
+  WaterfallBuffer buf(4);
+  buf.push(tagged(1));
+  buf.push(tagged(2));
+  buf.clear();
+  EXPECT_TRUE(buf.empty());
+  EXPECT_EQ(buf.size(), 0u);
+}

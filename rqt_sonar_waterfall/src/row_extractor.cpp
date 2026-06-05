@@ -26,38 +26,42 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-#include "rqt_sonar_waterfall/waterfall_widget.hpp"
+#include "rqt_sonar_waterfall/row_extractor.hpp"
 
-#include <QColor>
-#include <QPainter>
+#include "rqt_sonar_waterfall/waterfall_model.hpp"
 
 namespace rqt_sonar_waterfall
 {
 
-WaterfallWidget::WaterfallWidget(QWidget * parent)
-: QWidget(parent)
+bool SingleBeamExtractor::accepts(
+  const marine_acoustic_msgs::msg::RawSonarImage & msg) const
 {
-  setMinimumSize(256, 256);
+  // beam_count 0 (unset by some drivers) or 1 is a single across-track beam.
+  return msg.image.beam_count <= 1;
 }
 
-WaterfallWidget::~WaterfallWidget() = default;
-
-void WaterfallWidget::paintEvent(QPaintEvent * event)
+std::optional<WaterfallRow> SingleBeamExtractor::extract(
+  const marine_acoustic_msgs::msg::RawSonarImage & msg) const
 {
-  Q_UNUSED(event);
-  QPainter painter(this);
-
-  if (canvas_.isNull()) {
-    // No data yet: dark placeholder canvas with a centered hint.
-    painter.fillRect(rect(), QColor(20, 20, 24));
-    painter.setPen(QColor(120, 120, 130));
-    painter.drawText(rect(), Qt::AlignCenter, tr("No sonar data"));
-    return;
+  if (!accepts(msg)) {
+    return std::nullopt;
   }
 
-  // Stretch the waterfall image to fill the viewport (per-axis scaling and a
-  // range ruler are added with the data path in a later step).
-  painter.drawImage(rect(), canvas_);
+  WaterfallRow row;
+  row.intensities = decode_samples(msg.image);
+
+  // Number of range bins: prefer the declared count, fall back to what decoded.
+  const std::size_t bins =
+    msg.samples_per_beam > 0 ? msg.samples_per_beam : row.intensities.size();
+  if (msg.sample_rate > 0.0f && msg.ping_info.sound_speed > 0.0f && bins > 0) {
+    row.range_max = static_cast<double>(msg.ping_info.sound_speed) *
+      static_cast<double>(bins) /
+      (2.0 * static_cast<double>(msg.sample_rate));
+  }
+
+  row.stamp = static_cast<double>(msg.header.stamp.sec) +
+    static_cast<double>(msg.header.stamp.nanosec) * 1e-9;
+  return row;
 }
 
 }  // namespace rqt_sonar_waterfall

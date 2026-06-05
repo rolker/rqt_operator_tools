@@ -26,38 +26,36 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-#include "rqt_sonar_waterfall/waterfall_widget.hpp"
+#include "rqt_sonar_waterfall/waterfall_buffer.hpp"
 
-#include <QColor>
-#include <QPainter>
+#include <algorithm>
+#include <utility>
 
 namespace rqt_sonar_waterfall
 {
 
-WaterfallWidget::WaterfallWidget(QWidget * parent)
-: QWidget(parent)
+WaterfallBuffer::WaterfallBuffer(std::size_t capacity)
+: capacity_(std::max<std::size_t>(1, capacity))
 {
-  setMinimumSize(256, 256);
 }
 
-WaterfallWidget::~WaterfallWidget() = default;
-
-void WaterfallWidget::paintEvent(QPaintEvent * event)
+void WaterfallBuffer::set_capacity(std::size_t capacity)
 {
-  Q_UNUSED(event);
-  QPainter painter(this);
+  capacity_ = std::max<std::size_t>(1, capacity);
+  trim();
+}
 
-  if (canvas_.isNull()) {
-    // No data yet: dark placeholder canvas with a centered hint.
-    painter.fillRect(rect(), QColor(20, 20, 24));
-    painter.setPen(QColor(120, 120, 130));
-    painter.drawText(rect(), Qt::AlignCenter, tr("No sonar data"));
-    return;
+void WaterfallBuffer::push(WaterfallRow row)
+{
+  rows_.push_back(std::move(row));
+  trim();
+}
+
+void WaterfallBuffer::trim()
+{
+  while (rows_.size() > capacity_) {
+    rows_.pop_front();
   }
-
-  // Stretch the waterfall image to fill the viewport (per-axis scaling and a
-  // range ruler are added with the data path in a later step).
-  painter.drawImage(rect(), canvas_);
 }
 
 }  // namespace rqt_sonar_waterfall
