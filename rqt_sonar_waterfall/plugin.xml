@@ -1,0 +1,19 @@
+<library path="rqt_sonar_waterfall">
+  <class name="rqt_sonar_waterfall/SonarWaterfall"
+         type="rqt_sonar_waterfall::SonarWaterfallPlugin"
+         base_class_type="rqt_gui_cpp::Plugin">
+    <description>
+      Scrolling backscatter waterfall viewer for marine_acoustic_msgs/RawSonarImage
+      (sidescan port|starboard) with client-side image processing and an optional
+      sonar-control panel.
+    </description>
+    <qtgui>
+      <group>
+        <label>Robot Tools</label>
+      </group>
+      <label>Sonar Waterfall</label>
+      <icon type="theme">image-x-generic</icon>
+      <statustip>Display a sidescan/sonar backscatter waterfall with optional controls.</statustip>
+    </qtgui>
+  </class>
+</library>
