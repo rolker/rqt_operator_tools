@@ -29,6 +29,8 @@ set(${PROJECT_NAME}_HEADERS
   include/${PROJECT_NAME}/row_extractor.hpp
   include/${PROJECT_NAME}/waterfall_buffer.hpp
   include/${PROJECT_NAME}/color_map.hpp
+  include/${PROJECT_NAME}/ping_pairer.hpp
+  include/${PROJECT_NAME}/topic_filter.hpp
 )
 
 set(${PROJECT_NAME}_SOURCES
@@ -38,6 +40,8 @@ set(${PROJECT_NAME}_SOURCES
   src/row_extractor.cpp
   src/waterfall_buffer.cpp
   src/color_map.cpp
+  src/ping_pairer.cpp
+  src/topic_filter.cpp
 )
 
 add_library(${PROJECT_NAME} SHARED
@@ -82,7 +86,9 @@ install(FILES plugin.xml
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(PROGRAMS scripts/${PROJECT_NAME}
+install(PROGRAMS
+  scripts/${PROJECT_NAME}
+  scripts/synthetic_sidescan.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -139,6 +145,20 @@ if(BUILD_TESTING)
   target_link_libraries(test_waterfall_widget ${PROJECT_NAME} Qt5::Widgets)
   set_tests_properties(test_waterfall_widget PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+  ament_add_gtest(test_ping_pairer
+    test/test_ping_pairer.cpp
+    src/ping_pairer.cpp
+    src/waterfall_model.cpp
+  )
+  target_include_directories(test_ping_pairer PRIVATE include)
+  ament_target_dependencies(test_ping_pairer marine_acoustic_msgs)
+
+  ament_add_gtest(test_topic_filter
+    test/test_topic_filter.cpp
+    src/topic_filter.cpp
+  )
+  target_include_directories(test_topic_filter PRIVATE include)
 
   ament_lint_auto_find_test_dependencies()
 endif()

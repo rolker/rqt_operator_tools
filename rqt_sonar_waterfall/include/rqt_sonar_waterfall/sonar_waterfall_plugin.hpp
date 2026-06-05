@@ -31,8 +31,21 @@
 
 #include <QObject>  // NOLINT(build/include_order)
 #include <QPointer>
+#include <QString>
 
 #include <rqt_gui_cpp/plugin.h>
+
+#include <mutex>
+#include <string>
+
+#include <marine_acoustic_msgs/msg/raw_sonar_image.hpp>
+#include <rclcpp/rclcpp.hpp>
+
+#include "rqt_sonar_waterfall/ping_pairer.hpp"
+#include "rqt_sonar_waterfall/row_extractor.hpp"
+
+class QComboBox;
+class QTimer;
 
 namespace rqt_sonar_waterfall
 {
@@ -41,10 +54,12 @@ class WaterfallWidget;
 
 /// rqt plugin entry point for the sonar backscatter waterfall viewer.
 ///
-/// This scaffold wires up the plugin lifecycle and hosts an (empty)
-/// WaterfallWidget. Topic selection, RawSonarImage subscriptions, client-side
-/// image processing and the optional marine_radar_control_msgs control panel
-/// are added in subsequent steps of issue #39.
+/// Hosts a topic-selection toolbar (live RawSonarImage discovery) over the
+/// WaterfallWidget, subscribes to a port and/or starboard topic, and feeds the
+/// pings through SingleBeamExtractor + PingPairer into the widget. Subscription
+/// callbacks run on rqt's executor thread; rows are marshaled to the GUI thread
+/// before touching the widget. The optional control panel (issue #39, later
+/// step) and multibeam extractor (#40) attach to the same toolbar.
 class SonarWaterfallPlugin : public rqt_gui_cpp::Plugin
 {
   Q_OBJECT
@@ -63,9 +78,29 @@ public:
     const qt_gui_cpp::Settings & instance_settings) override;
 
 private:
-  // QPointer auto-nulls if qt_gui_cpp's PluginContext destroys the widget,
-  // keeping `if (widget_)` guards correct under either teardown ordering.
+  void refresh_topics();
+  void on_port_topic_changed(const QString & topic);
+  void on_starboard_topic_changed(const QString & topic);
+  void subscribe(
+    rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr & sub,
+    const std::string & topic, bool is_port);
+  void on_port_msg(marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr msg);
+  void on_starboard_msg(marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr msg);
+  void post_row(const WaterfallRow & row);
+  void update_active_sides();
+
   QPointer<WaterfallWidget> widget_;
+  QComboBox * port_combo_ = nullptr;
+  QComboBox * starboard_combo_ = nullptr;
+  QTimer * refresh_timer_ = nullptr;
+
+  rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr port_sub_;
+  rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr
+    starboard_sub_;
+
+  SingleBeamExtractor extractor_;
+  PingPairer pairer_;
+  std::mutex pairer_mutex_;  ///< guards pairer_ across the executor/GUI threads
 };
 
 }  // namespace rqt_sonar_waterfall
