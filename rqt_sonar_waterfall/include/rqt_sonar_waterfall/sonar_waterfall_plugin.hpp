@@ -44,8 +44,13 @@
 #include "rqt_sonar_waterfall/ping_pairer.hpp"
 #include "rqt_sonar_waterfall/row_extractor.hpp"
 
+class QCheckBox;
 class QComboBox;
+class QDoubleSpinBox;
+class QPushButton;
+class QSpinBox;
 class QTimer;
+class QWidget;
 
 namespace rqt_sonar_waterfall
 {
@@ -78,6 +83,8 @@ public:
     const qt_gui_cpp::Settings & instance_settings) override;
 
 private:
+  QWidget * build_controls_bar(QWidget * parent);
+  void apply_view_settings();
   void refresh_topics();
   void on_port_topic_changed(const QString & topic);
   void on_starboard_topic_changed(const QString & topic);
@@ -93,6 +100,16 @@ private:
   QComboBox * port_combo_ = nullptr;
   QComboBox * starboard_combo_ = nullptr;
   QTimer * refresh_timer_ = nullptr;
+
+  // View-knob controls (wired to WaterfallWidget setters).
+  QComboBox * colormap_combo_ = nullptr;
+  QDoubleSpinBox * gain_spin_ = nullptr;
+  QDoubleSpinBox * contrast_spin_ = nullptr;
+  QSpinBox * history_spin_ = nullptr;
+  QCheckBox * auto_range_check_ = nullptr;
+  QDoubleSpinBox * range_min_spin_ = nullptr;
+  QDoubleSpinBox * range_max_spin_ = nullptr;
+  QPushButton * freeze_button_ = nullptr;
 
   rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr port_sub_;
   rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr

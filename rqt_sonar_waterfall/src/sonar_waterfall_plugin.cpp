@@ -28,18 +28,22 @@
 
 #include "rqt_sonar_waterfall/sonar_waterfall_plugin.hpp"
 
+#include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMetaObject>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <cstddef>
 #include <map>
 #include <optional>
 #include <string>
@@ -47,6 +51,7 @@
 
 #include <pluginlib/class_list_macros.hpp>
 
+#include "rqt_sonar_waterfall/color_map.hpp"
 #include "rqt_sonar_waterfall/topic_filter.hpp"
 #include "rqt_sonar_waterfall/waterfall_model.hpp"
 #include "rqt_sonar_waterfall/waterfall_widget.hpp"
@@ -104,6 +109,8 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   auto * vbox = new QVBoxLayout(container);
   vbox->setContentsMargins(0, 0, 0, 0);
 
+  widget_ = new WaterfallWidget(container);
+
   auto * toolbar = new QWidget(container);
   auto * hbox = new QHBoxLayout(toolbar);
   hbox->setContentsMargins(4, 2, 4, 2);
@@ -116,9 +123,8 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   hbox->addWidget(starboard_combo_, 1);
   hbox->addWidget(refresh_button);
 
-  widget_ = new WaterfallWidget(container);
-
   vbox->addWidget(toolbar);
+  vbox->addWidget(build_controls_bar(container));
   vbox->addWidget(widget_, 1);
 
   connect(
@@ -128,6 +134,8 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
     starboard_combo_, &QComboBox::currentTextChanged, this,
     [this](const QString & topic) {on_starboard_topic_changed(topic);});
   connect(refresh_button, &QPushButton::clicked, this, [this]() {refresh_topics();});
+
+  apply_view_settings();
 
   refresh_timer_ = new QTimer(this);
   connect(refresh_timer_, &QTimer::timeout, this, [this]() {refresh_topics();});
@@ -151,6 +159,114 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   context.addWidget(container);
 }
 
+QWidget * SonarWaterfallPlugin::build_controls_bar(QWidget * parent)
+{
+  auto * bar = new QWidget(parent);
+  auto * h = new QHBoxLayout(bar);
+  h->setContentsMargins(4, 0, 4, 2);
+
+  h->addWidget(new QLabel(tr("Color:"), bar));
+  colormap_combo_ = new QComboBox(bar);
+  for (int i = 0; i < kColorMapCount; ++i) {
+    colormap_combo_->addItem(color_map_name(color_map_from_index(i)));
+  }
+  h->addWidget(colormap_combo_);
+
+  h->addWidget(new QLabel(tr("Gain:"), bar));
+  gain_spin_ = new QDoubleSpinBox(bar);
+  gain_spin_->setRange(0.1, 10.0);
+  gain_spin_->setSingleStep(0.1);
+  gain_spin_->setValue(1.0);
+  h->addWidget(gain_spin_);
+
+  h->addWidget(new QLabel(tr("Contrast:"), bar));
+  contrast_spin_ = new QDoubleSpinBox(bar);
+  contrast_spin_->setRange(0.1, 10.0);
+  contrast_spin_->setSingleStep(0.1);
+  contrast_spin_->setValue(1.0);
+  h->addWidget(contrast_spin_);
+
+  h->addWidget(new QLabel(tr("History:"), bar));
+  history_spin_ = new QSpinBox(bar);
+  history_spin_->setRange(1, 5000);
+  history_spin_->setValue(600);
+  h->addWidget(history_spin_);
+
+  auto_range_check_ = new QCheckBox(tr("Auto range"), bar);
+  auto_range_check_->setChecked(true);
+  h->addWidget(auto_range_check_);
+
+  h->addWidget(new QLabel(tr("Min:"), bar));
+  range_min_spin_ = new QDoubleSpinBox(bar);
+  range_min_spin_->setRange(-1.0e9, 1.0e9);
+  range_min_spin_->setValue(0.0);
+  range_min_spin_->setEnabled(false);
+  h->addWidget(range_min_spin_);
+
+  h->addWidget(new QLabel(tr("Max:"), bar));
+  range_max_spin_ = new QDoubleSpinBox(bar);
+  range_max_spin_->setRange(-1.0e9, 1.0e9);
+  range_max_spin_->setValue(32767.0);
+  range_max_spin_->setEnabled(false);
+  h->addWidget(range_max_spin_);
+
+  freeze_button_ = new QPushButton(tr("Freeze"), bar);
+  freeze_button_->setCheckable(true);
+  h->addWidget(freeze_button_);
+  h->addStretch(1);
+
+  // Any control change re-applies the full view state to the widget. The
+  // widget rebuilds its cached image once per setter; at UI rates the extra
+  // rebuilds are negligible and the code stays single-pathed.
+  connect(
+    colormap_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+    [this](int) {apply_view_settings();});
+  connect(
+    gain_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+    [this](double) {apply_view_settings();});
+  connect(
+    contrast_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+    [this](double) {apply_view_settings();});
+  connect(
+    history_spin_, QOverload<int>::of(&QSpinBox::valueChanged), this,
+    [this](int) {apply_view_settings();});
+  connect(
+    auto_range_check_, &QCheckBox::toggled, this, [this](bool) {apply_view_settings();});
+  connect(
+    range_min_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+    [this](double) {apply_view_settings();});
+  connect(
+    range_max_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+    [this](double) {apply_view_settings();});
+  connect(
+    freeze_button_, &QPushButton::toggled, this, [this](bool) {apply_view_settings();});
+
+  return bar;
+}
+
+void SonarWaterfallPlugin::apply_view_settings()
+{
+  if (!widget_ || !colormap_combo_) {
+    return;
+  }
+  widget_->set_color_map(color_map_from_index(colormap_combo_->currentIndex()));
+  widget_->set_gain(static_cast<float>(gain_spin_->value()));
+  widget_->set_contrast(static_cast<float>(contrast_spin_->value()));
+  widget_->set_history(static_cast<std::size_t>(history_spin_->value()));
+  widget_->set_frozen(freeze_button_->isChecked());
+
+  const bool automatic = auto_range_check_->isChecked();
+  range_min_spin_->setEnabled(!automatic);
+  range_max_spin_->setEnabled(!automatic);
+  if (automatic) {
+    widget_->set_auto_range(true);
+  } else {
+    widget_->set_manual_range(
+      static_cast<float>(range_min_spin_->value()),
+      static_cast<float>(range_max_spin_->value()));
+  }
+}
+
 void SonarWaterfallPlugin::shutdownPlugin()
 {
   if (refresh_timer_) {
@@ -170,6 +286,16 @@ void SonarWaterfallPlugin::saveSettings(
   if (starboard_combo_) {
     instance_settings.setValue("starboard_topic", starboard_combo_->currentText());
   }
+  if (colormap_combo_) {
+    instance_settings.setValue("color_map", colormap_combo_->currentIndex());
+    instance_settings.setValue("gain", gain_spin_->value());
+    instance_settings.setValue("contrast", contrast_spin_->value());
+    instance_settings.setValue("history", history_spin_->value());
+    instance_settings.setValue("frozen", freeze_button_->isChecked());
+    instance_settings.setValue("auto_range", auto_range_check_->isChecked());
+    instance_settings.setValue("range_min", range_min_spin_->value());
+    instance_settings.setValue("range_max", range_max_spin_->value());
+  }
 }
 
 void SonarWaterfallPlugin::restoreSettings(
@@ -182,6 +308,18 @@ void SonarWaterfallPlugin::restoreSettings(
   }
   if (starboard_combo_ && instance_settings.contains("starboard_topic")) {
     select_topic(starboard_combo_, instance_settings.value("starboard_topic").toString());
+  }
+
+  if (colormap_combo_ && instance_settings.contains("color_map")) {
+    colormap_combo_->setCurrentIndex(instance_settings.value("color_map").toInt());
+    gain_spin_->setValue(instance_settings.value("gain", 1.0).toDouble());
+    contrast_spin_->setValue(instance_settings.value("contrast", 1.0).toDouble());
+    history_spin_->setValue(instance_settings.value("history", 600).toInt());
+    freeze_button_->setChecked(instance_settings.value("frozen", false).toBool());
+    auto_range_check_->setChecked(instance_settings.value("auto_range", true).toBool());
+    range_min_spin_->setValue(instance_settings.value("range_min", 0.0).toDouble());
+    range_max_spin_->setValue(instance_settings.value("range_max", 32767.0).toDouble());
+    apply_view_settings();
   }
 }
 

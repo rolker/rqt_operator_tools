@@ -78,6 +78,18 @@ private:
   std::vector<Rgb> stops_;
 };
 
+/// Number of built-in palettes (the selector lists them in enum order).
+inline constexpr int kColorMapCount = 3;
+
+/// Human-readable name for a palette (used as the selector label).
+const char * color_map_name(ColorMapType type);
+
+/// Selector index (0..kColorMapCount-1) for a palette.
+int color_map_index(ColorMapType type);
+
+/// Palette for a selector index; out-of-range indices clamp to Grayscale.
+ColorMapType color_map_from_index(int index);
+
 /// Map a raw sample value to a normalized display level in [0, 1].
 ///
 /// Normalizes against [min, max], then applies `gain` (linear brightness, >0)

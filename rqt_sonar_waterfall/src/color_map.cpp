@@ -63,6 +63,44 @@ uint8_t lerp_channel(uint8_t a, uint8_t b, float t)
 
 }  // namespace
 
+const char * color_map_name(ColorMapType type)
+{
+  switch (type) {
+    case ColorMapType::Grayscale:
+      return "Grayscale";
+    case ColorMapType::Bronze:
+      return "Bronze";
+    case ColorMapType::Thermal:
+      return "Thermal";
+  }
+  return "Grayscale";
+}
+
+int color_map_index(ColorMapType type)
+{
+  switch (type) {
+    case ColorMapType::Grayscale:
+      return 0;
+    case ColorMapType::Bronze:
+      return 1;
+    case ColorMapType::Thermal:
+      return 2;
+  }
+  return 0;
+}
+
+ColorMapType color_map_from_index(int index)
+{
+  switch (index) {
+    case 1:
+      return ColorMapType::Bronze;
+    case 2:
+      return ColorMapType::Thermal;
+    default:
+      return ColorMapType::Grayscale;
+  }
+}
+
 ColorMap::ColorMap(ColorMapType type)
 {
   set_type(type);

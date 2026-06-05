@@ -37,8 +37,12 @@ namespace
 {
 
 using rqt_sonar_waterfall::auto_range;
+using rqt_sonar_waterfall::color_map_from_index;
+using rqt_sonar_waterfall::color_map_index;
+using rqt_sonar_waterfall::color_map_name;
 using rqt_sonar_waterfall::ColorMap;
 using rqt_sonar_waterfall::ColorMapType;
+using rqt_sonar_waterfall::kColorMapCount;
 using rqt_sonar_waterfall::Rgb;
 using rqt_sonar_waterfall::scale_intensity;
 using rqt_sonar_waterfall::WaterfallRow;
@@ -89,6 +93,29 @@ TEST(ColorMap, SetTypeChangesPalette)
   cm.set_type(ColorMapType::Bronze);
   EXPECT_EQ(cm.type(), ColorMapType::Bronze);
   EXPECT_EQ(cm.lookup(1.0f), (Rgb{255, 225, 170}));
+}
+
+TEST(ColorMap, IndexRoundTrip)
+{
+  for (auto type :
+    {ColorMapType::Grayscale, ColorMapType::Bronze, ColorMapType::Thermal})
+  {
+    EXPECT_EQ(color_map_from_index(color_map_index(type)), type);
+  }
+}
+
+TEST(ColorMap, IndexOutOfRangeClampsToGrayscale)
+{
+  EXPECT_EQ(color_map_from_index(-1), ColorMapType::Grayscale);
+  EXPECT_EQ(color_map_from_index(99), ColorMapType::Grayscale);
+}
+
+TEST(ColorMap, NamesAndCount)
+{
+  EXPECT_EQ(kColorMapCount, 3);
+  EXPECT_STREQ(color_map_name(ColorMapType::Grayscale), "Grayscale");
+  EXPECT_STREQ(color_map_name(ColorMapType::Bronze), "Bronze");
+  EXPECT_STREQ(color_map_name(ColorMapType::Thermal), "Thermal");
 }
 
 TEST(ScaleIntensity, LinearMidpoint)
