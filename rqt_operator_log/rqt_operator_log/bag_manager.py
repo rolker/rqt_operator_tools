@@ -29,10 +29,34 @@ def make_log_topic(namespace: str) -> str:
     return 'log/text'
 
 
-class BagManager:
-    """Write log entries to daily mcap bags and recover from existing ones."""
+#: Default filename for the per-day durable text sidecar.
+JSONL_NAME = 'operator_log.jsonl'
 
-    def __init__(self, node: Node, base_dir: str = '', log_namespace: str = ''):
+#: Default seconds between periodic bag flushes (0 disables the timer).
+#: 10 minutes keeps the segment-file count low while bounding how much
+#: recorded-topic data a crash can lose (operator text is durable via the
+#: sidecar regardless).
+DEFAULT_FLUSH_INTERVAL_SEC = 600.0
+
+
+class BagManager:
+    """Write log entries to daily mcap bags and recover from existing ones.
+
+    Each operator entry is also appended to a per-day JSON-lines sidecar
+    (``operator_log.jsonl``) that is flushed and fsync'd on every write, so
+    entries are durable and human-readable the moment they are logged. The
+    mcap bag carries the entries alongside any recorded topics for synchronized
+    playback; it is buffered and flushed periodically (see ``flush``) rather
+    than per entry, to keep the file count bounded.
+    """
+
+    def __init__(
+        self,
+        node: Node,
+        base_dir: str = '',
+        log_namespace: str = '',
+        flush_interval_sec: float = DEFAULT_FLUSH_INTERVAL_SEC,
+    ):
         self._node = node
         self._base_dir = base_dir or os.path.expanduser('~/operator_logs')
         self._log_topic = make_log_topic(log_namespace)
@@ -40,10 +64,31 @@ class BagManager:
         self._writer_lock = threading.Lock()
         self._current_day = None
         self._registered_topics: set[tuple[str, str]] = set()  # (topic_name, msg_type_str)
+        # Durable text sidecar (per local day).
+        self._jsonl_file = None
+        self._jsonl_day = None
+        # Set when the bag has buffered writes not yet flushed to disk.
+        self._dirty = False
+        # Periodic flush timer — bounds how much buffered bag data a crash can
+        # lose. Fires on the node's executor; flush() guards with the lock.
+        self._flush_timer = None
+        if flush_interval_sec and flush_interval_sec > 0:
+            self._flush_timer = node.create_timer(
+                flush_interval_sec, self._on_flush_timer
+            )
 
     @property
     def log_topic(self) -> str:
         return self._log_topic
+
+    @staticmethod
+    def _dt(timestamp_ns: int) -> datetime:
+        """Convert an epoch-ns timestamp to an aware UTC datetime."""
+        return datetime.fromtimestamp(timestamp_ns / 1e9, tz=timezone.utc)
+
+    def _local_day(self, timestamp_ns: int):
+        """Return the local calendar date for an epoch-ns timestamp."""
+        return self._dt(timestamp_ns).astimezone().date()
 
     def _day_dir(self, dt: datetime) -> str:
         """Return the day directory for a datetime, using local time for naming."""
@@ -100,10 +145,16 @@ class BagManager:
         self._node.get_logger().info(f'Opened bag: {uri}')
 
     def write_entry(self, entry: LogEntry):
-        """Serialize and write a log entry to the bag."""
-        with self._writer_lock:
-            self._ensure_writer(entry.timestamp_ns)
+        """Persist a log entry: durably to the sidecar, and to the mcap bag.
 
+        The JSON-lines sidecar is flushed and fsync'd before this returns, so
+        the entry survives an unclean shutdown immediately. The mcap copy is
+        buffered and finalized by the periodic flush (see ``flush``).
+        """
+        with self._writer_lock:
+            self._append_jsonl(entry)
+
+            self._ensure_writer(entry.timestamp_ns)
             msg = String()
             msg.data = json.dumps({
                 'type': entry.entry_type.value,
@@ -112,6 +163,51 @@ class BagManager:
             })
             serialized = rclpy.serialization.serialize_message(msg)
             self._writer.write(self._log_topic, serialized, entry.timestamp_ns)
+            self._dirty = True
+
+    def _append_jsonl(self, entry: LogEntry):
+        """Append an entry to the per-day sidecar, durably. Caller holds lock."""
+        local_day = self._local_day(entry.timestamp_ns)
+        if self._jsonl_file is None or self._jsonl_day != local_day:
+            self._close_jsonl()
+            day_dir = self._day_dir(self._dt(entry.timestamp_ns))
+            os.makedirs(day_dir, exist_ok=True)
+            self._jsonl_file = open(
+                os.path.join(day_dir, JSONL_NAME), 'a', encoding='utf-8'
+            )
+            self._jsonl_day = local_day
+        self._jsonl_file.write(json.dumps({
+            'ts_ns': entry.timestamp_ns,
+            'type': entry.entry_type.value,
+            'author': entry.author,
+            'text': entry.text,
+        }) + '\n')
+        self._jsonl_file.flush()
+        os.fsync(self._jsonl_file.fileno())
+
+    def flush(self):
+        """Finalize the current mcap file so buffered bag data is durable.
+
+        rosbag2/mcap buffer writes in memory; the segment file stays 0 bytes
+        until the bag is closed. ``rosbag2_py`` exposes no per-message flush,
+        but ``split_bagfile()`` finalizes the current ``.mcap`` (making every
+        prior write durable and readable) and opens a fresh one. Operator text
+        is already durable via the sidecar; this bounds how much *recorded
+        topic* data a crash can lose to the flush interval. No-op when nothing
+        new has been written, to avoid emitting empty files while idle.
+        """
+        with self._writer_lock:
+            self._flush_locked()
+
+    def _on_flush_timer(self):
+        with self._writer_lock:
+            self._flush_locked()
+
+    def _flush_locked(self):
+        """Finalize the current bag file if dirty. Caller must hold the lock."""
+        if self._writer is not None and self._dirty:
+            self._writer.split_bagfile()
+            self._dirty = False
 
     def register_topic(self, topic_name: str, msg_type_str: str):
         """Register an additional topic for recording."""
@@ -133,6 +229,7 @@ class BagManager:
         with self._writer_lock:
             self._ensure_writer(timestamp_ns)
             self._writer.write(topic_name, serialized, timestamp_ns)
+            self._dirty = True
 
     def recover_entries(self) -> list[LogEntry]:
         """Read all log entries from all day directories."""
@@ -144,13 +241,79 @@ class BagManager:
         for day_dir in sorted(base.iterdir()):
             if not day_dir.is_dir():
                 continue
+            sidecar = day_dir / JSONL_NAME
+            if sidecar.is_file():
+                # The sidecar is the durable, authoritative text record; the
+                # bag mirrors it for playback, so reading both would duplicate.
+                sidecar_entries = self._read_jsonl(sidecar)
+                if sidecar_entries:
+                    entries.extend(sidecar_entries)
+                    continue
+                # Sidecar present but yielded nothing (unreadable, empty, or
+                # fully torn) — don't drop the day's log; fall through to the
+                # bag segments, which mirror the same entries.
+                self._node.get_logger().warn(
+                    f'Sidecar {sidecar} yielded no entries; '
+                    f'falling back to bag segments'
+                )
+            # No sidecar (older bags, or topic-only recordings), or an unusable
+            # one — recover from the mcap segments instead.
             for segment in sorted(day_dir.glob('operator_log_*')):
                 try:
                     entries.extend(self._read_segment(str(segment)))
                 except Exception as exc:
-                    self._node.get_logger().warn(
-                        f'Failed to read bag segment {segment}: {exc}'
-                    )
+                    # The segment has no metadata.yaml (e.g. unclean shutdown:
+                    # it is only written on close). Fall back to reading the
+                    # self-describing .mcap files directly so flushed entries
+                    # are still recovered after a crash.
+                    entries.extend(self._recover_loose_files(segment, exc))
+        return entries
+
+    def _read_jsonl(self, path: Path) -> list[LogEntry]:
+        """Read entries from a per-day JSON-lines sidecar."""
+        entries: list[LogEntry] = []
+        try:
+            with open(path, encoding='utf-8') as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                        entries.append(LogEntry(
+                            timestamp_ns=int(obj['ts_ns']),
+                            entry_type=EntryType(obj['type']),
+                            author=obj.get('author', ''),
+                            text=obj.get('text', ''),
+                        ))
+                    except (json.JSONDecodeError, KeyError, ValueError) as exc:
+                        # A torn final line from a crash mid-write — skip it,
+                        # keep every complete entry before it.
+                        self._node.get_logger().warn(
+                            f'Skipping malformed sidecar line in {path}: {exc}'
+                        )
+        except OSError as exc:
+            self._node.get_logger().warn(f'Failed to read sidecar {path}: {exc}')
+        return entries
+
+    def _recover_loose_files(self, segment: Path, exc: Exception) -> list[LogEntry]:
+        """Recover entries from a segment dir lacking metadata.yaml."""
+        entries: list[LogEntry] = []
+        recovered_any = False
+        for mcap_file in sorted(segment.glob('*.mcap')):
+            try:
+                entries.extend(self._read_segment(str(mcap_file)))
+                recovered_any = True
+            except Exception as inner:
+                # An empty trailing file (the open writer target at crash
+                # time) or a torn write — skip it and keep the rest.
+                self._node.get_logger().warn(
+                    f'Failed to read bag file {mcap_file}: {inner}'
+                )
+        if not recovered_any:
+            self._node.get_logger().warn(
+                f'Failed to read bag segment {segment}: {exc}'
+            )
         return entries
 
     def _read_segment(self, uri: str) -> list[LogEntry]:
@@ -193,7 +356,20 @@ class BagManager:
         if self._writer is not None:
             self._writer.close()
             self._writer = None
+        self._dirty = False
+
+    def _close_jsonl(self):
+        if self._jsonl_file is not None:
+            try:
+                self._jsonl_file.close()
+            finally:
+                self._jsonl_file = None
+                self._jsonl_day = None
 
     def close(self):
+        if self._flush_timer is not None:
+            self._node.destroy_timer(self._flush_timer)
+            self._flush_timer = None
         with self._writer_lock:
             self._close_writer()
+            self._close_jsonl()
