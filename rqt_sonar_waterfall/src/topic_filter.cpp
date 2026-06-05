@@ -29,21 +29,51 @@
 #include "rqt_sonar_waterfall/topic_filter.hpp"
 
 #include <algorithm>
+#include <string>
 
 namespace rqt_sonar_waterfall
 {
 
-std::vector<std::string> raw_sonar_image_topics(
-  const std::map<std::string, std::vector<std::string>> & topics)
+namespace
+{
+std::vector<std::string> topics_of_type(
+  const std::map<std::string, std::vector<std::string>> & topics, const char * type)
 {
   std::vector<std::string> names;
   for (const auto & [name, types] : topics) {
-    if (std::find(types.begin(), types.end(), kRawSonarImageType) != types.end()) {
+    if (std::find(types.begin(), types.end(), type) != types.end()) {
       names.push_back(name);
     }
   }
   std::sort(names.begin(), names.end());  // std::map already sorts, but be explicit
   return names;
+}
+}  // namespace
+
+std::vector<std::string> raw_sonar_image_topics(
+  const std::map<std::string, std::vector<std::string>> & topics)
+{
+  return topics_of_type(topics, kRawSonarImageType);
+}
+
+std::vector<std::string> radar_control_set_topics(
+  const std::map<std::string, std::vector<std::string>> & topics)
+{
+  return topics_of_type(topics, kRadarControlSetType);
+}
+
+std::string derive_change_topic(const std::string & state_topic)
+{
+  if (state_topic.empty()) {
+    return std::string();
+  }
+  const std::string suffix = "state";
+  if (state_topic.size() >= suffix.size() &&
+    state_topic.compare(state_topic.size() - suffix.size(), suffix.size(), suffix) == 0)
+  {
+    return state_topic.substr(0, state_topic.size() - suffix.size()) + "change_state";
+  }
+  return state_topic + "/change_state";
 }
 
 }  // namespace rqt_sonar_waterfall

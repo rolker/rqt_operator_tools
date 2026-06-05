@@ -39,6 +39,8 @@
 #include <string>
 
 #include <marine_acoustic_msgs/msg/raw_sonar_image.hpp>
+#include <marine_radar_control_msgs/msg/radar_control_set.hpp>
+#include <marine_radar_control_msgs/msg/radar_control_value.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include "rqt_sonar_waterfall/ping_pairer.hpp"
@@ -56,6 +58,7 @@ namespace rqt_sonar_waterfall
 {
 
 class WaterfallWidget;
+class ControlPanel;
 
 /// rqt plugin entry point for the sonar backscatter waterfall viewer.
 ///
@@ -88,6 +91,10 @@ private:
   void refresh_topics();
   void on_port_topic_changed(const QString & topic);
   void on_starboard_topic_changed(const QString & topic);
+  void on_control_topic_changed(const QString & topic);
+  void on_control_set(
+    marine_radar_control_msgs::msg::RadarControlSet::ConstSharedPtr msg);
+  void publish_control(const QString & key, const QString & value);
   void subscribe(
     rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr & sub,
     const std::string & topic, bool is_port);
@@ -99,7 +106,15 @@ private:
   QPointer<WaterfallWidget> widget_;
   QComboBox * port_combo_ = nullptr;
   QComboBox * starboard_combo_ = nullptr;
+  QComboBox * control_combo_ = nullptr;
   QTimer * refresh_timer_ = nullptr;
+
+  ControlPanel * control_panel_ = nullptr;
+  QWidget * control_section_ = nullptr;  ///< scroll area shown only when controllable
+  rclcpp::Subscription<marine_radar_control_msgs::msg::RadarControlSet>::SharedPtr
+    control_sub_;
+  rclcpp::Publisher<marine_radar_control_msgs::msg::RadarControlValue>::SharedPtr
+    control_pub_;
 
   // View-knob controls (wired to WaterfallWidget setters).
   QComboBox * colormap_combo_ = nullptr;

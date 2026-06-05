@@ -35,6 +35,7 @@
 #include <QLabel>
 #include <QMetaObject>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QString>
@@ -52,6 +53,7 @@
 #include <pluginlib/class_list_macros.hpp>
 
 #include "rqt_sonar_waterfall/color_map.hpp"
+#include "rqt_sonar_waterfall/control_panel.hpp"
 #include "rqt_sonar_waterfall/topic_filter.hpp"
 #include "rqt_sonar_waterfall/waterfall_model.hpp"
 #include "rqt_sonar_waterfall/waterfall_widget.hpp"
@@ -116,15 +118,31 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   hbox->setContentsMargins(4, 2, 4, 2);
   port_combo_ = new QComboBox(toolbar);
   starboard_combo_ = new QComboBox(toolbar);
+  control_combo_ = new QComboBox(toolbar);
   auto * refresh_button = new QPushButton(tr("Refresh"), toolbar);
   hbox->addWidget(new QLabel(tr("Port:"), toolbar));
   hbox->addWidget(port_combo_, 1);
   hbox->addWidget(new QLabel(tr("Starboard:"), toolbar));
   hbox->addWidget(starboard_combo_, 1);
+  hbox->addWidget(new QLabel(tr("Controls:"), toolbar));
+  hbox->addWidget(control_combo_, 1);
   hbox->addWidget(refresh_button);
+
+  // Sonar-control panel: hidden until a RadarControlSet topic is selected.
+  control_panel_ = new ControlPanel();
+  auto * control_scroll = new QScrollArea(container);
+  control_scroll->setWidget(control_panel_);
+  control_scroll->setWidgetResizable(true);
+  control_scroll->setMaximumHeight(160);
+  control_scroll->setVisible(false);
+  control_section_ = control_scroll;
+  connect(
+    control_panel_, &ControlPanel::controlChanged, this,
+    [this](const QString & key, const QString & value) {publish_control(key, value);});
 
   vbox->addWidget(toolbar);
   vbox->addWidget(build_controls_bar(container));
+  vbox->addWidget(control_section_);
   vbox->addWidget(widget_, 1);
 
   connect(
@@ -133,6 +151,9 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   connect(
     starboard_combo_, &QComboBox::currentTextChanged, this,
     [this](const QString & topic) {on_starboard_topic_changed(topic);});
+  connect(
+    control_combo_, &QComboBox::currentTextChanged, this,
+    [this](const QString & topic) {on_control_topic_changed(topic);});
   connect(refresh_button, &QPushButton::clicked, this, [this]() {refresh_topics();});
 
   apply_view_settings();
@@ -150,6 +171,9 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   }
   if (args.size() >= 2 && !args[1].isEmpty()) {
     select_topic(starboard_combo_, args[1]);
+  }
+  if (args.size() >= 3 && !args[2].isEmpty()) {
+    select_topic(control_combo_, args[2]);
   }
 
   if (context.serialNumber() > 1) {
@@ -274,6 +298,8 @@ void SonarWaterfallPlugin::shutdownPlugin()
   }
   port_sub_.reset();
   starboard_sub_.reset();
+  control_sub_.reset();
+  control_pub_.reset();
 }
 
 void SonarWaterfallPlugin::saveSettings(
@@ -285,6 +311,9 @@ void SonarWaterfallPlugin::saveSettings(
   }
   if (starboard_combo_) {
     instance_settings.setValue("starboard_topic", starboard_combo_->currentText());
+  }
+  if (control_combo_) {
+    instance_settings.setValue("control_topic", control_combo_->currentText());
   }
   if (colormap_combo_) {
     instance_settings.setValue("color_map", colormap_combo_->currentIndex());
@@ -309,6 +338,9 @@ void SonarWaterfallPlugin::restoreSettings(
   if (starboard_combo_ && instance_settings.contains("starboard_topic")) {
     select_topic(starboard_combo_, instance_settings.value("starboard_topic").toString());
   }
+  if (control_combo_ && instance_settings.contains("control_topic")) {
+    select_topic(control_combo_, instance_settings.value("control_topic").toString());
+  }
 
   if (colormap_combo_ && instance_settings.contains("color_map")) {
     colormap_combo_->setCurrentIndex(instance_settings.value("color_map").toInt());
@@ -328,9 +360,13 @@ void SonarWaterfallPlugin::refresh_topics()
   if (!node_ || !port_combo_ || !starboard_combo_) {
     return;
   }
-  const auto names = raw_sonar_image_topics(node_->get_topic_names_and_types());
-  repopulate(port_combo_, names);
-  repopulate(starboard_combo_, names);
+  const auto graph = node_->get_topic_names_and_types();
+  const auto image_names = raw_sonar_image_topics(graph);
+  repopulate(port_combo_, image_names);
+  repopulate(starboard_combo_, image_names);
+  if (control_combo_) {
+    repopulate(control_combo_, radar_control_set_topics(graph));
+  }
 }
 
 void SonarWaterfallPlugin::on_port_topic_changed(const QString & topic)
@@ -345,6 +381,62 @@ void SonarWaterfallPlugin::on_starboard_topic_changed(const QString & topic)
   const std::string name = (topic == kNoneLabel) ? std::string() : topic.toStdString();
   subscribe(starboard_sub_, name, /*is_port=*/false);
   update_active_sides();
+}
+
+void SonarWaterfallPlugin::on_control_topic_changed(const QString & topic)
+{
+  control_sub_.reset();
+  control_pub_.reset();
+  if (control_panel_) {
+    control_panel_->clear();
+  }
+
+  const std::string name = (topic == kNoneLabel) ? std::string() : topic.toStdString();
+  const bool active = !name.empty() && node_;
+  if (control_section_) {
+    control_section_->setVisible(active);
+  }
+  if (!active) {
+    return;
+  }
+
+  using marine_radar_control_msgs::msg::RadarControlSet;
+  using marine_radar_control_msgs::msg::RadarControlValue;
+  control_sub_ = node_->create_subscription<RadarControlSet>(
+    name, rclcpp::QoS(10),
+    [this](RadarControlSet::ConstSharedPtr msg) {on_control_set(msg);});
+  control_pub_ = node_->create_publisher<RadarControlValue>(
+    derive_change_topic(name), rclcpp::QoS(10));
+}
+
+void SonarWaterfallPlugin::on_control_set(
+  marine_radar_control_msgs::msg::RadarControlSet::ConstSharedPtr msg)
+{
+  if (!control_panel_) {
+    return;
+  }
+  // Build the control widgets on the GUI thread.
+  QPointer<ControlPanel> panel = control_panel_;
+  marine_radar_control_msgs::msg::RadarControlSet set = *msg;
+  QMetaObject::invokeMethod(
+    panel.data(),
+    [panel, set]() {
+      if (panel) {
+        panel->apply(set);
+      }
+    },
+    Qt::QueuedConnection);
+}
+
+void SonarWaterfallPlugin::publish_control(const QString & key, const QString & value)
+{
+  if (!control_pub_) {
+    return;
+  }
+  marine_radar_control_msgs::msg::RadarControlValue command;
+  command.key = key.toStdString();
+  command.value = value.toStdString();
+  control_pub_->publish(command);
 }
 
 void SonarWaterfallPlugin::subscribe(

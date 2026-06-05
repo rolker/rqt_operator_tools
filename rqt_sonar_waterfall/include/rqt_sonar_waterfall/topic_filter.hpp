@@ -40,11 +40,25 @@ namespace rqt_sonar_waterfall
 inline constexpr const char * kRawSonarImageType =
   "marine_acoustic_msgs/msg/RawSonarImage";
 
+/// The control-state message type (advertised by a controllable sonar).
+inline constexpr const char * kRadarControlSetType =
+  "marine_radar_control_msgs/msg/RadarControlSet";
+
 /// From a node-graph topic->types map, return the sorted names of topics that
 /// publish RawSonarImage. A topic qualifies if any of its advertised types
 /// matches, so multi-type topics are still offered.
 std::vector<std::string> raw_sonar_image_topics(
   const std::map<std::string, std::vector<std::string>> & topics);
+
+/// As raw_sonar_image_topics(), but for RadarControlSet control-state topics.
+std::vector<std::string> radar_control_set_topics(
+  const std::map<std::string, std::vector<std::string>> & topics);
+
+/// Derive the change-state (command) topic from a control-state topic, matching
+/// the marine_radar convention: a trailing "state" becomes "change_state"
+/// (e.g. "/sonar/state" -> "/sonar/change_state"); otherwise "/change_state" is
+/// appended. An empty input yields an empty result.
+std::string derive_change_topic(const std::string & state_topic);
 
 }  // namespace rqt_sonar_waterfall
 

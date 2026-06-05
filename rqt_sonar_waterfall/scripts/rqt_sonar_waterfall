@@ -9,6 +9,7 @@ def add_arguments(parser):
     group = parser.add_argument_group('Options for rqt_sonar_waterfall plugin')
     group.add_argument('port_topic', nargs='?', help='RawSonarImage port topic')
     group.add_argument('starboard_topic', nargs='?', help='RawSonarImage starboard topic')
+    group.add_argument('control_topic', nargs='?', help='RadarControlSet control-state topic')
 
 
 main = Main()

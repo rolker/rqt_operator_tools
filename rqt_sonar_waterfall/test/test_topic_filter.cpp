@@ -37,9 +37,12 @@
 namespace
 {
 
+using rqt_sonar_waterfall::derive_change_topic;
+using rqt_sonar_waterfall::radar_control_set_topics;
 using rqt_sonar_waterfall::raw_sonar_image_topics;
 
 const char * kRaw = "marine_acoustic_msgs/msg/RawSonarImage";
+const char * kCtl = "marine_radar_control_msgs/msg/RadarControlSet";
 
 }  // namespace
 
@@ -78,4 +81,32 @@ TEST(TopicFilter, NoMatchYieldsEmpty)
     {"/camera/image", {"sensor_msgs/msg/Image"}},
   };
   EXPECT_TRUE(raw_sonar_image_topics(graph).empty());
+}
+
+TEST(TopicFilter, RadarControlSetTopicsFiltered)
+{
+  std::map<std::string, std::vector<std::string>> graph{
+    {"/sonar/state", {kCtl}},
+    {"/sonar/port", {kRaw}},
+    {"/other/state", {"std_msgs/msg/String"}},
+  };
+  EXPECT_EQ(
+    radar_control_set_topics(graph),
+    (std::vector<std::string>{"/sonar/state"}));
+}
+
+TEST(DeriveChangeTopic, StateSuffixBecomesChangeState)
+{
+  EXPECT_EQ(derive_change_topic("/sonar/state"), "/sonar/change_state");
+  EXPECT_EQ(derive_change_topic("/foo/controls/state"), "/foo/controls/change_state");
+}
+
+TEST(DeriveChangeTopic, NonStateSuffixGetsAppended)
+{
+  EXPECT_EQ(derive_change_topic("/sonar/controls"), "/sonar/controls/change_state");
+}
+
+TEST(DeriveChangeTopic, EmptyYieldsEmpty)
+{
+  EXPECT_EQ(derive_change_topic(""), "");
 }

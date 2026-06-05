@@ -31,6 +31,7 @@ set(${PROJECT_NAME}_HEADERS
   include/${PROJECT_NAME}/color_map.hpp
   include/${PROJECT_NAME}/ping_pairer.hpp
   include/${PROJECT_NAME}/topic_filter.hpp
+  include/${PROJECT_NAME}/control_panel.hpp
 )
 
 set(${PROJECT_NAME}_SOURCES
@@ -42,6 +43,7 @@ set(${PROJECT_NAME}_SOURCES
   src/color_map.cpp
   src/ping_pairer.cpp
   src/topic_filter.cpp
+  src/control_panel.cpp
 )
 
 add_library(${PROJECT_NAME} SHARED
@@ -159,6 +161,16 @@ if(BUILD_TESTING)
     src/topic_filter.cpp
   )
   target_include_directories(test_topic_filter PRIVATE include)
+
+  ament_add_gtest(test_control_panel
+    test/test_control_panel.cpp
+  )
+  target_include_directories(test_control_panel PRIVATE include)
+  ament_target_dependencies(test_control_panel marine_radar_control_msgs)
+  # Link the main library so the panel's MOC metaobjects are available.
+  target_link_libraries(test_control_panel ${PROJECT_NAME} Qt5::Widgets)
+  set_tests_properties(test_control_panel PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
   ament_lint_auto_find_test_dependencies()
 endif()
