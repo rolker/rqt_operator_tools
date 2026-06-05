@@ -15,4 +15,4 @@ issue: 39
 
 ### Open questions
 - [ ] Color map: adapt `rviz_sonar_image`'s `color_map` into this package (default) vs factor into a shared lib.
-- [ ] Default sonar-control topic names — confirm against garmin node's eventual `~/transmit` / `~/range` interface; params until then.
+- [x] Sonar controls — RESOLVED: garmin uses `marine_radar_control_msgs`; reuse `rqt_marine_radar`'s dynamic `RadarControlSet`/`RadarControlValue` panel, no per-control topic config.
