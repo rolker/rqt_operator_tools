@@ -28,6 +28,7 @@ set(${PROJECT_NAME}_HEADERS
   include/${PROJECT_NAME}/waterfall_model.hpp
   include/${PROJECT_NAME}/row_extractor.hpp
   include/${PROJECT_NAME}/waterfall_buffer.hpp
+  include/${PROJECT_NAME}/color_map.hpp
 )
 
 set(${PROJECT_NAME}_SOURCES
@@ -36,6 +37,7 @@ set(${PROJECT_NAME}_SOURCES
   src/waterfall_model.cpp
   src/row_extractor.cpp
   src/waterfall_buffer.cpp
+  src/color_map.cpp
 )
 
 add_library(${PROJECT_NAME} SHARED
@@ -120,6 +122,23 @@ if(BUILD_TESTING)
   )
   target_include_directories(test_waterfall_buffer PRIVATE include)
   ament_target_dependencies(test_waterfall_buffer marine_acoustic_msgs)
+
+  ament_add_gtest(test_color_map
+    test/test_color_map.cpp
+    src/color_map.cpp
+  )
+  target_include_directories(test_color_map PRIVATE include)
+  ament_target_dependencies(test_color_map marine_acoustic_msgs)
+
+  ament_add_gtest(test_waterfall_widget
+    test/test_waterfall_widget.cpp
+  )
+  target_include_directories(test_waterfall_widget PRIVATE include)
+  ament_target_dependencies(test_waterfall_widget marine_acoustic_msgs)
+  # Link the main library so the widget's MOC metaobjects are available.
+  target_link_libraries(test_waterfall_widget ${PROJECT_NAME} Qt5::Widgets)
+  set_tests_properties(test_waterfall_widget PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
   ament_lint_auto_find_test_dependencies()
 endif()

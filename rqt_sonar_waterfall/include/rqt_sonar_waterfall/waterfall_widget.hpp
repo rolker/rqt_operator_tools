@@ -32,15 +32,20 @@
 #include <QImage>
 #include <QWidget>
 
+#include <cstddef>
+
+#include "rqt_sonar_waterfall/color_map.hpp"
+#include "rqt_sonar_waterfall/waterfall_buffer.hpp"
+#include "rqt_sonar_waterfall/waterfall_model.hpp"
+
 namespace rqt_sonar_waterfall
 {
 
 /// Scrolling backscatter waterfall canvas.
 ///
-/// Geometry-agnostic: it paints rows of intensities that have already been
-/// decoded and assembled elsewhere (see the forthcoming WaterfallBuffer /
-/// RowExtractor modules). This scaffold renders an empty dark canvas; the
-/// row-rendering path is filled in by subsequent steps of issue #39.
+/// Geometry-agnostic: it consumes already-assembled WaterfallRows (the newest is
+/// drawn at the top and older rows scroll downward) and renders them with a
+/// client-side intensity scaling (gain/contrast) and a selectable color map.
 class WaterfallWidget : public QWidget
 {
   Q_OBJECT
@@ -49,12 +54,45 @@ public:
   explicit WaterfallWidget(QWidget * parent = nullptr);
   ~WaterfallWidget() override;
 
+  /// Append the newest row. No-op while frozen.
+  void add_row(const WaterfallRow & row);
+
+  /// Drop all buffered rows.
+  void clear();
+
+  // --- client-side view controls ---
+  void set_color_map(ColorMapType type);
+  void set_gain(float gain);
+  void set_contrast(float contrast);
+  /// Scrollback depth (rows); clamped to >= 1.
+  void set_history(std::size_t rows);
+  /// When frozen, add_row() is ignored so the current view holds still.
+  void set_frozen(bool frozen);
+  /// Auto-scale intensity to the buffered min/max (the default).
+  void set_auto_range(bool enabled);
+  /// Fixed intensity range used when auto-range is disabled.
+  void set_manual_range(float min, float max);
+
+  bool frozen() const {return frozen_;}
+  std::size_t history() const {return buffer_.capacity();}
+
 protected:
   void paintEvent(QPaintEvent * event) override;
 
 private:
-  // Backing image for the waterfall. Allocated lazily once a data path exists.
-  QImage canvas_;
+  void rebuild_image();
+
+  WaterfallBuffer buffer_;
+  ColorMap color_map_;
+  QImage image_;          ///< cached render of the whole buffer
+  double range_max_ = 0.0;  ///< slant range of the newest row, meters (0 = unknown)
+
+  float gain_ = 1.0f;
+  float contrast_ = 1.0f;
+  bool frozen_ = false;
+  bool auto_range_ = true;
+  float manual_min_ = 0.0f;
+  float manual_max_ = 1.0f;
 };
 
 }  // namespace rqt_sonar_waterfall
