@@ -245,10 +245,19 @@ class BagManager:
             if sidecar.is_file():
                 # The sidecar is the durable, authoritative text record; the
                 # bag mirrors it for playback, so reading both would duplicate.
-                entries.extend(self._read_jsonl(sidecar))
-                continue
-            # No sidecar (older bags, or topic-only recordings) — recover from
-            # the mcap segments instead.
+                sidecar_entries = self._read_jsonl(sidecar)
+                if sidecar_entries:
+                    entries.extend(sidecar_entries)
+                    continue
+                # Sidecar present but yielded nothing (unreadable, empty, or
+                # fully torn) — don't drop the day's log; fall through to the
+                # bag segments, which mirror the same entries.
+                self._node.get_logger().warn(
+                    f'Sidecar {sidecar} yielded no entries; '
+                    f'falling back to bag segments'
+                )
+            # No sidecar (older bags, or topic-only recordings), or an unusable
+            # one — recover from the mcap segments instead.
             for segment in sorted(day_dir.glob('operator_log_*')):
                 try:
                     entries.extend(self._read_segment(str(segment)))

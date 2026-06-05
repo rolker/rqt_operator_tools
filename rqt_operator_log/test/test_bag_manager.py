@@ -159,6 +159,62 @@ class TestBagManager:
         texts = [e.text for e in recovered]
         assert 'crash survivor' in texts
 
+    def test_sidecar_empty_falls_back_to_bag(self, ros_node, tmp_dir):
+        """If the sidecar exists but yields nothing (unreadable/empty/torn),
+        recovery falls back to the bag segments rather than dropping the log."""
+        from pathlib import Path
+
+        bm = BagManager(ros_node, base_dir=tmp_dir, flush_interval_sec=0)
+        bm.write_entry(LogEntry(
+            timestamp_ns=time.time_ns(),
+            entry_type=EntryType.OPERATOR_TEXT,
+            author='op',
+            text='bag fallback survivor',
+        ))
+        bm.close()
+        # Corrupt the durable sidecar to empty (a truncated/torn write). The
+        # bag still has metadata.yaml, so recovery must read it back rather than
+        # silently skipping the day on the empty sidecar.
+        sidecars = list(Path(tmp_dir).glob('*/operator_log.jsonl'))
+        assert sidecars, 'expected a sidecar to corrupt'
+        for sidecar in sidecars:
+            sidecar.write_text('')
+
+        bm2 = BagManager(ros_node, base_dir=tmp_dir, flush_interval_sec=0)
+        recovered = bm2.recover_entries()
+        bm2.close()
+
+        assert 'bag fallback survivor' in [e.text for e in recovered]
+
+    def test_recover_loose_mcap_no_metadata(self, ros_node, tmp_dir):
+        """An unclean shutdown leaves .mcap segment files but no metadata.yaml
+        and no usable sidecar; entries are still recovered from the loose
+        .mcap files directly."""
+        from pathlib import Path
+
+        bm = BagManager(ros_node, base_dir=tmp_dir, flush_interval_sec=0)
+        bm.write_entry(LogEntry(
+            timestamp_ns=time.time_ns(),
+            entry_type=EntryType.OPERATOR_TEXT,
+            author='op',
+            text='loose mcap survivor',
+        ))
+        bm.close()
+        # Simulate the crash: drop metadata.yaml (only written on close) and the
+        # sidecar, leaving the self-describing .mcap files as the only record.
+        for meta in Path(tmp_dir).glob('*/operator_log_*/metadata.yaml'):
+            meta.unlink()
+        for sidecar in Path(tmp_dir).glob('*/operator_log.jsonl'):
+            sidecar.unlink()
+        assert list(Path(tmp_dir).glob('*/operator_log_*/*.mcap')), \
+            'expected loose .mcap files to remain'
+
+        bm2 = BagManager(ros_node, base_dir=tmp_dir, flush_interval_sec=0)
+        recovered = bm2.recover_entries()
+        bm2.close()
+
+        assert 'loose mcap survivor' in [e.text for e in recovered]
+
     def test_recover_from_mcap_when_no_sidecar(self, ros_node, tmp_dir):
         """Backward compatibility: a day dir with only mcap segments (no
         sidecar) still recovers via the bag."""
