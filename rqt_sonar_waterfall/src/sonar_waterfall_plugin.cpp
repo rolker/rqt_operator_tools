@@ -213,7 +213,7 @@ QWidget * SonarWaterfallPlugin::build_controls_bar(QWidget * parent)
   h->addWidget(new QLabel(tr("History:"), bar));
   history_spin_ = new QSpinBox(bar);
   history_spin_->setRange(1, 5000);
-  history_spin_->setValue(600);
+  history_spin_->setValue(200);
   h->addWidget(history_spin_);
 
   auto_range_check_ = new QCheckBox(tr("Auto range"), bar);
@@ -346,7 +346,7 @@ void SonarWaterfallPlugin::restoreSettings(
     colormap_combo_->setCurrentIndex(instance_settings.value("color_map").toInt());
     gain_spin_->setValue(instance_settings.value("gain", 1.0).toDouble());
     contrast_spin_->setValue(instance_settings.value("contrast", 1.0).toDouble());
-    history_spin_->setValue(instance_settings.value("history", 600).toInt());
+    history_spin_->setValue(instance_settings.value("history", 200).toInt());
     freeze_button_->setChecked(instance_settings.value("frozen", false).toBool());
     auto_range_check_->setChecked(instance_settings.value("auto_range", true).toBool());
     range_min_spin_->setValue(instance_settings.value("range_min", 0.0).toDouble());

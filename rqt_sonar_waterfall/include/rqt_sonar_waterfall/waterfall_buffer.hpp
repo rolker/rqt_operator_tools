@@ -45,7 +45,7 @@ namespace rqt_sonar_waterfall
 class WaterfallBuffer
 {
 public:
-  static constexpr std::size_t kDefaultCapacity = 600;
+  static constexpr std::size_t kDefaultCapacity = 200;
 
   explicit WaterfallBuffer(std::size_t capacity = kDefaultCapacity);
 
