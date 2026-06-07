@@ -148,9 +148,11 @@ if(BUILD_TESTING)
   target_include_directories(test_waterfall_widget PRIVATE include)
   ament_target_dependencies(test_waterfall_widget marine_acoustic_msgs marine_colormap)
   # Link the main library so the widget's MOC metaobjects are available.
-  target_link_libraries(test_waterfall_widget ${PROJECT_NAME} Qt5::Widgets)
+  # Gui/OpenGL for QOpenGLWidget + the offscreen GL context the test creates.
+  target_link_libraries(test_waterfall_widget
+    ${PROJECT_NAME} Qt5::Widgets Qt5::Gui Qt5::OpenGL)
   set_tests_properties(test_waterfall_widget PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;LIBGL_ALWAYS_SOFTWARE=1")
 
   ament_add_gtest(test_ping_pairer
     test/test_ping_pairer.cpp

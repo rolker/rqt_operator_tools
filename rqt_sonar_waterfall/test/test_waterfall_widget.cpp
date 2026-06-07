@@ -26,9 +26,11 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-// Offscreen smoke test for WaterfallWidget: it must render buffered rows
-// without crashing, hold still while frozen, and reset on clear. Runs under
-// QT_QPA_PLATFORM=offscreen (set in CMakeLists).
+// Offscreen-GL render test for the GPU WaterfallWidget: it must render buffered
+// rows without crashing, show the colormap gradient, hold still while frozen,
+// and reset on clear. Rendering is read back with QOpenGLWidget::grabFramebuffer,
+// so a real GL context is required; when none can be created (headless runner
+// without software GL) every test self-skips rather than failing the build.
 
 #include <gtest/gtest.h>
 
@@ -36,11 +38,12 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QImage>
+#include <QOffscreenSurface>
+#include <QOpenGLContext>
+#include <QSurfaceFormat>
 
-#include <algorithm>
 #include <cstddef>
 #include <memory>
-#include <vector>
 
 #include "rqt_sonar_waterfall/color_map.hpp"
 #include "rqt_sonar_waterfall/waterfall_widget.hpp"
@@ -51,7 +54,8 @@ namespace
 using rqt_sonar_waterfall::WaterfallRow;
 using rqt_sonar_waterfall::WaterfallWidget;
 
-// A ramp row so auto-range spans a real interval and produces visible contrast.
+// A ramp row (0..width-1) so auto-range spans a real interval: after
+// normalization the left edge maps dark, the right edge bright.
 WaterfallRow ramp_row(std::size_t width)
 {
   WaterfallRow r;
@@ -63,13 +67,32 @@ WaterfallRow ramp_row(std::size_t width)
   return r;
 }
 
+// True if a 3.3 GL context can be created in this environment.
+bool gl_available()
+{
+  QSurfaceFormat fmt;
+  fmt.setRenderableType(QSurfaceFormat::OpenGL);
+  fmt.setVersion(3, 3);
+  QOffscreenSurface surface;
+  surface.setFormat(fmt);
+  surface.create();
+  if (!surface.isValid()) {
+    return false;
+  }
+  QOpenGLContext ctx;
+  ctx.setFormat(fmt);
+  if (!ctx.create() || !ctx.makeCurrent(&surface)) {
+    return false;
+  }
+  const bool ok = ctx.format().majorVersion() >= 3;
+  ctx.doneCurrent();
+  return ok;
+}
+
 QImage render(WaterfallWidget & w)
 {
   w.resize(64, 64);
-  QImage img(w.size(), QImage::Format_RGB888);
-  img.fill(Qt::black);
-  w.render(&img);
-  return img;
+  return w.grabFramebuffer();
 }
 
 class WaterfallWidgetTest : public ::testing::Test
@@ -82,6 +105,9 @@ protected:
       static char arg0[] = "test_waterfall_widget";
       static char * argv[] = {arg0, nullptr};
       app_ = std::make_unique<QApplication>(argc, argv);
+    }
+    if (!gl_available()) {
+      GTEST_SKIP() << "No OpenGL 3.3 context available (headless without software GL).";
     }
   }
 
@@ -105,16 +131,16 @@ TEST_F(WaterfallWidgetTest, BufferedRowsDrawContent)
     w.add_row(ramp_row(128));
   }
   QImage img = render(w);
+  ASSERT_FALSE(img.isNull());
 
-  // The empty placeholder is a near-black background; a rendered grayscale ramp
-  // must include a clearly brighter pixel somewhere.
-  int brightest = 0;
-  for (int y = 0; y < img.height(); ++y) {
-    for (int x = 0; x < img.width(); ++x) {
-      brightest = std::max(brightest, img.pixelColor(x, y).red());
-    }
-  }
-  EXPECT_GT(brightest, 200);
+  // The grayscale ramp must render a left-to-right brightness gradient. Sample at
+  // mid-height to stay clear of the top-corner range labels (which are also
+  // light) so this verifies the GL render, not the QPainter overlay.
+  const int mid = img.height() / 2;
+  const int bright = img.pixelColor(img.width() - 2, mid).red();
+  const int dark = img.pixelColor(1, mid).red();
+  EXPECT_GT(bright, 200);
+  EXPECT_LT(dark, 60);
 }
 
 TEST_F(WaterfallWidgetTest, FreezeHoldsTheView)
@@ -141,6 +167,7 @@ TEST_F(WaterfallWidgetTest, ClearResetsToPlaceholder)
   }
   w.clear();
   QImage img = render(w);
+  ASSERT_FALSE(img.isNull());
 
   // Corner pixel falls on the dark placeholder fill, not on waterfall data.
   const QColor corner = img.pixelColor(1, 1);

@@ -45,3 +45,37 @@ real CPU/GPU agreement of the marine_colormap#5 shader.
 - `WaterfallWidget : QOpenGLWidget` (R32F scrolling ring texture, uniforms for
   range/gain/contrast, label overlay); rework `test_waterfall_widget` to
   `grabFramebuffer()`. #48 stays open until stage 2 lands.
+
+## Implementation (stage 2 — QOpenGLWidget swap)
+**Status**: complete (pending review + on-screen verification)
+**When**: 2026-06-07
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**Branch**: feature/issue-48 (builds on stage 1, same PR #49)
+
+`WaterfallWidget` is now a `QOpenGLWidget` rendering on the GPU via `GpuColorMap`.
+Same public API (`add_row`/`set_*`) so `control_panel`/`sonar_waterfall_plugin`
+are untouched.
+
+- Raw (full-precision) intensities → R32F texture; colormap in the fragment
+  shader. Range/gain/contrast are uniforms, palette is the baked LUT, so changing
+  any of them is a redraw — **no CPU recolor**, and data is not quantized to 8-bit
+  (the original ask). The old CPU recolor / `rebuild_image` / `memmove`
+  incremental path is gone.
+- **Texture upload = re-upload whole buffer** on change (`data_dirty_` flag →
+  `paintGL`, context current). Each row nearest-resampled to `W = max width`,
+  stored oldest-first so screen-top = newest with no V flip. The CPU bottleneck
+  was the per-pixel recolor, not the upload (~KB/ping), so this is already a big
+  win; ring-buffer `glTexSubImage2D` is a noted follow-up.
+- Auto-range from the per-row cached extremes (PR #41) feeds the min/max uniforms.
+- 3.3 **compatibility** context so the QPainter label/placeholder overlay coexists
+  with the modern shader path. Dark `glClear` placeholder + "No sonar data" /
+  range-`m` labels via QPainter after the GL draw.
+- `test_waterfall_widget` reworked to `grabFramebuffer()` behind a
+  GL-availability skip (same pattern as `test_gpu_color_map`); the content test
+  now asserts the left-dark→right-bright grayscale gradient (verifies the GL
+  render, not the label overlay).
+
+**Verified**: `colcon test` — 218 tests, 0 failures, 30 skipped. The 5 widget
+tests executed (real GL render + framebuffer readback) on Mesa swrast.
+On-screen verification against the Garmin sidescan bag is a Roland-driven gate.

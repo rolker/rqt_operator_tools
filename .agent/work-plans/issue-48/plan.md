@@ -49,17 +49,33 @@ stage 1 (the validated, self-contained foundation), the widget swap follows.
   add the parity test with `QT_QPA_PLATFORM=offscreen` + a software-GL-friendly
   env. `package.xml`: add `libqt5opengl5-dev` build dep.
 
-### Stage 2 (follow-up commit/PR) — widget swap
+### Stage 2 (this branch, folds into PR #49 → closes #48) — widget swap
 
-- `WaterfallWidget : public QOpenGLWidget`, keeping the public API
-  (`add_row`/`set_*`) so `control_panel`/`sonar_waterfall_plugin` are untouched.
-- Intensity texture as a scrolling ring (R32F, width = max samples, height =
-  capacity); `add_row` does a `glTexSubImage2D` of the new row into the ring
-  slot; shader offsets V by the ring head so newest stays on top.
-- Auto-range from the existing per-row cached extremes (PR #41) → feeds the
-  `min`/`max` uniforms instead of a recolor.
-- Rework `test_waterfall_widget` to `grabFramebuffer()` (QOpenGLWidget) instead
-  of `QWidget::render()`, behind the same GL-availability skip.
+`WaterfallWidget : public QOpenGLWidget`, keeping the public API
+(`add_row`/`set_*`) so `control_panel`/`sonar_waterfall_plugin` are untouched.
+
+- **Context**: request a 3.3 format in the ctor (compatibility profile so the
+  QPainter overlay for labels works alongside `GpuColorMap`'s raw GL).
+- **Intensity texture (first cut = re-upload)**: on any data/view change, set a
+  `dirty_` flag + `update()`; in `paintGL` (context current) assemble a
+  `W x count` R32F buffer from `WaterfallBuffer` (oldest row first → screen-top =
+  newest with no V-flip), each row nearest-resampled to `W = max row width`, and
+  `glTexImage2D` it. The CPU bottleneck was the per-pixel *recolor*, not the
+  upload (~800 KB/ping is trivial), so re-upload is already a big win and is
+  simple/correct. **Ring-buffer `glTexSubImage2D` optimization is a noted
+  follow-up** if profiling ever shows upload cost.
+- **Colormap on GPU**: `paintGL` sets range/gain/contrast uniforms and calls
+  `GpuColorMap::draw()`; palette re-baked only on `set_color_map`. Auto-range
+  from the per-row cached extremes (PR #41) feeds the `min`/`max` uniforms — no
+  recolor. Re-ranging/gain/contrast/palette are now free.
+- **Overlays**: dark `glClear` placeholder; "No sonar data" + range-`m` labels
+  via `QPainter(this)` in `paintGL` after the GL draw.
+- **Tests**: rework `test_waterfall_widget` to `grabFramebuffer()` behind a
+  GL-availability skip (same pattern as `test_gpu_color_map`).
+
+### Out of scope (follow-ups)
+- Ring-buffer subimage upload (optimization over re-upload).
+- rviz Ogre material + CAMP GL viewport (separate issues / camp#63).
 - Range-label overlay via QPainter in `paintGL` after the GL draw.
 
 ## Files to change (stage 1)
