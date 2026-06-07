@@ -4,10 +4,13 @@ An [rqt](https://wiki.ros.org/rqt) plugin that renders a scrolling **backscatter
 waterfall** from `marine_acoustic_msgs/RawSonarImage`, with client-side image
 processing and an optional sonar-control panel.
 
-> **Status:** under active development on issue
-> [#39](https://github.com/rolker/rqt_operator_tools/issues/39). This is the
-> package scaffold — the plugin loads and shows an empty waterfall canvas; the
-> data path, view knobs, and control panel are being filled in.
+> **Status:** sidescan support implemented on issue
+> [#39](https://github.com/rolker/rqt_operator_tools/issues/39): live
+> port/starboard `RawSonarImage` subscriptions, the scrolling waterfall, the
+> view controls (color map, gain, contrast, history, manual/auto range,
+> freeze), and the dynamic `marine_radar_control_msgs` control panel are all in
+> place. Multibeam-backscatter row extraction is deferred to
+> [#40](https://github.com/rolker/rqt_operator_tools/issues/40).
 
 ## Design
 

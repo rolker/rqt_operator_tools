@@ -64,6 +64,8 @@ class SyntheticSidescan(Node):
         self.sample_rate = float(self.get_parameter('sample_rate').value)
         self.sound_speed = float(self.get_parameter('sound_speed').value)
         rate = float(self.get_parameter('rate').value)
+        if rate <= 0.0:
+            raise ValueError(f'rate must be > 0 Hz, got {rate}')
 
         self.port_pub = self.create_publisher(
             RawSonarImage,
