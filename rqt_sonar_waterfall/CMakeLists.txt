@@ -18,7 +18,7 @@ find_package(marine_acoustic_msgs REQUIRED)
 find_package(marine_radar_control_msgs REQUIRED)
 find_package(marine_colormap REQUIRED)
 find_package(ament_index_cpp REQUIRED)
-find_package(Qt5 COMPONENTS Widgets REQUIRED)
+find_package(Qt5 COMPONENTS Widgets Gui OpenGL REQUIRED)
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
@@ -30,6 +30,7 @@ set(${PROJECT_NAME}_HEADERS
   include/${PROJECT_NAME}/row_extractor.hpp
   include/${PROJECT_NAME}/waterfall_buffer.hpp
   include/${PROJECT_NAME}/color_map.hpp
+  include/${PROJECT_NAME}/gpu_color_map.hpp
   include/${PROJECT_NAME}/ping_pairer.hpp
   include/${PROJECT_NAME}/topic_filter.hpp
   include/${PROJECT_NAME}/control_panel.hpp
@@ -42,6 +43,7 @@ set(${PROJECT_NAME}_SOURCES
   src/row_extractor.cpp
   src/waterfall_buffer.cpp
   src/color_map.cpp
+  src/gpu_color_map.cpp
   src/ping_pairer.cpp
   src/topic_filter.cpp
   src/control_panel.cpp
@@ -71,7 +73,7 @@ ament_target_dependencies(${PROJECT_NAME}
   ament_index_cpp
 )
 
-target_link_libraries(${PROJECT_NAME} Qt5::Widgets)
+target_link_libraries(${PROJECT_NAME} Qt5::Widgets Qt5::Gui Qt5::OpenGL)
 
 pluginlib_export_plugin_description_file(rqt_gui plugin.xml)
 
@@ -173,6 +175,18 @@ if(BUILD_TESTING)
   target_link_libraries(test_control_panel ${PROJECT_NAME} Qt5::Widgets)
   set_tests_properties(test_control_panel PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+  # Offscreen-GL CPU/GPU colormap parity test. Self-skips when no GL context can
+  # be created, so it never fails on a headless runner without software GL.
+  ament_add_gtest(test_gpu_color_map
+    test/test_gpu_color_map.cpp
+  )
+  target_include_directories(test_gpu_color_map PRIVATE include)
+  ament_target_dependencies(test_gpu_color_map marine_colormap)
+  target_link_libraries(test_gpu_color_map
+    ${PROJECT_NAME} Qt5::Widgets Qt5::Gui Qt5::OpenGL)
+  set_tests_properties(test_gpu_color_map PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;LIBGL_ALWAYS_SOFTWARE=1")
 
   ament_lint_auto_find_test_dependencies()
 endif()

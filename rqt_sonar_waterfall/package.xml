@@ -16,6 +16,7 @@
   <buildtool_depend>ament_cmake_ros</buildtool_depend>
 
   <build_depend>qtbase5-dev</build_depend>
+  <build_depend>libqt5opengl5-dev</build_depend>
 
   <depend>rclcpp</depend>
   <depend>rqt_gui</depend>
