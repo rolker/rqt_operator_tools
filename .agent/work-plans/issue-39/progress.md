@@ -82,3 +82,22 @@ R1 resolved (manual-range clears auto_range_ at waterfall_widget.cpp:104, python
   auto_range honors cached extremes). Widget smoke tests (5/0) and control-panel
   tests (5/0) confirm the render + input changes.
 - `colcon test rqt_sonar_waterfall`: **199 tests, 0 failures** (27 skipped = linters).
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-07 15:40 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #41 at `8239735`
+**Sources**: 1 at head (Copilot R3 @ `8239735`) + prior Integrated Reviews (R1 `45fc70b`, R2 `91a20c4`, resolved) + rolker conversation comment
+**Cross-source confirmations**: 0
+**CI**: copilot-pull-request-reviewer success (no build/test check on PR; package GTests pass locally)
+
+R1/R2 findings all resolved in the prior entries. R3 reviews the cleaned-up control panel.
+
+### Findings
+- [ ] (suggestion, Copilot R3) ControlPanel::apply() refreshes only the value label, not the editable widget -> input column goes stale vs device state after first update. Refresh the input from item.value when it is NOT focused (don't clobber active edits) — `src/control_panel.cpp:128-136`
+
+### False positives
+- (Copilot R3) FLOAT_WITH_AUTO "could publish empty string on editingFinished" — `src/control_panel.cpp:81-99`: the QLineEdit has a QDoubleValidator; Qt suppresses editingFinished when content isn't Acceptable, and empty is Intermediate, so focus-out/Enter on empty does not emit. Blank-for-"auto" is intentional (auto lives on the button); the input-not-reflecting-state residual is subsumed by the apply() finding above.
+- (rolker conversation) widget slowdown/lock-up — addressed in R2 (incremental render + O(rows) auto-range).
