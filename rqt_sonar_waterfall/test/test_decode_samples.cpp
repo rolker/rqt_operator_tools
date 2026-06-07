@@ -160,3 +160,43 @@ TEST(DecodeSamples, UnknownDtypeReturnsEmpty)
   img.data = {0x01, 0x02, 0x03, 0x04};
   EXPECT_TRUE(rqt_sonar_waterfall::decode_samples(img).empty());
 }
+
+TEST(DefaultFullScale, IntegerDtypesReturnTheirFullScale)
+{
+  using rqt_sonar_waterfall::default_full_scale;
+  EXPECT_DOUBLE_EQ(default_full_scale(SonarImageData::DTYPE_UINT8), 255.0);
+  EXPECT_DOUBLE_EQ(default_full_scale(SonarImageData::DTYPE_INT8), 127.0);
+  EXPECT_DOUBLE_EQ(default_full_scale(SonarImageData::DTYPE_UINT16), 65535.0);
+  EXPECT_DOUBLE_EQ(default_full_scale(SonarImageData::DTYPE_INT16), 32767.0);
+}
+
+TEST(DefaultFullScale, Uint16IsNotClippedByTheOldDefault)
+{
+  // Regression for the original bug: the manual default was 32767, which clips
+  // 16-bit data (the garmin GCV-20 driver publishes UINT16 with values ~62000).
+  EXPECT_GT(rqt_sonar_waterfall::default_full_scale(SonarImageData::DTYPE_UINT16),
+    32767.0);
+}
+
+TEST(DefaultFullScale, WideIntegersClampToTheSpinCeiling)
+{
+  // 32-/64-bit full scale overflows the manual spin box (max 1e9); clamp there.
+  using rqt_sonar_waterfall::default_full_scale;
+  EXPECT_DOUBLE_EQ(default_full_scale(SonarImageData::DTYPE_UINT32), 1.0e9);
+  EXPECT_DOUBLE_EQ(default_full_scale(SonarImageData::DTYPE_INT32), 1.0e9);
+  EXPECT_DOUBLE_EQ(default_full_scale(SonarImageData::DTYPE_UINT64), 1.0e9);
+  EXPECT_DOUBLE_EQ(default_full_scale(SonarImageData::DTYPE_INT64), 1.0e9);
+}
+
+TEST(DefaultFullScale, FloatsDefaultToUnity)
+{
+  using rqt_sonar_waterfall::default_full_scale;
+  EXPECT_DOUBLE_EQ(default_full_scale(SonarImageData::DTYPE_FLOAT32), 1.0);
+  EXPECT_DOUBLE_EQ(default_full_scale(SonarImageData::DTYPE_FLOAT64), 1.0);
+}
+
+TEST(DefaultFullScale, UnknownDtypeAssumesWidestCommonDepth)
+{
+  // An unrecognized dtype should not clip 16-bit data, the deepest we publish.
+  EXPECT_DOUBLE_EQ(rqt_sonar_waterfall::default_full_scale(199), 65535.0);
+}

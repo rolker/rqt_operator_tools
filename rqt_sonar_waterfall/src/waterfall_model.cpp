@@ -106,6 +106,37 @@ std::vector<float> decode_samples(
   }
 }
 
+double default_full_scale(uint32_t dtype)
+{
+  using Img = marine_acoustic_msgs::msg::SonarImageData;
+  switch (dtype) {
+    case Img::DTYPE_UINT8:
+      return 255.0;
+    case Img::DTYPE_INT8:
+      return 127.0;
+    case Img::DTYPE_UINT16:
+      return 65535.0;
+    case Img::DTYPE_INT16:
+      return 32767.0;
+    case Img::DTYPE_UINT32:
+    case Img::DTYPE_INT32:
+    case Img::DTYPE_UINT64:
+    case Img::DTYPE_INT64:
+      // True full scale (>= 2^31) overflows the manual-range spin box (1e9);
+      // clamp to its ceiling. Auto-range is the practical choice this wide.
+      return 1.0e9;
+    case Img::DTYPE_FLOAT32:
+    case Img::DTYPE_FLOAT64:
+      // Floats have no fixed full scale; 1.0 fits the common normalized case
+      // and is just a starting point the operator can override.
+      return 1.0;
+    default:
+      // Unknown dtype: assume the widest common integer depth so 16-bit data
+      // (the deepest the driver fleet produces) is not clipped.
+      return 65535.0;
+  }
+}
+
 std::optional<WaterfallRow> combine_rows(
   const std::optional<WaterfallRow> & port,
   const std::optional<WaterfallRow> & starboard)

@@ -35,6 +35,8 @@
 
 #include <rqt_gui_cpp/plugin.h>
 
+#include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <string>
 
@@ -98,9 +100,12 @@ private:
   void subscribe(
     rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr & sub,
     const std::string & topic, bool is_port);
-  void on_port_msg(marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr msg);
-  void on_starboard_msg(marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr msg);
+  void on_port_msg(
+    marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr msg, uint64_t sub_id);
+  void on_starboard_msg(
+    marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr msg, uint64_t sub_id);
   void post_row(const WaterfallRow & row);
+  void maybe_seed_manual_range(uint32_t dtype);
   void update_active_sides();
 
   QPointer<WaterfallWidget> widget_;
@@ -133,6 +138,22 @@ private:
   SingleBeamExtractor extractor_;
   PingPairer pairer_;
   std::mutex pairer_mutex_;  ///< guards pairer_ across the executor/GUI threads
+
+  /// Set once the manual-range spin default has been seeded from the first
+  /// message's dtype since the last (re)subscribe (see maybe_seed_manual_range).
+  /// Reset in subscribe() so a newly selected source re-seeds. Atomic because
+  /// the port and starboard callbacks both touch it from the executor thread.
+  std::atomic<bool> range_seeded_{false};
+
+  /// Monotonic per-side subscription identifiers. subscribe() bumps the side's
+  /// id whenever it (re)creates or clears that side's subscription, and stamps
+  /// the new id into the message callback. A callback whose id no longer matches
+  /// is from a replaced subscription (an in-flight message that outlived a topic
+  /// switch) and is ignored — without this, such a stray message could seed the
+  /// manual range from the wrong source. Atomic: written on the GUI thread
+  /// (subscribe), read on the executor thread (callbacks).
+  std::atomic<uint64_t> port_sub_id_{0};
+  std::atomic<uint64_t> starboard_sub_id_{0};
 };
 
 }  // namespace rqt_sonar_waterfall

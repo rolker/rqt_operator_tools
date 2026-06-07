@@ -230,7 +230,10 @@ QWidget * SonarWaterfallPlugin::build_controls_bar(QWidget * parent)
   h->addWidget(new QLabel(tr("Max:"), bar));
   range_max_spin_ = new QDoubleSpinBox(bar);
   range_max_spin_->setRange(-1.0e9, 1.0e9);
-  range_max_spin_->setValue(32767.0);
+  // Pre-message fallback is the widest common depth (16-bit) so manual mode
+  // never clips before any data arrives; maybe_seed_manual_range() refines this
+  // to the source's exact full scale (e.g. 255 for 8-bit) on the first message.
+  range_max_spin_->setValue(65535.0);
   range_max_spin_->setEnabled(false);
   h->addWidget(range_max_spin_);
 
@@ -444,6 +447,13 @@ void SonarWaterfallPlugin::subscribe(
   const std::string & topic, bool is_port)
 {
   sub.reset();
+  // Changing a subscription invalidates the prior source: bump this side's id so
+  // any in-flight callback from the old subscription is recognized as stale, and
+  // clear range_seeded_ so the next message (from whichever source) re-seeds the
+  // manual-range default for the new configuration.
+  auto & sub_id = is_port ? port_sub_id_ : starboard_sub_id_;
+  const uint64_t id = sub_id.fetch_add(1) + 1;
+  range_seeded_.store(false);
   if (topic.empty() || !node_) {
     return;
   }
@@ -451,17 +461,21 @@ void SonarWaterfallPlugin::subscribe(
   if (is_port) {
     sub = node_->create_subscription<RawSonarImage>(
       topic, rclcpp::SensorDataQoS(),
-      [this](RawSonarImage::ConstSharedPtr msg) {on_port_msg(msg);});
+      [this, id](RawSonarImage::ConstSharedPtr msg) {on_port_msg(msg, id);});
   } else {
     sub = node_->create_subscription<RawSonarImage>(
       topic, rclcpp::SensorDataQoS(),
-      [this](RawSonarImage::ConstSharedPtr msg) {on_starboard_msg(msg);});
+      [this, id](RawSonarImage::ConstSharedPtr msg) {on_starboard_msg(msg, id);});
   }
 }
 
 void SonarWaterfallPlugin::on_port_msg(
-  marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr msg)
+  marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr msg, uint64_t sub_id)
 {
+  if (sub_id != port_sub_id_.load()) {
+    return;  // message from a replaced subscription; ignore.
+  }
+  maybe_seed_manual_range(msg->image.dtype);
   const auto row = extractor_.extract(*msg);
   if (!row) {
     return;
@@ -477,8 +491,12 @@ void SonarWaterfallPlugin::on_port_msg(
 }
 
 void SonarWaterfallPlugin::on_starboard_msg(
-  marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr msg)
+  marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr msg, uint64_t sub_id)
 {
+  if (sub_id != starboard_sub_id_.load()) {
+    return;  // message from a replaced subscription; ignore.
+  }
+  maybe_seed_manual_range(msg->image.dtype);
   const auto row = extractor_.extract(*msg);
   if (!row) {
     return;
@@ -506,6 +524,37 @@ void SonarWaterfallPlugin::post_row(const WaterfallRow & row)
     [target, copy]() {
       if (target) {
         target->add_row(copy);
+      }
+    },
+    Qt::QueuedConnection);
+}
+
+void SonarWaterfallPlugin::maybe_seed_manual_range(uint32_t dtype)
+{
+  // Seed the manual-range spin default to the source's full scale once per
+  // (re)subscribe, on the first message of whichever side arrives first; after
+  // that the value is the operator's to set. exchange() makes the "first wins"
+  // decision atomic across the racing port/starboard callbacks. Callers gate
+  // this on a current subscription id (see on_*_msg), so a stale source can't
+  // reach here. Ordering of the queued setValue below relies on rqt spinning the
+  // node on a single executor thread (callbacks serialized, enqueued FIFO).
+  if (range_seeded_.exchange(true)) {
+    return;
+  }
+  const double full_scale = default_full_scale(dtype);
+  QPointer<QDoubleSpinBox> spin = range_max_spin_;
+  if (!spin) {
+    return;
+  }
+  // Hop to the GUI thread before touching the widget (callbacks run on the
+  // executor thread). The spin is disabled while auto-range is on, so updating
+  // its value here only changes what the operator sees when they switch to
+  // manual mode; auto-range rendering is unaffected.
+  QMetaObject::invokeMethod(
+    spin.data(),
+    [spin, full_scale]() {
+      if (spin) {
+        spin->setValue(full_scale);
       }
     },
     Qt::QueuedConnection);
