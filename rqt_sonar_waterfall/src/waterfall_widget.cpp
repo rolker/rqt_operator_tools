@@ -99,6 +99,9 @@ void WaterfallWidget::set_auto_range(bool enabled)
 
 void WaterfallWidget::set_manual_range(float min, float max)
 {
+  // Selecting a manual range implies leaving auto-range, otherwise
+  // rebuild_image() would keep overriding min/max from the data.
+  auto_range_ = false;
   manual_min_ = min;
   manual_max_ = max;
   rebuild_image();
