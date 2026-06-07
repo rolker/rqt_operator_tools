@@ -96,7 +96,7 @@ R1 resolved (manual-range clears auto_range_ at waterfall_widget.cpp:104, python
 R1/R2 findings all resolved in the prior entries. R3 reviews the cleaned-up control panel.
 
 ### Findings
-- [ ] (suggestion, Copilot R3) ControlPanel::apply() refreshes only the value label, not the editable widget -> input column goes stale vs device state after first update. Refresh the input from item.value when it is NOT focused (don't clobber active edits) — `src/control_panel.cpp:128-136`
+- [x] (suggestion, Copilot R3) ControlPanel::apply() refreshes only the value label, not the editable widget -> input column goes stale vs device state after first update. Refresh the input from item.value when it is NOT focused (don't clobber active edits) — `src/control_panel.cpp:128-136` (fixed in `1ee667b`: per-row set_value() setter + hasFocus() guard + regression test; 200 tests pass)
 
 ### False positives
 - (Copilot R3) FLOAT_WITH_AUTO "could publish empty string on editingFinished" — `src/control_panel.cpp:81-99`: the QLineEdit has a QDoubleValidator; Qt suppresses editingFinished when content isn't Acceptable, and empty is Intermediate, so focus-out/Enter on empty does not emit. Blank-for-"auto" is intentional (auto lives on the button); the input-not-reflecting-state residual is subsumed by the apply() finding above.
