@@ -152,10 +152,18 @@ std::pair<float, float> auto_range(const std::deque<WaterfallRow> & rows)
   float hi = std::numeric_limits<float>::lowest();
   bool any = false;
   for (const auto & row : rows) {
-    for (float v : row.intensities) {
-      lo = std::min(lo, v);
-      hi = std::max(hi, v);
+    if (row.has_intensity_range) {
+      // Per-row extremes cached at buffer entry: two numbers, no per-sample scan.
+      lo = std::min(lo, row.min_intensity);
+      hi = std::max(hi, row.max_intensity);
       any = true;
+    } else {
+      // Fallback for rows constructed directly (e.g. unit tests).
+      for (float v : row.intensities) {
+        lo = std::min(lo, v);
+        hi = std::max(hi, v);
+        any = true;
+      }
     }
   }
   if (!any) {

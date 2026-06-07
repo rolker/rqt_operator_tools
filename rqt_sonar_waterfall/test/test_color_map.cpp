@@ -163,3 +163,19 @@ TEST(AutoRange, SpansAllSamples)
   EXPECT_FLOAT_EQ(pr.first, -2.0f);
   EXPECT_FLOAT_EQ(pr.second, 10.0f);
 }
+
+TEST(AutoRange, UsesCachedExtremesWithoutScanning)
+{
+  // When a row carries cached extremes, auto_range must read those two numbers
+  // rather than rescanning intensities. Set them to values the samples don't
+  // contain to prove the cache (not the samples) is consulted.
+  WaterfallRow r;
+  r.intensities = {5.0f, 6.0f};      // would give 5..6 if scanned
+  r.min_intensity = -1.0f;
+  r.max_intensity = 20.0f;
+  r.has_intensity_range = true;
+  std::deque<WaterfallRow> rows{r};
+  auto pr = auto_range(rows);
+  EXPECT_FLOAT_EQ(pr.first, -1.0f);
+  EXPECT_FLOAT_EQ(pr.second, 20.0f);
+}

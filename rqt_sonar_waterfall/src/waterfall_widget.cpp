@@ -54,7 +54,12 @@ void WaterfallWidget::add_row(const WaterfallRow & row)
   if (frozen_) {
     return;
   }
-  buffer_.push(row);
+  // Cache the row's intensity extremes once, so the buffer-wide auto-range scans
+  // two numbers per row (O(rows)) instead of every sample (O(rows x samples)).
+  WaterfallRow stored = row;
+  std::tie(stored.min_intensity, stored.max_intensity) = row_min_max(stored);
+  stored.has_intensity_range = !stored.intensities.empty();
+  buffer_.push(std::move(stored));
   // Steady state is O(width) per ping: scroll the cached image and paint only
   // the new top row. A full O(rows x width) recolor every ping was the source
   // of the observed slow-down as the buffer filled (PR #41 review).
@@ -165,12 +170,16 @@ bool WaterfallWidget::try_incremental_add(const WaterfallRow & row)
     return false;  // the new row is wider than the cached image -> full rebuild
   }
 
-  float min = range_lo_;
-  float max = range_hi_;
+  const float min = range_lo_;
+  const float max = range_hi_;
   if (auto_range_) {
-    const auto [lo, hi] = row_min_max(row);
-    if (lo < range_lo_ || hi > range_hi_) {
-      return false;  // range expanded -> every existing pixel is stale
+    // O(rows) thanks to the per-row cached extremes. If the buffer's exact range
+    // changed at all -- a brighter ping arrived, or the row holding an extreme
+    // just scrolled off -- every cached pixel is stale, so fall back to a full
+    // recolor. The common case (range steady) stays on the cheap path.
+    const auto [lo, hi] = auto_range(rows);
+    if (lo != range_lo_ || hi != range_hi_) {
+      return false;
     }
   }
 

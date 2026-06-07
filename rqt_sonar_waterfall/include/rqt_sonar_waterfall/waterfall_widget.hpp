@@ -99,9 +99,10 @@ private:
   ColorMap color_map_;
   QImage image_;          ///< cached render of the whole buffer
   double range_max_ = 0.0;  ///< slant range of the newest row, meters (0 = unknown)
-  // Intensity range currently baked into image_. In auto-range mode it only
-  // expands incrementally (a brighter ping forces a full rebuild); the exact
-  // buffer min/max is restored on every full rebuild. In manual mode it mirrors
+  // Intensity range currently baked into image_. In auto-range mode it tracks
+  // the buffer's exact min/max: each ping recomputes it in O(rows) from the
+  // per-row cached extremes, and any change (a brighter ping, or an extreme
+  // scrolling off) forces a full recolor. In manual mode it mirrors
   // manual_min_/manual_max_.
   float range_lo_ = 0.0f;
   float range_hi_ = 1.0f;

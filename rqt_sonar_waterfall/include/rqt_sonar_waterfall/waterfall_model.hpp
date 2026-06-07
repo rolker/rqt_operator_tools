@@ -55,6 +55,14 @@ struct WaterfallRow
 
   /// Acquisition time in seconds since the epoch. 0 if unknown.
   double stamp = 0.0;
+
+  /// Cached intensity extremes over `intensities`, populated once when the row
+  /// enters the display buffer. They let auto-range scan two numbers per row
+  /// (O(rows)) instead of every sample (O(rows x samples)) on each ping.
+  /// `has_intensity_range` is false until computed, and for an empty row.
+  float min_intensity = 0.0f;
+  float max_intensity = 0.0f;
+  bool has_intensity_range = false;
 };
 
 /// Decode a SonarImageData blob into per-sample float values.
