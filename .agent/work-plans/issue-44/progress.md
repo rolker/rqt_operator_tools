@@ -44,8 +44,11 @@ Closes #44. Part of rolker/unh_marine_autonomy#137.
 **CI**: copilot-pull-request-reviewer success (package GTests 200/0 locally)
 
 ### Findings
-- [ ] (low, Copilot R1) color_map.hpp full-includes marine_colormap/palette.hpp but ColorMap only stores a Palette* -> forward-declare in header, keep full include in .cpp (build hygiene) — `color_map.hpp:37`
-- [ ] (low/defensive, Copilot R1) lookup() raw-derefs palette_ (can't be null: set from built-in names via shared_palette) — add a null-fallback, consistent with the rviz#5 guard — `color_map.cpp:109`
+- [x] (low, Copilot R1) color_map.hpp full-includes marine_colormap/palette.hpp but ColorMap only stores a Palette* -> forward-declare in header, keep full include in .cpp (build hygiene) — `color_map.hpp:37`
+- [x] (low/defensive, Copilot R1) lookup() raw-derefs palette_ (can't be null: set from built-in names via shared_palette) — add a null-fallback, consistent with the rviz#5 guard — `color_map.cpp:109`
 
 ### False positives
 - (Copilot R1) scale_intensity degenerate range "now relies on normalize()" — `color_map.cpp`: normalize() returns 0 when !(hi>lo), so scale_intensity returns 0 for max<=min; the DegenerateRangeIsZero test (scale_intensity(5,10,10)==0) passes. Contract preserved + covered.
+
+### Resolution
+- Both addressed in the follow-up commit: forward-declared Palette in the header, guarded the palette_ deref. colcon test 200/0.
