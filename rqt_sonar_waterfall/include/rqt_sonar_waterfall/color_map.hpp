@@ -36,6 +36,11 @@
 
 #include "rqt_sonar_waterfall/waterfall_model.hpp"
 
+namespace marine_colormap
+{
+class Palette;  // full definition pulled into color_map.cpp; only a pointer here
+}  // namespace marine_colormap
+
 namespace rqt_sonar_waterfall
 {
 
@@ -62,6 +67,11 @@ enum class ColorMapType
 };
 
 /// Maps a normalized intensity in [0, 1] to an Rgb color via a built-in palette.
+///
+/// The palette data and interpolation are sourced from the shared
+/// `marine_colormap` library (single source of truth across rqt/rviz/CAMP); this
+/// is a thin adapter that exposes them through the rqt-side `Rgb`/`ColorMapType`
+/// API the waterfall widget already uses.
 class ColorMap
 {
 public:
@@ -74,8 +84,8 @@ public:
   Rgb lookup(float t) const;
 
 private:
-  ColorMapType type_;
-  std::vector<Rgb> stops_;
+  ColorMapType type_ = ColorMapType::Grayscale;
+  const marine_colormap::Palette * palette_ = nullptr;
 };
 
 /// Number of built-in palettes (the selector lists them in enum order).

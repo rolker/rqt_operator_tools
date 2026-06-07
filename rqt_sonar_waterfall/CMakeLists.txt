@@ -16,6 +16,7 @@ find_package(qt_gui_cpp REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(marine_acoustic_msgs REQUIRED)
 find_package(marine_radar_control_msgs REQUIRED)
+find_package(marine_colormap REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(Qt5 COMPONENTS Widgets REQUIRED)
 
@@ -66,6 +67,7 @@ ament_target_dependencies(${PROJECT_NAME}
   pluginlib
   marine_acoustic_msgs
   marine_radar_control_msgs
+  marine_colormap
   ament_index_cpp
 )
 
@@ -136,13 +138,13 @@ if(BUILD_TESTING)
     src/color_map.cpp
   )
   target_include_directories(test_color_map PRIVATE include)
-  ament_target_dependencies(test_color_map marine_acoustic_msgs)
+  ament_target_dependencies(test_color_map marine_acoustic_msgs marine_colormap)
 
   ament_add_gtest(test_waterfall_widget
     test/test_waterfall_widget.cpp
   )
   target_include_directories(test_waterfall_widget PRIVATE include)
-  ament_target_dependencies(test_waterfall_widget marine_acoustic_msgs)
+  ament_target_dependencies(test_waterfall_widget marine_acoustic_msgs marine_colormap)
   # Link the main library so the widget's MOC metaobjects are available.
   target_link_libraries(test_waterfall_widget ${PROJECT_NAME} Qt5::Widgets)
   set_tests_properties(test_waterfall_widget PROPERTIES
