@@ -32,6 +32,7 @@
 #include <QString>  // NOLINT(build/include_order)
 #include <QWidget>
 
+#include <functional>
 #include <map>
 #include <string>
 
@@ -47,8 +48,9 @@ namespace rqt_sonar_waterfall
 ///
 /// Ported from rqt_marine_radar: a widget is created the first time a control
 /// name is seen (FLOAT -> line edit, FLOAT_WITH_AUTO -> line edit + auto button,
-/// ENUM -> combo box); subsequent updates only refresh the displayed value, so a
-/// periodic state stream never stomps a control the operator is editing. Editing
+/// ENUM -> combo box); subsequent updates refresh the displayed value and the
+/// input widget unless it is focused, so a periodic state stream never stomps a
+/// control the operator is editing. Editing
 /// a control emits controlChanged(key, value); the owner turns that into a
 /// RadarControlValue on the device's change-state topic. The panel itself does
 /// no ROS I/O, so it is unit-testable without a node.
@@ -80,10 +82,13 @@ private:
     QLabel * name = nullptr;
     QLabel * value = nullptr;
     QWidget * input = nullptr;
+    // Refreshes the input widget from a device value, skipping when the widget
+    // is focused so an in-progress edit is never stomped. Set by make_input().
+    std::function<void(const std::string &)> set_value;
   };
 
-  QWidget * make_input(
-    const marine_radar_control_msgs::msg::RadarControlItem & item);
+  void make_input(
+    const marine_radar_control_msgs::msg::RadarControlItem & item, Row & row);
 
   QGridLayout * grid_;
   std::map<std::string, Row> rows_;

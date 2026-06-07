@@ -53,8 +53,8 @@ ControlPanel::ControlPanel(QWidget * parent)
 
 ControlPanel::~ControlPanel() = default;
 
-QWidget * ControlPanel::make_input(
-  const marine_radar_control_msgs::msg::RadarControlItem & item)
+void ControlPanel::make_input(
+  const marine_radar_control_msgs::msg::RadarControlItem & item, Row & row)
 {
   using Item = marine_radar_control_msgs::msg::RadarControlItem;
   const QString key = QString::fromStdString(item.name);
@@ -76,7 +76,14 @@ QWidget * ControlPanel::make_input(
         connect(
           edit, &QLineEdit::editingFinished, this,
           [this, key, edit]() {emit controlChanged(key, edit->text());});
-        return edit;
+        row.input = edit;
+        row.set_value = [edit](const std::string & value) {
+            // Track device state, but never stomp an in-progress edit.
+            if (!edit->hasFocus()) {
+              edit->setText(QString::fromStdString(value));
+            }
+          };
+        return;
       }
     case Item::CONTROL_TYPE_FLOAT_WITH_AUTO: {
         auto * container = new QWidget();
@@ -103,7 +110,18 @@ QWidget * ControlPanel::make_input(
           auto_button, &QPushButton::clicked, this,
           [this, key]() {emit controlChanged(key, QStringLiteral("auto"));});
         layout->addWidget(auto_button);
-        return container;
+        row.input = container;
+        row.set_value = [edit](const std::string & value) {
+            if (!edit->hasFocus()) {
+              // "auto" is shown by the button, not the numeric field.
+              if (value != "auto") {
+                edit->setText(QString::fromStdString(value));
+              } else {
+                edit->clear();
+              }
+            }
+          };
+        return;
       }
     case Item::CONTROL_TYPE_ENUM: {
         auto * combo = new QComboBox();
@@ -117,11 +135,24 @@ QWidget * ControlPanel::make_input(
         connect(
           combo, QOverload<int>::of(&QComboBox::activated), this,
           [this, key, combo](int index) {emit controlChanged(key, combo->itemText(index));});
-        return combo;
+        row.input = combo;
+        row.set_value = [combo](const std::string & value) {
+            // setCurrentText does not emit activated(), so no spurious publish.
+            if (!combo->hasFocus()) {
+              combo->setCurrentText(QString::fromStdString(value));
+            }
+          };
+        return;
       }
-    default:
-      // Unknown control type: show the value read-only.
-      return new QLabel(QString::fromStdString(item.value));
+    default: {
+        // Unknown control type: show the value read-only.
+        auto * label = new QLabel(QString::fromStdString(item.value));
+        row.input = label;
+        row.set_value = [label](const std::string & value) {
+            label->setText(QString::fromStdString(value));
+          };
+        return;
+      }
   }
 }
 
@@ -132,6 +163,10 @@ void ControlPanel::apply(
     auto it = rows_.find(item.name);
     if (it != rows_.end()) {
       it->second.value->setText(QString::fromStdString(item.value));
+      // Keep the editable widget in sync with device state (skips when focused).
+      if (it->second.set_value) {
+        it->second.set_value(item.value);
+      }
       continue;
     }
     Row row;
@@ -139,7 +174,7 @@ void ControlPanel::apply(
       QString::fromStdString(item.label.empty() ? item.name : item.label);
     row.name = new QLabel(label);
     row.value = new QLabel(QString::fromStdString(item.value));
-    row.input = make_input(item);
+    make_input(item, row);
     // Rows are only appended (or cleared wholesale), so size == next free row.
     const int r = static_cast<int>(rows_.size());
     grid_->addWidget(row.name, r, 0);

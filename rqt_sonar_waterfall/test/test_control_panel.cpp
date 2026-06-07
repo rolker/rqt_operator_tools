@@ -120,6 +120,23 @@ TEST_F(ControlPanelTest, ReapplyUpdatesValuesWithoutNewRows)
   EXPECT_EQ(panel.input_for("gain"), input_before);   // same widget reused
 }
 
+TEST_F(ControlPanelTest, ReapplyRefreshesUnfocusedInput)
+{
+  // An unfocused input widget should track device state across re-applies (it is
+  // not focused in the offscreen test), so it doesn't show stale values.
+  ControlPanel panel;
+  RadarControlSet set;
+  set.items = {float_item("gain", "5")};
+  panel.apply(set);
+  auto * edit = qobject_cast<QLineEdit *>(panel.input_for("gain"));
+  ASSERT_NE(edit, nullptr);
+  EXPECT_EQ(edit->text(), QString("5"));
+
+  set.items = {float_item("gain", "8")};
+  panel.apply(set);
+  EXPECT_EQ(edit->text(), QString("8"));  // input followed the device update
+}
+
 TEST_F(ControlPanelTest, FloatEditEmitsControlChanged)
 {
   ControlPanel panel;
