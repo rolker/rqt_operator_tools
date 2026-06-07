@@ -37,3 +37,24 @@ issue: 39
 ### False positives
 - (Copilot) README/package.xml control panel "not implemented" / `marine_radar_control_msgs` "unused" (2 comments) — implemented by `a4023eb` (control_panel.cpp/hpp + RadarControlSet/Value sub/pub + tests); stale only because the branch wasn't pushed to the PR
 - (Copilot) `post_row()` "guard target before invokeMethod" — guard already present: `widget_` is `QPointer` (auto-nulls), `post_row` early-returns on `!widget_`, and the queued lambda re-checks `if (target)` before `add_row`; a null context to the functor+QueuedConnection overload is a benign no-op
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-07 10:19 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #41 at `91a20c4`
+**Sources**: 2 at head (Copilot R2 @ `91a20c4`, rolker conversation comment) + prior Integrated Review R1 @ `45fc70b`
+**Cross-source confirmations**: 1
+**CI**: copilot-pull-request-reviewer success; no build/test gate on PR — package has GTest tests, run colcon test locally
+
+R1 resolved (manual-range clears auto_range_ at waterfall_widget.cpp:104, python3 shebang, synthetic rate guard; R1 post_row FP confirmed guarded at plugin.cpp:507). R2 reviews newer code (control panel, row extractor, topic filter, render path).
+
+### Findings
+- [ ] (cross-confirmed: Copilot R2 + rolker conversation) `add_row()` -> `rebuild_image()` recolors every buffered row x full width on every ping (O(h*w)/ping, h up to history cap 600/5000); matches rolker's observed slow-down/lock-up as the buffer fills. Fix = incremental render (shift cached QImage, draw only new row; full rebuild only on setting/width/range change; handle auto-range recompute + variable width) — `src/waterfall_widget.cpp:50,110`
+- [ ] (low-med, Copilot R2) control inputs not initialized from item.value: FLOAT/FLOAT_WITH_AUTO QLineEdit blank, ENUM QComboBox defaults to enum[0] — contradicts actual control state (value IS shown in adjacent value label; validator + activated-on-user-action prevent spurious empty publish, so correctness/UX not data loss) — `src/control_panel.cpp:76,99,111`
+- [ ] (low, Copilot R2) range_max uses declared samples_per_beam even when fewer decoded (truncated data) -> overstated slant range; use min(declared, decoded) — `src/row_extractor.cpp:60`
+- [ ] (low, Copilot R2) derive_change_topic() strips trailing "state" substring not "/state" segment (/sonar/estate -> /sonar/echange_state); match final /state segment — `src/topic_filter.cpp:77`
+
+### False positives
+- none this round (R1 post_row "guard target" FP not re-raised; guard present at plugin.cpp:507)
