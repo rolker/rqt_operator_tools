@@ -65,18 +65,20 @@ R1 resolved (manual-range clears auto_range_ at waterfall_widget.cpp:104, python
   O(width) incremental path — scroll the cached `QImage` down one row (memmove at
   capacity, memcpy during growth) and paint only the new top row via a shared
   `paint_row()`; `rebuild_image()` (full recolor) runs only on first row, view-setting
-  change, width growth, history change, or an auto-range expansion. Auto-range is now
-  sticky/expanding between full rebuilds (documented in the header) — a brighter ping
-  forces one full recolor; the exact buffer min/max is restored on every full rebuild.
+  change, width growth, history change, or an auto-range change.
+- **Auto-range stays exact and cheap (per Roland):** each row caches its own
+  min/max at buffer entry (`WaterfallRow.min_intensity/max_intensity`), so the
+  buffer-wide `auto_range()` reads two numbers per row — O(rows), not O(rows x
+  samples). add_row recomputes the exact range each ping; any change (brighter ping
+  OR an extreme scrolling off) triggers one full recolor, so the range both expands
+  and contracts correctly. No sticky-gain approximation.
 - **Control inputs seeded from `item.value`:** FLOAT/FLOAT_WITH_AUTO `QLineEdit`
   (skipping "auto"), ENUM `QComboBox` via `setCurrentText` (no `activated()` -> no
   spurious publish).
 - **range_max clamped** to `min(declared samples_per_beam, decoded count)`.
 - **derive_change_topic** matches a final `/state` segment, not any trailing
   "state" substring.
-- Added 2 regression tests (truncated-range clamp, `/sonar/estate` segment). Widget
-  smoke tests (5/0) and control-panel tests (5/0) confirm the render + input changes.
-- `colcon test rqt_sonar_waterfall`: **198 tests, 0 failures** (27 skipped = linters).
-- Note (low, deferred): auto-range no longer contracts when a bright ping scrolls
-  off until the next full rebuild — acceptable sticky-gain behavior for a backscatter
-  waterfall; flagged here for visibility.
+- Added 3 regression tests (truncated-range clamp, `/sonar/estate` segment,
+  auto_range honors cached extremes). Widget smoke tests (5/0) and control-panel
+  tests (5/0) confirm the render + input changes.
+- `colcon test rqt_sonar_waterfall`: **199 tests, 0 failures** (27 skipped = linters).
