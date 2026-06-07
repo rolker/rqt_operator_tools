@@ -15,7 +15,7 @@ issue: 42
 **CI**: build-and-test pass; copilot check pass
 
 ### Findings
-- [ ] (minor/clarity, Copilot) ci.yml header calls it a "build+test+lint gate" but there's no separate lint step — lint runs within `colcon test` (ament_lint_auto / py flake8+pep257); reword the comment for accuracy — `.github/workflows/ci.yml:4`
+- [x] (minor/clarity, Copilot) ci.yml header calls it a "build+test+lint gate" but there's no separate lint step — lint runs within `colcon test` (ament_lint_auto / py flake8+pep257); reword the comment for accuracy — `.github/workflows/ci.yml:4`
 
 ### False positives
 - None.

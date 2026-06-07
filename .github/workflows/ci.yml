@@ -1,7 +1,8 @@
 # CI for rqt_operator_tools. See ADR-0004/0005 (enforcement hierarchy) in the
-# workspace repo for the rationale behind the build+test+lint gate: a
+# workspace repo for the rationale behind this build+test gate: a
 # framework-native per-repo check for fast feedback, backed by the workspace
-# `make build` integration gate.
+# `make build` integration gate. Lint is not a separate step -- it runs within
+# `colcon test` (ament_lint_auto for CMake packages, flake8/pep257 for Python).
 
 name: CI
 
