@@ -34,9 +34,12 @@
 #include <utility>
 #include <vector>
 
-#include <marine_colormap/palette.hpp>
-
 #include "rqt_sonar_waterfall/waterfall_model.hpp"
+
+namespace marine_colormap
+{
+class Palette;  // full definition pulled into color_map.cpp; only a pointer here
+}  // namespace marine_colormap
 
 namespace rqt_sonar_waterfall
 {

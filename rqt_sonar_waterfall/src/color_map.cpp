@@ -110,6 +110,11 @@ void ColorMap::set_type(ColorMapType type)
 
 Rgb ColorMap::lookup(float t) const
 {
+  // palette_ is set from a built-in name via shared_palette() and never null in
+  // practice; guard defensively so a lib change can't crash the render path.
+  if (palette_ == nullptr) {
+    return Rgb{0, 0, 0};
+  }
   // sample() clamps t to [0, 1] and interpolates; to_rgba8 quantizes. Drop the
   // (always-opaque) alpha to the rqt RGB888 pixel type.
   const marine_colormap::Rgba8 c = marine_colormap::to_rgba8(palette_->sample(t));
