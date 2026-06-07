@@ -1,0 +1,93 @@
+# CI for rqt_operator_tools. See ADR-0004/0005 (enforcement hierarchy) in the
+# workspace repo for the rationale behind the build+test+lint gate: a
+# framework-native per-repo check for fast feedback, backed by the workspace
+# `make build` integration gate.
+
+name: CI
+
+on:
+  push:
+    branches: [jazzy]
+  pull_request:
+    branches: [jazzy]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    container:
+      image: ros:jazzy-ros-core
+    env:
+      # rqt_sonar_waterfall ships an offscreen Qt widget smoke test; CI has no
+      # display, so force the offscreen QPA platform for the whole job.
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Update apt
+        run: apt-get update
+
+      - name: Install ros dev tools + git
+        run: DEBIAN_FRONTEND=noninteractive apt-get -y install ros-dev-tools git
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Init rosdep
+        run: |
+          if [ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]; then
+            rosdep init
+          fi
+
+      - name: Update rosdep
+        run: rosdep update
+
+      - name: Create workspace
+        run: mkdir -p ../ws/src && ln -s "$GITHUB_WORKSPACE" ../ws/src/rqt_operator_tools
+
+      # marine_radar_control_msgs (needed by rqt_sonar_waterfall's dynamic
+      # control panel) is a source sibling, not a rosdep/binary package. Clone
+      # it and prune the repo down to that one interface package so rosdep and
+      # colcon stay light — the workspace `make build` is the full integration
+      # gate; this per-repo CI is the lighter-weight check.
+      - name: Clone marine_radar_control_msgs source dependency
+        run: |
+          git clone --depth 1 -b jazzy \
+            https://github.com/rolker/unh_marine_radar.git ../ws/src/unh_marine_radar
+          cd ../ws/src/unh_marine_radar
+          # Keep only marine_radar_control_msgs; drop the heavier radar packages.
+          find . -maxdepth 1 -mindepth 1 -type d \
+            ! -name marine_radar_control_msgs ! -name '.git' -exec rm -rf {} +
+
+      - name: Install ROS dependencies
+        working-directory: ../ws
+        run: >
+          DEBIAN_FRONTEND=noninteractive
+          rosdep install --from-paths src --ignore-src -r -y
+
+      - name: Build
+        working-directory: ../ws
+        run: >
+          bash -c 'source /opt/ros/jazzy/setup.bash &&
+          colcon build --cmake-args -DBUILD_TESTING=ON'
+
+      # Test only this repo's packages (not the cloned msg sibling). The package
+      # list is derived from the repo path so newly added packages are covered
+      # automatically.
+      - name: Test
+        working-directory: ../ws
+        run: >
+          bash -c 'source /opt/ros/jazzy/setup.bash &&
+          source install/setup.bash &&
+          PKGS=$(colcon list --names-only --base-paths "$GITHUB_WORKSPACE" | tr "\n" " ") &&
+          echo "Testing packages: $PKGS" &&
+          colcon test --packages-select $PKGS
+          --event-handlers console_direct+
+          --return-code-on-test-failure'
+
+      - name: Test results
+        working-directory: ../ws
+        run: >
+          bash -c 'source /opt/ros/jazzy/setup.bash &&
+          colcon test-result --verbose'
+        if: always()
