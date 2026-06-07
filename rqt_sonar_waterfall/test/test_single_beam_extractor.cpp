@@ -100,6 +100,19 @@ TEST(SingleBeamExtractor, RangeFromSoundSpeedAndRate)
   EXPECT_DOUBLE_EQ(row->range_max, 100.0);
 }
 
+TEST(SingleBeamExtractor, RangeClampedToDecodedSamplesWhenTruncated)
+{
+  rqt_sonar_waterfall::SingleBeamExtractor ex;
+  // 500 samples actually decode, but the header over-declares 1000. The range
+  // axis must follow the decoded count (50 m), not the inflated declaration.
+  auto msg = make_ping(1, 500, /*sample_rate=*/7500.0f, /*sound_speed=*/1500.0f);
+  msg.samples_per_beam = 1000;
+  auto row = ex.extract(msg);
+  ASSERT_TRUE(row.has_value());
+  EXPECT_EQ(row->intensities.size(), 500u);
+  EXPECT_DOUBLE_EQ(row->range_max, 50.0);
+}
+
 TEST(SingleBeamExtractor, RangeUnknownWhenRateZero)
 {
   rqt_sonar_waterfall::SingleBeamExtractor ex;

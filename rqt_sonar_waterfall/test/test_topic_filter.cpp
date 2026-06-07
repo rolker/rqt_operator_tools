@@ -106,6 +106,13 @@ TEST(DeriveChangeTopic, NonStateSuffixGetsAppended)
   EXPECT_EQ(derive_change_topic("/sonar/controls"), "/sonar/controls/change_state");
 }
 
+TEST(DeriveChangeTopic, TrailingStateSubstringIsNotASegment)
+{
+  // "estate" ends in "state" but is not a "/state" segment: it must be appended,
+  // not rewritten to "/sonar/echange_state".
+  EXPECT_EQ(derive_change_topic("/sonar/estate"), "/sonar/estate/change_state");
+}
+
 TEST(DeriveChangeTopic, EmptyYieldsEmpty)
 {
   EXPECT_EQ(derive_change_topic(""), "");

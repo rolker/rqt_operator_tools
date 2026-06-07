@@ -33,6 +33,7 @@
 #include <QWidget>
 
 #include <cstddef>
+#include <utility>
 
 #include "rqt_sonar_waterfall/color_map.hpp"
 #include "rqt_sonar_waterfall/waterfall_buffer.hpp"
@@ -80,12 +81,30 @@ protected:
   void paintEvent(QPaintEvent * event) override;
 
 private:
+  /// Full O(rows x width) recolor of the whole buffer. Used on first row and
+  /// whenever the cheap incremental path can't stay correct (view-setting
+  /// change, width growth, history change, or an auto-range expansion).
   void rebuild_image();
+  /// Cheap path for a new ping: scroll image_ down one row and paint only the
+  /// new top row. Returns false (caller falls back to rebuild_image) when it
+  /// can't preserve correctness.
+  bool try_incremental_add(const WaterfallRow & row);
+  /// Color one scanline of `img` (row 0 = top) from `row`, scaling intensities
+  /// into [min, max] with the current gain/contrast/color map.
+  void paint_row(QImage & img, int y, const WaterfallRow & row, float min, float max) const;
+  /// Min/max intensity of a single row (empty -> {0, 1}).
+  static std::pair<float, float> row_min_max(const WaterfallRow & row);
 
   WaterfallBuffer buffer_;
   ColorMap color_map_;
   QImage image_;          ///< cached render of the whole buffer
   double range_max_ = 0.0;  ///< slant range of the newest row, meters (0 = unknown)
+  // Intensity range currently baked into image_. In auto-range mode it only
+  // expands incrementally (a brighter ping forces a full rebuild); the exact
+  // buffer min/max is restored on every full rebuild. In manual mode it mirrors
+  // manual_min_/manual_max_.
+  float range_lo_ = 0.0f;
+  float range_hi_ = 1.0f;
 
   float gain_ = 1.0f;
   float contrast_ = 1.0f;

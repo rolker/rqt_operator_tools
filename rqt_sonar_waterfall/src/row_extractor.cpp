@@ -28,6 +28,9 @@
 
 #include "rqt_sonar_waterfall/row_extractor.hpp"
 
+#include <algorithm>
+#include <cstddef>
+
 #include "rqt_sonar_waterfall/waterfall_model.hpp"
 
 namespace rqt_sonar_waterfall
@@ -50,9 +53,14 @@ std::optional<WaterfallRow> SingleBeamExtractor::extract(
   WaterfallRow row;
   row.intensities = decode_samples(msg.image);
 
-  // Number of range bins: prefer the declared count, fall back to what decoded.
-  const std::size_t bins =
+  // Number of range bins for the slant-range axis. Prefer the declared count,
+  // but never exceed what actually decoded: on a truncated/short ping the
+  // declared count would overstate the displayed range.
+  std::size_t bins =
     msg.samples_per_beam > 0 ? msg.samples_per_beam : row.intensities.size();
+  if (!row.intensities.empty()) {
+    bins = std::min(bins, row.intensities.size());
+  }
   if (msg.sample_rate > 0.0f && msg.ping_info.sound_speed > 0.0f && bins > 0) {
     row.range_max = static_cast<double>(msg.ping_info.sound_speed) *
       static_cast<double>(bins) /

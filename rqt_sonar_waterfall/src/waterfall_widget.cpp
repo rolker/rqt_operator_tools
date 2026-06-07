@@ -34,6 +34,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
+#include <limits>
 #include <utility>
 
 namespace rqt_sonar_waterfall
@@ -53,7 +55,12 @@ void WaterfallWidget::add_row(const WaterfallRow & row)
     return;
   }
   buffer_.push(row);
-  rebuild_image();
+  // Steady state is O(width) per ping: scroll the cached image and paint only
+  // the new top row. A full O(rows x width) recolor every ping was the source
+  // of the observed slow-down as the buffer filled (PR #41 review).
+  if (!try_incremental_add(row)) {
+    rebuild_image();
+  }
 }
 
 void WaterfallWidget::clear()
@@ -107,6 +114,94 @@ void WaterfallWidget::set_manual_range(float min, float max)
   rebuild_image();
 }
 
+void WaterfallWidget::paint_row(
+  QImage & img, int y, const WaterfallRow & row, float min, float max) const
+{
+  const int width = img.width();
+  const std::size_t row_width = row.intensities.size();
+  uchar * line = img.scanLine(y);
+  for (int x = 0; x < width; ++x) {
+    Rgb c{0, 0, 0};
+    if (row_width > 0) {
+      std::size_t sample = 0;
+      if (row_width > 1 && width > 1) {
+        sample = static_cast<std::size_t>(
+          std::lround(static_cast<double>(x) * (row_width - 1) / (width - 1)));
+      }
+      const float t =
+        scale_intensity(row.intensities[sample], min, max, gain_, contrast_);
+      c = color_map_.lookup(t);
+    }
+    uchar * px = line + x * 3;
+    px[0] = c.r;
+    px[1] = c.g;
+    px[2] = c.b;
+  }
+}
+
+std::pair<float, float> WaterfallWidget::row_min_max(const WaterfallRow & row)
+{
+  if (row.intensities.empty()) {
+    return {0.0f, 1.0f};
+  }
+  float lo = std::numeric_limits<float>::max();
+  float hi = std::numeric_limits<float>::lowest();
+  for (float v : row.intensities) {
+    lo = std::min(lo, v);
+    hi = std::max(hi, v);
+  }
+  return {lo, hi};
+}
+
+bool WaterfallWidget::try_incremental_add(const WaterfallRow & row)
+{
+  if (image_.isNull()) {
+    return false;  // no cached image yet -> full rebuild
+  }
+
+  const auto & rows = buffer_.rows();
+  const int width = image_.width();
+  if (static_cast<int>(row.intensities.size()) > width) {
+    return false;  // the new row is wider than the cached image -> full rebuild
+  }
+
+  float min = range_lo_;
+  float max = range_hi_;
+  if (auto_range_) {
+    const auto [lo, hi] = row_min_max(row);
+    if (lo < range_lo_ || hi > range_hi_) {
+      return false;  // range expanded -> every existing pixel is stale
+    }
+  }
+
+  const int new_h = static_cast<int>(rows.size());
+  const int old_h = image_.height();
+  QImage img;
+  if (new_h == old_h) {
+    // Steady state (buffer at capacity): scroll the existing scanlines down one
+    // row, dropping the oldest, then paint the new row at the top.
+    img = std::move(image_);
+    uchar * base = img.bits();  // detaches; img is the sole owner after the move
+    const int bpl = img.bytesPerLine();
+    std::memmove(base + bpl, base, static_cast<std::size_t>(bpl) * (old_h - 1));
+  } else if (new_h == old_h + 1) {
+    // Growth phase (buffer still filling): copy the old image down one row into
+    // a taller image. A byte copy is far cheaper than recoloring every pixel.
+    img = QImage(width, new_h, QImage::Format_RGB888);
+    std::memcpy(
+      img.bits() + img.bytesPerLine(), image_.constBits(),
+      static_cast<std::size_t>(image_.bytesPerLine()) * old_h);
+  } else {
+    return false;  // height changed unexpectedly (e.g. history shrank)
+  }
+
+  paint_row(img, 0, row, min, max);
+  image_ = std::move(img);
+  range_max_ = rows.back().range_max;  // newest row
+  update();
+  return true;
+}
+
 void WaterfallWidget::rebuild_image()
 {
   const auto & rows = buffer_.rows();
@@ -131,29 +226,14 @@ void WaterfallWidget::rebuild_image()
   if (auto_range_) {
     std::tie(min, max) = auto_range(rows);
   }
+  // Remember the range baked into the cache so incremental adds can reuse it and
+  // detect when a brighter ping needs a fresh recolor.
+  range_lo_ = min;
+  range_hi_ = max;
 
   for (std::size_t y = 0; y < height; ++y) {
     // Newest row at the top; older rows scroll downward.
-    const WaterfallRow & row = rows[height - 1 - y];
-    const std::size_t row_width = row.intensities.size();
-    uchar * line = img.scanLine(static_cast<int>(y));
-    for (std::size_t x = 0; x < width; ++x) {
-      Rgb c{0, 0, 0};
-      if (row_width > 0) {
-        std::size_t sample = 0;
-        if (row_width > 1 && width > 1) {
-          sample = static_cast<std::size_t>(
-            std::lround(static_cast<double>(x) * (row_width - 1) / (width - 1)));
-        }
-        const float t =
-          scale_intensity(row.intensities[sample], min, max, gain_, contrast_);
-        c = color_map_.lookup(t);
-      }
-      uchar * px = line + x * 3;
-      px[0] = c.r;
-      px[1] = c.g;
-      px[2] = c.b;
-    }
+    paint_row(img, static_cast<int>(y), rows[height - 1 - y], min, max);
   }
 
   image_ = std::move(img);

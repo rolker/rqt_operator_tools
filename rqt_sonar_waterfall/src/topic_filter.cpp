@@ -67,11 +67,13 @@ std::string derive_change_topic(const std::string & state_topic)
   if (state_topic.empty()) {
     return std::string();
   }
-  const std::string suffix = "state";
-  if (state_topic.size() >= suffix.size() &&
-    state_topic.compare(state_topic.size() - suffix.size(), suffix.size(), suffix) == 0)
+  // Only rewrite a final "/state" path segment, not any trailing "state"
+  // substring (e.g. ".../estate" must not become ".../echange_state").
+  const std::string segment = "/state";
+  if (state_topic.size() >= segment.size() &&
+    state_topic.compare(state_topic.size() - segment.size(), segment.size(), segment) == 0)
   {
-    return state_topic.substr(0, state_topic.size() - suffix.size()) + "change_state";
+    return state_topic.substr(0, state_topic.size() - segment.size()) + "/change_state";
   }
   return state_topic + "/change_state";
 }

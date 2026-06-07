@@ -70,6 +70,9 @@ QWidget * ControlPanel::make_input(
         edit->setValidator(validator);
         edit->setToolTip(
           tr("Range: %1 to %2").arg(item.min_value).arg(item.max_value));
+        // Seed with the current value so the field reflects device state and a
+        // stray editingFinished can't publish an empty string.
+        edit->setText(QString::fromStdString(item.value));
         connect(
           edit, &QLineEdit::editingFinished, this,
           [this, key, edit]() {emit controlChanged(key, edit->text());});
@@ -86,6 +89,10 @@ QWidget * ControlPanel::make_input(
           validator->setRange(item.min_value, item.max_value, 2);
         }
         edit->setValidator(validator);
+        // Seed numeric state; an "auto" value lives on the button, not the field.
+        if (item.value != "auto") {
+          edit->setText(QString::fromStdString(item.value));
+        }
         connect(
           edit, &QLineEdit::editingFinished, this,
           [this, key, edit]() {emit controlChanged(key, edit->text());});
@@ -103,6 +110,9 @@ QWidget * ControlPanel::make_input(
         for (const auto & value : item.enums) {
           combo->addItem(QString::fromStdString(value));
         }
+        // Select the current value (no-op if absent on a non-editable combo);
+        // does not emit activated(), so it can't trigger a spurious publish.
+        combo->setCurrentText(QString::fromStdString(item.value));
         combo->setMaximumWidth(120);
         connect(
           combo, QOverload<int>::of(&QComboBox::activated), this,
