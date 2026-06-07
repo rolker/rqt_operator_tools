@@ -78,4 +78,4 @@ are untouched.
 
 **Verified**: `colcon test` — 218 tests, 0 failures, 30 skipped. The 5 widget
 tests executed (real GL render + framebuffer readback) on Mesa swrast.
-On-screen verification against the Garmin sidescan bag is a Roland-driven gate.
+On-screen verification against the Garmin sidescan bag (`bag_2026-06-05T14.07.32_sidescan_raw`, 25k pings) **PASSED** 2026-06-07 — Roland confirmed it renders correctly. PR #49 taken out of draft.
