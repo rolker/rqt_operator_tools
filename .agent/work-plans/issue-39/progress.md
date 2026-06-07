@@ -51,10 +51,32 @@ issue: 39
 R1 resolved (manual-range clears auto_range_ at waterfall_widget.cpp:104, python3 shebang, synthetic rate guard; R1 post_row FP confirmed guarded at plugin.cpp:507). R2 reviews newer code (control panel, row extractor, topic filter, render path).
 
 ### Findings
-- [ ] (cross-confirmed: Copilot R2 + rolker conversation) `add_row()` -> `rebuild_image()` recolors every buffered row x full width on every ping (O(h*w)/ping, h up to history cap 600/5000); matches rolker's observed slow-down/lock-up as the buffer fills. Fix = incremental render (shift cached QImage, draw only new row; full rebuild only on setting/width/range change; handle auto-range recompute + variable width) — `src/waterfall_widget.cpp:50,110`
-- [ ] (low-med, Copilot R2) control inputs not initialized from item.value: FLOAT/FLOAT_WITH_AUTO QLineEdit blank, ENUM QComboBox defaults to enum[0] — contradicts actual control state (value IS shown in adjacent value label; validator + activated-on-user-action prevent spurious empty publish, so correctness/UX not data loss) — `src/control_panel.cpp:76,99,111`
-- [ ] (low, Copilot R2) range_max uses declared samples_per_beam even when fewer decoded (truncated data) -> overstated slant range; use min(declared, decoded) — `src/row_extractor.cpp:60`
-- [ ] (low, Copilot R2) derive_change_topic() strips trailing "state" substring not "/state" segment (/sonar/estate -> /sonar/echange_state); match final /state segment — `src/topic_filter.cpp:77`
+- [x] (cross-confirmed: Copilot R2 + rolker conversation) `add_row()` -> `rebuild_image()` recolors every buffered row x full width on every ping (O(h*w)/ping, h up to history cap 600/5000); matches rolker's observed slow-down/lock-up as the buffer fills. Fix = incremental render (shift cached QImage, draw only new row; full rebuild only on setting/width/range change; handle auto-range recompute + variable width) — `src/waterfall_widget.cpp:50,110`
+- [x] (low-med, Copilot R2) control inputs not initialized from item.value: FLOAT/FLOAT_WITH_AUTO QLineEdit blank, ENUM QComboBox defaults to enum[0] — contradicts actual control state (value IS shown in adjacent value label; validator + activated-on-user-action prevent spurious empty publish, so correctness/UX not data loss) — `src/control_panel.cpp:76,99,111`
+- [x] (low, Copilot R2) range_max uses declared samples_per_beam even when fewer decoded (truncated data) -> overstated slant range; use min(declared, decoded) — `src/row_extractor.cpp:60`
+- [x] (low, Copilot R2) derive_change_topic() strips trailing "state" substring not "/state" segment (/sonar/estate -> /sonar/echange_state); match final /state segment — `src/topic_filter.cpp:77`
 
 ### False positives
 - none this round (R1 post_row "guard target" FP not re-raised; guard present at plugin.cpp:507)
+
+### Resolution (fixes applied)
+**When**: 2026-06-07 10:32 -04:00 · **By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+- **Render pipeline reworked (cross-confirmed must-fix):** `add_row()` now takes an
+  O(width) incremental path — scroll the cached `QImage` down one row (memmove at
+  capacity, memcpy during growth) and paint only the new top row via a shared
+  `paint_row()`; `rebuild_image()` (full recolor) runs only on first row, view-setting
+  change, width growth, history change, or an auto-range expansion. Auto-range is now
+  sticky/expanding between full rebuilds (documented in the header) — a brighter ping
+  forces one full recolor; the exact buffer min/max is restored on every full rebuild.
+- **Control inputs seeded from `item.value`:** FLOAT/FLOAT_WITH_AUTO `QLineEdit`
+  (skipping "auto"), ENUM `QComboBox` via `setCurrentText` (no `activated()` -> no
+  spurious publish).
+- **range_max clamped** to `min(declared samples_per_beam, decoded count)`.
+- **derive_change_topic** matches a final `/state` segment, not any trailing
+  "state" substring.
+- Added 2 regression tests (truncated-range clamp, `/sonar/estate` segment). Widget
+  smoke tests (5/0) and control-panel tests (5/0) confirm the render + input changes.
+- `colcon test rqt_sonar_waterfall`: **198 tests, 0 failures** (27 skipped = linters).
+- Note (low, deferred): auto-range no longer contracts when a bright ping scrolls
+  off until the next full rebuild — acceptable sticky-gain behavior for a backscatter
+  waterfall; flagged here for visibility.
