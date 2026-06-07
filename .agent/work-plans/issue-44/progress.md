@@ -32,3 +32,20 @@ grayscale/bronze match, so no visible shift. All golden tests pass unchanged
 is 128 under both 8-bit and float lerp). `colcon test`: 200 tests, 0 failures.
 
 Closes #44. Part of rolker/unh_marine_autonomy#137.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-07 16:35 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #45 at `d7e2176`
+**Sources**: 1 at head (Copilot R1 @ `d7e2176`) + prior timeline (Implementation entry; no prior review)
+**Cross-source confirmations**: 0
+**CI**: copilot-pull-request-reviewer success (package GTests 200/0 locally)
+
+### Findings
+- [ ] (low, Copilot R1) color_map.hpp full-includes marine_colormap/palette.hpp but ColorMap only stores a Palette* -> forward-declare in header, keep full include in .cpp (build hygiene) — `color_map.hpp:37`
+- [ ] (low/defensive, Copilot R1) lookup() raw-derefs palette_ (can't be null: set from built-in names via shared_palette) — add a null-fallback, consistent with the rviz#5 guard — `color_map.cpp:109`
+
+### False positives
+- (Copilot R1) scale_intensity degenerate range "now relies on normalize()" — `color_map.cpp`: normalize() returns 0 when !(hi>lo), so scale_intensity returns 0 for max<=min; the DegenerateRangeIsZero test (scale_intensity(5,10,10)==0) passes. Contract preserved + covered.
