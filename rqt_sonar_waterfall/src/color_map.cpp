@@ -29,8 +29,11 @@
 #include "rqt_sonar_waterfall/color_map.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <limits>
+
+#include <marine_colormap/color.hpp>
+#include <marine_colormap/palette.hpp>
+#include <marine_colormap/transfer.hpp>
 
 namespace rqt_sonar_waterfall
 {
@@ -38,27 +41,20 @@ namespace rqt_sonar_waterfall
 namespace
 {
 
-std::vector<Rgb> palette(ColorMapType type)
+// Map the rqt palette enum to the shared marine_colormap palette -- the single
+// source of truth for the stop data. find_palette never returns null for a
+// built-in name.
+const marine_colormap::Palette * shared_palette(ColorMapType type)
 {
   switch (type) {
-    case ColorMapType::Grayscale:
-      return {{0, 0, 0}, {255, 255, 255}};
     case ColorMapType::Bronze:
-      return {
-        {0, 0, 0}, {60, 30, 10}, {130, 75, 25}, {200, 140, 70}, {255, 225, 170}};
+      return marine_colormap::find_palette("bronze");
     case ColorMapType::Thermal:
+      return marine_colormap::find_palette("thermal");
+    case ColorMapType::Grayscale:
     default:
-      // Adapted from rviz_sonar_image::ColorMap (float channels scaled to 8-bit).
-      return {
-        {77, 77, 77}, {5, 102, 242}, {33, 23, 181}, {38, 166, 138},
-        {18, 156, 105}, {161, 209, 61}, {252, 179, 46}, {250, 94, 153},
-        {252, 48, 97}, {219, 41, 51}, {166, 51, 51}, {153, 10, 15}};
+      return marine_colormap::find_palette("grayscale");
   }
-}
-
-uint8_t lerp_channel(uint8_t a, uint8_t b, float t)
-{
-  return static_cast<uint8_t>(std::lround(a + (b - a) * t));
 }
 
 }  // namespace
@@ -109,41 +105,23 @@ ColorMap::ColorMap(ColorMapType type)
 void ColorMap::set_type(ColorMapType type)
 {
   type_ = type;
-  stops_ = palette(type);
+  palette_ = shared_palette(type);
 }
 
 Rgb ColorMap::lookup(float t) const
 {
-  t = std::clamp(t, 0.0f, 1.0f);
-  if (stops_.size() == 1) {
-    return stops_.front();
-  }
-  const float p = t * static_cast<float>(stops_.size() - 1);
-  auto i = static_cast<std::size_t>(std::floor(p));
-  if (i >= stops_.size() - 1) {
-    return stops_.back();
-  }
-  const float frac = p - static_cast<float>(i);
-  const Rgb & a = stops_[i];
-  const Rgb & b = stops_[i + 1];
-  return Rgb{
-    lerp_channel(a.r, b.r, frac),
-    lerp_channel(a.g, b.g, frac),
-    lerp_channel(a.b, b.b, frac)};
+  // sample() clamps t to [0, 1] and interpolates; to_rgba8 quantizes. Drop the
+  // (always-opaque) alpha to the rqt RGB888 pixel type.
+  const marine_colormap::Rgba8 c = marine_colormap::to_rgba8(palette_->sample(t));
+  return Rgb{c.r, c.g, c.b};
 }
 
 float scale_intensity(float value, float min, float max, float gain, float contrast)
 {
-  if (max <= min) {
-    return 0.0f;
-  }
-  float n = (value - min) / (max - min);
-  n = std::clamp(n, 0.0f, 1.0f);
-  n = std::clamp(n * gain, 0.0f, 1.0f);
-  if (contrast > 0.0f && contrast != 1.0f) {
-    n = std::pow(n, 1.0f / contrast);
-  }
-  return std::clamp(n, 0.0f, 1.0f);
+  // Identical pipeline to marine_colormap (normalize -> gain -> contrast),
+  // sourced from the lib so the rqt CPU path matches its CPU/GPU formula exactly.
+  return marine_colormap::apply_response(
+    marine_colormap::normalize(value, min, max), gain, contrast);
 }
 
 std::pair<float, float> auto_range(const std::deque<WaterfallRow> & rows)
