@@ -353,7 +353,9 @@ void SonarWaterfallPlugin::restoreSettings(
     freeze_button_->setChecked(instance_settings.value("frozen", false).toBool());
     auto_range_check_->setChecked(instance_settings.value("auto_range", true).toBool());
     range_min_spin_->setValue(instance_settings.value("range_min", 0.0).toDouble());
-    range_max_spin_->setValue(instance_settings.value("range_max", 32767.0).toDouble());
+    // Same 16-bit-safe pre-message fallback as build_controls_bar(); a saved
+    // layout missing range_max (older config) must not revert to a 15-bit clip.
+    range_max_spin_->setValue(instance_settings.value("range_max", 65535.0).toDouble());
     apply_view_settings();
   }
 }
@@ -446,14 +448,15 @@ void SonarWaterfallPlugin::subscribe(
   rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr & sub,
   const std::string & topic, bool is_port)
 {
-  sub.reset();
-  // Changing a subscription invalidates the prior source: bump this side's id so
-  // any in-flight callback from the old subscription is recognized as stale, and
-  // clear range_seeded_ so the next message (from whichever source) re-seeds the
-  // manual-range default for the new configuration.
+  // Changing a subscription invalidates the prior source. Bump this side's id
+  // (and clear range_seeded_) BEFORE resetting the old subscription: an old
+  // in-flight callback then sees the id mismatch and returns early. Resetting
+  // first would leave a window where such a callback still observes the
+  // un-bumped id and proceeds to seed/post from the stale source.
   auto & sub_id = is_port ? port_sub_id_ : starboard_sub_id_;
   const uint64_t id = sub_id.fetch_add(1) + 1;
   range_seeded_.store(false);
+  sub.reset();
   if (topic.empty() || !node_) {
     return;
   }

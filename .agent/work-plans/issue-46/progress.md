@@ -38,8 +38,8 @@ issue: 46
 **CI**: copilot check pass; per-repo build-and-test gate not visible (ruleset follow-up)
 
 ### Findings
-- [ ] (cross-confirmed, must-fix) Residual TOCTOU: `sub.reset()` precedes the id bump, so an in-flight old-sub callback passes the staleness guard — bump id + clear range_seeded_ *before* reset — `src/sonar_waterfall_plugin.cpp:449`
-- [ ] (should-fix, Copilot) `restoreSettings()` defaults range_max to 32767.0, undoing the 65535.0 pre-message fallback for configs missing the key — set it to 65535.0 — `src/sonar_waterfall_plugin.cpp:356`
+- [x] (cross-confirmed, must-fix) Residual TOCTOU: `sub.reset()` precedes the id bump, so an in-flight old-sub callback passes the staleness guard — bump id + clear range_seeded_ *before* reset — `src/sonar_waterfall_plugin.cpp:449`
+- [x] (should-fix, Copilot) `restoreSettings()` defaults range_max to 32767.0, undoing the 65535.0 pre-message fallback for configs missing the key — set it to 65535.0 — `src/sonar_waterfall_plugin.cpp:356`
 
 ### False positives
 - None.
