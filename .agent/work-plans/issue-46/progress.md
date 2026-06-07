@@ -26,3 +26,20 @@ issue: 46
 ### Notes
 - Static analysis (ament_cpplint) clean on all changed files. 205 gtests pass (5 new DefaultFullScale cases).
 - The subscription-id staleness path is Qt/executor-threaded (like `post_row`) and is not unit-tested; the dtype→full-scale mapping is covered by the new gtests.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-07 19:34 -0400
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #47 at `9a686ad`
+**Sources**: 2 (Copilot PR review @ `9a686ad`; Local Review (Pre-Push) @ `4a2a242`)
+**Cross-source confirmations**: 1 (subscription-staleness mechanism)
+**CI**: copilot check pass; per-repo build-and-test gate not visible (ruleset follow-up)
+
+### Findings
+- [ ] (cross-confirmed, must-fix) Residual TOCTOU: `sub.reset()` precedes the id bump, so an in-flight old-sub callback passes the staleness guard — bump id + clear range_seeded_ *before* reset — `src/sonar_waterfall_plugin.cpp:449`
+- [ ] (should-fix, Copilot) `restoreSettings()` defaults range_max to 32767.0, undoing the 65535.0 pre-message fallback for configs missing the key — set it to 65535.0 — `src/sonar_waterfall_plugin.cpp:356`
+
+### False positives
+- None.
