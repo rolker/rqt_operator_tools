@@ -59,3 +59,20 @@ issue: 46
 
 ### False positives
 - (Copilot) "restoreSettings() still uses 32767.0" — already fixed in `36d9c2a` (round-1 finding #2); restoreSettings now defaults to 65535.0 (line 358), so the revert-to-32767 failure mode cannot occur.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-07 20:44 -0400
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #47 at `f0722d9` (round 3)
+**Sources**: Copilot review @ `f0722d9`; prior rounds
+**Cross-source confirmations**: 0
+**CI**: build-and-test pass
+
+### Findings
+- [ ] (valid, Copilot) maybe_seed_manual_range seeds unconditionally on first message, clobbering a restored/active manual Max — gate the seed on auto-range enabled; do isChecked()+setValue on the GUI thread (keep QPointer capture) — `src/sonar_waterfall_plugin.cpp`
+- [ ] (valid/doc, Copilot) waterfall_model.hpp default_full_scale docstring says "maximum representable magnitude" but returns max positive (INT8->127) — reword to "maximum positive value" — `include/rqt_sonar_waterfall/waterfall_model.hpp:82`
+
+### False positives
+- (Copilot) "subscribe() never resets range_max_spin_ to the fallback" — already fixed at this head (f0722d9, subscribe lines 470-472 reset to kDefaultRangeMax); re-emitted round-2 comment with a drifted anchor.
