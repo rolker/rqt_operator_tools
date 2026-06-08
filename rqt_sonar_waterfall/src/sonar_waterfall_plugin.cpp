@@ -549,28 +549,35 @@ void SonarWaterfallPlugin::post_row(const WaterfallRow & row)
 void SonarWaterfallPlugin::maybe_seed_manual_range(uint32_t dtype)
 {
   // Seed the manual-range spin default to the source's full scale once per
-  // (re)subscribe, on the first message of whichever side arrives first; after
-  // that the value is the operator's to set. exchange() makes the "first wins"
-  // decision atomic across the racing port/starboard callbacks. Callers gate
-  // this on a current subscription id (see on_*_msg), so a stale source can't
-  // reach here. Ordering of the queued setValue below relies on rqt spinning the
-  // node on a single executor thread (callbacks serialized, enqueued FIFO).
+  // (re)subscribe, on the first message of whichever side arrives first, and
+  // only while auto-range is enabled (see the GUI-thread check below) so a
+  // deliberate/restored manual value is never clobbered. exchange() makes the
+  // "first wins" decision atomic across the racing port/starboard callbacks.
+  // Callers gate this on a current subscription id (see on_*_msg), so a stale
+  // source can't reach here. Ordering of the queued setValue below relies on rqt
+  // spinning the node on a single executor thread (callbacks serialized,
+  // enqueued FIFO).
   if (range_seeded_.exchange(true)) {
     return;
   }
   const double full_scale = default_full_scale(dtype);
+  // Capture QPointers (not `this`) so a teardown during the queued call is a
+  // no-op even if the widgets outlive nothing — same pattern as post_row, and
+  // safe against the widget being destroyed before the plugin (raw member
+  // pointers would dangle). The widget *state* read (isChecked) and write
+  // (setValue) both run on the GUI thread.
   QPointer<QDoubleSpinBox> spin = range_max_spin_;
+  QPointer<QCheckBox> auto_check = auto_range_check_;
   if (!spin) {
     return;
   }
-  // Hop to the GUI thread before touching the widget (callbacks run on the
-  // executor thread). The spin is disabled while auto-range is on, so updating
-  // its value here only changes what the operator sees when they switch to
-  // manual mode; auto-range rendering is unaffected.
+  // Only seed while auto-range is enabled: then the manual spin is disabled and
+  // its value is just a pending default, safe to refresh. In manual mode the Max
+  // is the operator's deliberate (or restored) value and must not be clobbered.
   QMetaObject::invokeMethod(
     spin.data(),
-    [spin, full_scale]() {
-      if (spin) {
+    [spin, auto_check, full_scale]() {
+      if (spin && auto_check && auto_check->isChecked()) {
         spin->setValue(full_scale);
       }
     },

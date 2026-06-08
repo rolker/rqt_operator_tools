@@ -71,8 +71,8 @@ issue: 46
 **CI**: build-and-test pass
 
 ### Findings
-- [ ] (valid, Copilot) maybe_seed_manual_range seeds unconditionally on first message, clobbering a restored/active manual Max — gate the seed on auto-range enabled; do isChecked()+setValue on the GUI thread (keep QPointer capture) — `src/sonar_waterfall_plugin.cpp`
-- [ ] (valid/doc, Copilot) waterfall_model.hpp default_full_scale docstring says "maximum representable magnitude" but returns max positive (INT8->127) — reword to "maximum positive value" — `include/rqt_sonar_waterfall/waterfall_model.hpp:82`
+- [x] (valid, Copilot) maybe_seed_manual_range seeds unconditionally on first message, clobbering a restored/active manual Max — gate the seed on auto-range enabled; do isChecked()+setValue on the GUI thread (keep QPointer capture) — `src/sonar_waterfall_plugin.cpp`
+- [x] (valid/doc, Copilot) waterfall_model.hpp default_full_scale docstring says "maximum representable magnitude" but returns max positive (INT8->127) — reword to "maximum positive value" — `include/rqt_sonar_waterfall/waterfall_model.hpp:82`
 
 ### False positives
 - (Copilot) "subscribe() never resets range_max_spin_ to the fallback" — already fixed at this head (f0722d9, subscribe lines 470-472 reset to kDefaultRangeMax); re-emitted round-2 comment with a drifted anchor.

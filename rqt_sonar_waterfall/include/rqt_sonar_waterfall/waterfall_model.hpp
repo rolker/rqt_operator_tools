@@ -78,7 +78,7 @@ std::vector<float> decode_samples(
 /// Full-scale intensity for a SonarImageData `dtype`, for seeding the manual
 /// range control so its default matches the source's bit depth.
 ///
-/// Returns the maximum representable magnitude of the integer types
+/// Returns the maximum positive value of the integer types
 /// (UINT8 -> 255, INT8 -> 127, UINT16 -> 65535, INT16 -> 32767), clamped to
 /// 1e9 for 32-/64-bit integers (the manual-range spin box maxes at 1e9; use
 /// auto-range for data this wide). Float types return 1.0 and unrecognized
