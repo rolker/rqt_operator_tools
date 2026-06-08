@@ -79,3 +79,28 @@ are untouched.
 **Verified**: `colcon test` — 218 tests, 0 failures, 30 skipped. The 5 widget
 tests executed (real GL render + framebuffer readback) on Mesa swrast.
 On-screen verification against the Garmin sidescan bag (`bag_2026-06-05T14.07.32_sidescan_raw`, 25k pings) **PASSED** 2026-06-07 — Roland confirmed it renders correctly. PR #49 taken out of draft.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-07 19:55 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-48 at `da7782b` (PR #49)
+**Mode**: pre-push
+**Depth**: Deep (new GL rendering subsystem, ~1k lines, GL lifecycle/context)
+**Static analysis**: clean (cpplint/cppcheck/uncrustify/copyright via colcon test) | **Adversarial**: Claude + Copilot
+**Must-fix**: 4 | **Suggestions**: 4
+
+### Findings
+- [ ] (must-fix, cross-confirmed Claude+Copilot) GL objects (LUT/program/VBO/VAO) destroyed with no current context: GpuColorMap member dtor runs after widget dtor's doneCurrent() -> leak/wrong-context delete; add gpu_.cleanup() between makeCurrent/doneCurrent or hook aboutToBeDestroyed — `src/gpu_color_map.cpp:80`,`src/waterfall_widget.cpp:57-68`
+- [ ] (must-fix, cross-confirmed Claude+Copilot) shader compile/link failure self-skips instead of FAIL — skip only when no context creatable; FAIL if context exists but initialize() fails — `test/test_gpu_color_map.cpp:195-198`
+- [ ] (must-fix, Copilot) no GL_MAX_TEXTURE_SIZE guard / no glTexImage2D failure check; set_history unbounded + unbounded row width -> silent broken render with has_data_=true — `src/waterfall_widget.cpp:185-219`
+- [ ] (must-fix, Claude) unguarded makeCurrent() in dtor if widget never shown / context gone; guard if(context() && context()->isValid()) — `src/waterfall_widget.cpp:62`
+- [ ] (suggestion, both) NaN/Inf intensity -> shader clamp(NaN) undefined (no sentinel in main()); pre-existing, add isnan guard + test — `src/gpu_color_map.cpp:110`
+- [ ] (suggestion, Claude) document add_row as GUI-thread-only (relies on plugin Qt::QueuedConnection) — `include/rqt_sonar_waterfall/waterfall_widget.hpp:67`
+- [ ] (suggestion, both) test coverage: assert newest-at-top V-orientation, single/zero-width row, oversized texture — `test/`
+- [ ] (suggestion, Claude) per-frame vector alloc + full glTexImage2D realloc + tex-param re-set each dirty frame (documented re-upload tradeoff; ring-buffer is the tracked follow-up) — `src/waterfall_widget.cpp:196,217`
+
+### Verified correct (both reviewers)
+- LUT texel-center remap (t*(N-1)+0.5)/N matches bake_lut entry i=sample(i/(N-1)) under GL_LINEAR; V-orientation newest-at-top (oldest at row 0, no flip); resample lround index with divide guards; #version 330 core w/o precision; CompatibilityProfile for QPainter overlay coexistence.
