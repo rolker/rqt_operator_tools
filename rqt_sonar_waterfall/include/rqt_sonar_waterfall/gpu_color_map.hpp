@@ -70,6 +70,14 @@ public:
   GpuColorMap(const GpuColorMap &) = delete;
   GpuColorMap & operator=(const GpuColorMap &) = delete;
 
+  /// Release all GL objects (program, VBO, VAO, LUT texture). Must be called
+  /// with the owning context current. The owner (the QOpenGLWidget) calls this
+  /// from its destructor while the context is current, because a GpuColorMap
+  /// *member* would otherwise be destroyed after the widget has already released
+  /// its context, leaving the GL deletes to run against no/other context.
+  /// Idempotent and safe to call when never initialized.
+  void cleanup();
+
   /// Compile/link the program and create the quad geometry. Must be called with a
   /// current GL context. Returns false (and logs the shader log) on failure.
   bool initialize();

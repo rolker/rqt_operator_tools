@@ -85,8 +85,13 @@ public:
     if (!context_->create() || !context_->makeCurrent(surface_.get())) {
       return false;
     }
-    // A core-profile 3.x context is required for GL_R32F + the 330 shaders.
-    if (context_->format().majorVersion() < 3) {
+    // GL 3.3+ is required for GL_R32F + the `#version 330` shaders. A 3.0-3.2
+    // context would not skip but would then fail shader compile, so require the
+    // exact minimum here.
+    const QSurfaceFormat got = context_->format();
+    const bool have_33 =
+      got.majorVersion() > 3 || (got.majorVersion() == 3 && got.minorVersion() >= 3);
+    if (!have_33) {
       return false;
     }
     return true;
@@ -193,9 +198,10 @@ protected:
     float contrast, int tol)
   {
     const std::vector<Rgb8> gpu = render_gpu(gl_, values, type, min, max, gain, contrast);
-    if (gpu.empty()) {
-      GTEST_SKIP() << "Shader failed to compile/link in this context.";
-    }
+    // SetUp() already skipped if no GL 3.3 context exists, so reaching here means
+    // a capable context is current: an empty result is a real shader
+    // compile/link regression, not a reason to skip (which would hide it).
+    ASSERT_FALSE(gpu.empty()) << "Shader failed to compile/link despite a valid GL 3.3 context.";
     ASSERT_EQ(gpu.size(), values.size());
 
     ColorMap cpu(type);

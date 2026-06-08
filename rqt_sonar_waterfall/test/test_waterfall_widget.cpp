@@ -84,7 +84,11 @@ bool gl_available()
   if (!ctx.create() || !ctx.makeCurrent(&surface)) {
     return false;
   }
-  const bool ok = ctx.format().majorVersion() >= 3;
+  // Require 3.3+ exactly: the widget's `#version 330` shaders need it, so a
+  // 3.0-3.2 context must skip rather than run and fail on shader compile.
+  const QSurfaceFormat got = ctx.format();
+  const bool ok =
+    got.majorVersion() > 3 || (got.majorVersion() == 3 && got.minorVersion() >= 3);
   ctx.doneCurrent();
   return ok;
 }
@@ -141,6 +145,32 @@ TEST_F(WaterfallWidgetTest, BufferedRowsDrawContent)
   const int dark = img.pixelColor(1, mid).red();
   EXPECT_GT(bright, 200);
   EXPECT_LT(dark, 60);
+}
+
+TEST_F(WaterfallWidgetTest, NewestRowAtTop)
+{
+  WaterfallWidget w;
+  w.set_color_map(rqt_sonar_waterfall::ColorMapType::Grayscale);
+  // Older rows dark, newest row bright: with newest scrolled to the top, the
+  // top of the image must be bright and the bottom dark. Guards the V
+  // orientation (a vertical-flip regression would invert this).
+  for (int i = 0; i < 4; ++i) {
+    WaterfallRow dark;
+    dark.intensities.assign(64, 0.0f);
+    dark.range_max = 50.0;
+    w.add_row(dark);
+  }
+  WaterfallRow bright;
+  bright.intensities.assign(64, 100.0f);
+  bright.range_max = 50.0;
+  w.add_row(bright);
+
+  QImage img = render(w);
+  ASSERT_FALSE(img.isNull());
+  const int x = img.width() / 2;  // center column avoids the corner range labels
+  EXPECT_GT(img.pixelColor(x, 2).red(), 200) << "newest (bright) row should be at the top";
+  EXPECT_LT(img.pixelColor(x, img.height() - 3).red(), 60)
+    << "oldest (dark) row should be at the bottom";
 }
 
 TEST_F(WaterfallWidgetTest, FreezeHoldsTheView)

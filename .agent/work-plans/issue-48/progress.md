@@ -124,3 +124,25 @@ On-screen verification against the Garmin sidescan bag (`bag_2026-06-05T14.07.32
 
 ### False positives
 - none — all 6 Copilot inline comments are valid.
+
+## Resolution (review fixes applied)
+**When**: 2026-06-07 · **By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+All pre-push + Copilot R1 findings addressed (colcon test: 219 tests, 0 failures,
++1 V-orientation test):
+- [x] GL cleanup without current context — added `GpuColorMap::cleanup()`
+  (releases program/VBO/VAO/LUT); widget dtor calls it inside a
+  `context() && context()->isValid()` guard with the context current; dtor
+  fallback only deletes when a context is current. `+#include <QOpenGLContext>`.
+- [x] makeCurrent() in dtor now guarded against absent/invalid context.
+- [x] shader compile/link failure now `ASSERT_FALSE` (FAIL), not GTEST_SKIP —
+  skip is reserved for "no GL 3.3 context" (the SetUp gate).
+- [x] GL-skip gates now require 3.3 exactly (major>3 || (major==3 && minor>=3))
+  in both `test_gpu_color_map` and `test_waterfall_widget`.
+- [x] GL_MAX_TEXTURE_SIZE clamp (keep newest rows, downsample width) + post-upload
+  `glGetError` check → placeholder fallback on failure (no garbage render).
+- [x] NaN/Inf guard in shader main() (`value = u_min` → palette floor).
+- [x] add_row documented GUI-thread-only (plugin marshals via Qt::QueuedConnection).
+- [x] NewestRowAtTop test asserts V orientation (dark history + bright newest →
+  top bright, bottom dark).
+- Deferred (tracked follow-up): ring-buffer glTexSubImage2D upload.

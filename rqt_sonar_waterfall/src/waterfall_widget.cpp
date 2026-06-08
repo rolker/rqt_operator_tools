@@ -56,15 +56,20 @@ WaterfallWidget::WaterfallWidget(QWidget * parent)
 
 WaterfallWidget::~WaterfallWidget()
 {
-  // Delete GL objects with our context current. The GpuColorMap member's own LUT
-  // texture is released in its destructor (a no-op without a current context);
-  // at process teardown that is harmless.
-  makeCurrent();
-  if (intensity_tex_ != 0) {
-    glDeleteTextures(1, &intensity_tex_);
-    intensity_tex_ = 0;
+  // Release GL objects with our context current. Guard against the widget never
+  // having had a context (never shown / headless) or it already being gone --
+  // makeCurrent() on an absent context is unsafe. gpu_.cleanup() must run here,
+  // while the context is current, because the GpuColorMap member is otherwise
+  // destroyed after this body (and after the context is released).
+  if (context() != nullptr && context()->isValid()) {
+    makeCurrent();
+    if (intensity_tex_ != 0) {
+      glDeleteTextures(1, &intensity_tex_);
+      intensity_tex_ = 0;
+    }
+    gpu_.cleanup();
+    doneCurrent();
   }
-  doneCurrent();
 }
 
 void WaterfallWidget::add_row(const WaterfallRow & row)
@@ -192,12 +197,39 @@ void WaterfallWidget::upload_texture()
     return;
   }
 
-  const std::size_t height = rows.size();
+  // Clamp to the GPU's max texture size so a very wide ping or a very deep
+  // history can't push glTexImage2D past the limit (which would fail and leave a
+  // broken texture rendered as if valid). Keep the newest rows; downsample width.
+  GLint max_tex = 0;
+  glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
+  const std::size_t max_dim = (max_tex > 0) ? static_cast<std::size_t>(max_tex) : 2048;
+  std::size_t height = rows.size();
+  std::size_t first_row = 0;
+  bool clamped = false;
+  if (width > max_dim) {
+    width = max_dim;
+    clamped = true;
+  }
+  if (height > max_dim) {
+    first_row = height - max_dim;  // keep the newest max_dim rows
+    height = max_dim;
+    clamped = true;
+  }
+  if (clamped) {
+    static bool warned = false;
+    if (!warned) {
+      qWarning(
+        "WaterfallWidget: texture clamped to GL_MAX_TEXTURE_SIZE (%d); "
+        "reduce history depth or sample count.", max_tex);
+      warned = true;
+    }
+  }
+
   std::vector<float> data(width * height, 0.0f);
   // Store oldest-first (front -> row 0). Screen-top is texture v=1 = the last
   // row = newest, so no V flip is needed at draw time.
   for (std::size_t y = 0; y < height; ++y) {
-    const WaterfallRow & row = rows[y];
+    const WaterfallRow & row = rows[first_row + y];
     const std::size_t rw = row.intensities.size();
     float * dst = data.data() + y * width;
     for (std::size_t x = 0; x < width; ++x) {
@@ -214,14 +246,29 @@ void WaterfallWidget::upload_texture()
     glGenTextures(1, &intensity_tex_);
   }
   glBindTexture(GL_TEXTURE_2D, intensity_tex_);
+  glGetError();  // clear any prior error so the check below is about this upload
   glTexImage2D(
     GL_TEXTURE_2D, 0, GL_R32F, static_cast<int>(width), static_cast<int>(height), 0, GL_RED,
     GL_FLOAT, data.data());
+  const GLenum upload_err = glGetError();
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glBindTexture(GL_TEXTURE_2D, 0);
+
+  if (upload_err != GL_NO_ERROR) {
+    // Don't render a half-valid texture as if it were data: fall back to the
+    // placeholder rather than show garbage.
+    static bool warned = false;
+    if (!warned) {
+      qWarning("WaterfallWidget: intensity texture upload failed (GL error 0x%x).", upload_err);
+      warned = true;
+    }
+    has_data_ = false;
+    range_max_ = 0.0;
+    return;
+  }
 
   has_data_ = true;
   range_max_ = rows.back().range_max;  // newest row

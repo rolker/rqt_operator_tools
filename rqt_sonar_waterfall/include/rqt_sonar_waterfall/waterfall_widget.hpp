@@ -64,6 +64,11 @@ public:
   ~WaterfallWidget() override;
 
   /// Append the newest row. No-op while frozen.
+  ///
+  /// GUI-thread only: this touches `buffer_` and the GL dirty flags with no
+  /// locking. ROS subscription callbacks run on the executor thread and MUST
+  /// marshal to the GUI thread (the plugin uses a queued `QMetaObject::invokeMethod`)
+  /// before calling this. Calling it directly from another thread races.
   void add_row(const WaterfallRow & row);
 
   /// Drop all buffered rows.

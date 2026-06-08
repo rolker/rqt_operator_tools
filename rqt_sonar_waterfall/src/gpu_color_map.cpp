@@ -28,6 +28,7 @@
 
 #include "rqt_sonar_waterfall/gpu_color_map.hpp"
 
+#include <QOpenGLContext>
 #include <QOpenGLShaderProgram>
 
 #include <algorithm>
@@ -79,12 +80,27 @@ GpuColorMap::GpuColorMap() = default;
 
 GpuColorMap::~GpuColorMap()
 {
-  // Best-effort cleanup; only valid with a current context. Callers that care
-  // about a specific context should destroy this while that context is current.
+  // The owner should call cleanup() with its context current (see cleanup()).
+  // As a fallback, release here only if some context is current — deleting GL
+  // objects with no current context is undefined. With no context we must leak
+  // rather than risk a wrong-context delete / crash.
+  if (QOpenGLContext::currentContext() != nullptr) {
+    cleanup();
+  }
+}
+
+void GpuColorMap::cleanup()
+{
+  // lut_tex_ != 0 implies set_palette() ran, which implies the GL functions were
+  // initialized, so glDeleteTextures is safe to call here.
   if (lut_tex_ != 0) {
     glDeleteTextures(1, &lut_tex_);
     lut_tex_ = 0;
   }
+  lut_size_ = 0.0f;
+  vbo_.destroy();
+  vao_.destroy();
+  program_.reset();
 }
 
 QByteArray GpuColorMap::fragment_source()
@@ -110,6 +126,9 @@ QByteArray GpuColorMap::fragment_source()
     "\nvoid main()\n"
     "{\n"
     "  float value = texture(u_intensity, v_uv).r;\n"
+    "  // Non-finite samples -> palette floor. Avoids GLSL-undefined clamp(NaN)\n"
+    "  // and matches the CPU scale_intensity() path's clamping behavior.\n"
+    "  if (isnan(value) || isinf(value)) { value = u_min; }\n"
     "  float t = marine_colormap_response(\n"
     "              marine_colormap_normalize(value, u_min, u_max), u_gain, u_contrast);\n"
     "  // Map t to LUT texel centers so GL_LINEAR reconstructs the same\n"
