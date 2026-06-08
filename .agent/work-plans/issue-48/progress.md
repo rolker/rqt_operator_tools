@@ -176,3 +176,30 @@ addressed.
 Copilot graded `7edd9aa`, not the fix `f5dbe71`. A clean Copilot pass on the fix
 needs a manual re-review trigger from the PR Reviewers dropdown (web UI) — the
 API/CLI re-review path no-ops (reference_copilot_review_no_api_trigger).
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-07 20:55 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #49 at `a468a87`
+**Sources**: Copilot R3 @ `f5dbe71` + R4 @ `a468a87` (both the fixed code) + prior Integrated Reviews
+**Cross-source confirmations**: 0 open (7 prior findings confirmed ADDRESSED)
+**CI**: none (#42)
+
+Copilot finally re-reviewed the fixed code. All 7 earlier findings verified
+resolved (it re-posts them stale each round). The fixed-code pass surfaced 2 new
+code findings + 3 doc/plan staleness items.
+
+### Findings
+- [ ] (valid, Copilot R4) GpuColorMap::draw() leaves textures bound (unit0=intensity, unit1=LUT) before the widget's QPainter overlay → GL state leakage; unbind + restore active unit before program release — `src/gpu_color_map.cpp` draw()
+- [ ] (valid, Copilot R4) upload_texture staging vector width*height (each only clamped to GL_MAX_TEXTURE_SIZE → up to ~max^2 ≈ 1 GiB) can bad_alloc/terminate; guard with try/catch (or byte-size precheck) → warn + placeholder — `src/waterfall_widget.cpp:228`
+- [ ] (suggestion, Copilot R4) stale doc comment "Skips if the shader couldn't compile" — code now ASSERT_FALSEs; update comment — `test/test_gpu_color_map.cpp:196`
+- [ ] (suggestion, Copilot R4) plan says preamble includes `precision highp float;`; impl omits it (desktop 330) — align plan — `.agent/work-plans/issue-48/plan.md:32`
+- [ ] (suggestion, Copilot R4) plan/progress "do not merge before #6 / CI fails until #6" now stale (#6 merged) — reword to concrete API requirement — `.agent/work-plans/issue-48/plan.md:17`,`progress.md`
+
+### Addressed (re-confirmed fixed; Copilot re-posted pre-fix comments)
+- <QOpenGLContext> include (gpu_color_map.cpp:31); dtor currentContext() guard + cleanup() (:87/:92); widget dtor context()/isValid() guard + gpu_.cleanup() (:64-71); 3.3 minorVersion gates (test_*); expect_parity ASSERT_FALSE (test_gpu_color_map.cpp:204).
+
+### False positives
+- none — the 7 repeats were valid findings already fixed in f5dbe71.
