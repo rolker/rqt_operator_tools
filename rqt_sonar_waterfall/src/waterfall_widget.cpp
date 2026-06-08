@@ -35,6 +35,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 #include <limits>
 #include <utility>
 #include <vector>
@@ -225,7 +226,26 @@ void WaterfallWidget::upload_texture()
     }
   }
 
-  std::vector<float> data(width * height, 0.0f);
+  // The GL_MAX_TEXTURE_SIZE clamp bounds each dimension, but width*height can
+  // still be a very large host allocation (up to ~max^2 floats). Fall back to
+  // the placeholder rather than letting a pathological history/width OOM-abort
+  // the UI.
+  std::vector<float> data;
+  try {
+    data.assign(width * height, 0.0f);
+  } catch (const std::exception &) {
+    static bool warned = false;
+    if (!warned) {
+      qWarning(
+        "WaterfallWidget: intensity staging buffer allocation failed (%zux%zu); "
+        "reduce history depth or sample count.",
+        width, height);
+      warned = true;
+    }
+    has_data_ = false;
+    range_max_ = 0.0;
+    return;
+  }
   // Store oldest-first (front -> row 0). Screen-top is texture v=1 = the last
   // row = newest, so no V flip is needed at draw time.
   for (std::size_t y = 0; y < height; ++y) {

@@ -192,7 +192,8 @@ protected:
   }
 
   // Assert the GPU render of `values` matches the CPU path within `tol` (per
-  // channel, 0..255). Skips if the shader couldn't compile in this context.
+  // channel, 0..255). A valid GL 3.3 context is guaranteed by SetUp(), so a
+  // shader compile/link failure here is a real failure (ASSERT), not a skip.
   void expect_parity(
     const std::vector<float> & values, ColorMapType type, float min, float max, float gain,
     float contrast, int tol)

@@ -234,7 +234,13 @@ void GpuColorMap::draw(unsigned int intensity_tex, bool flip_v)
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
   vao_.release();
 
+  // Unbind both texture units and restore the active unit to 0 so we don't leak
+  // GL state into whatever runs next in this context (e.g. the widget's QPainter
+  // overlay drawn right after this pass).
+  glActiveTexture(GL_TEXTURE1);
+  glBindTexture(GL_TEXTURE_2D, 0);
   glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, 0);
   program_->release();
 }
 

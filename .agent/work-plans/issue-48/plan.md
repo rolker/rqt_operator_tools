@@ -10,11 +10,11 @@ colormap in a fragment shader via the shared `marine_colormap` GLSL
 
 ## Dependency
 
-Needs `marine_colormap::colormap_glsl()` (`marine_colormap/shader.hpp`), which is
-on the unmerged marine_colormap PR #6 (issue #5). During development the
-worktree's `ui_ws/src/marine_colormap` symlink is repointed at the issue-5
-worktree; once #6 merges into `jazzy`, the main-tree symlink carries it and the
-repoint is unnecessary. **This PR should not merge before #6.**
+Needs `marine_colormap::colormap_glsl()` (`marine_colormap/shader.hpp`), provided
+by marine_colormap **≥ #6** (merged into `jazzy` 2026-06-07). The main-tree
+`ui_ws/src/marine_colormap` carries it; no symlink workaround is needed now that
+#6 is in. (Historical: while #6 was open the worktree symlink was temporarily
+repointed at the issue-5 worktree, and this PR was held until #6 landed.)
 
 ## Approach — staged, foundation first
 
@@ -27,9 +27,10 @@ stage 1 (the validated, self-contained foundation), the widget swap follows.
 - **`gpu_color_map.hpp/.cpp`** — a GL helper, no widget/FBO ownership (so the
   widget can use it against its default framebuffer and the test against an FBO):
   - `initialize()` — `QOpenGLFunctions_3_3_Core` init; build a
-    `QOpenGLShaderProgram` from a fragment shader that prepends `#version 330`
-    + `precision highp float;` + sampler decls + `main()` onto
-    `marine_colormap::colormap_glsl()`. Returns false (+ log) on compile fail.
+    `QOpenGLShaderProgram` from a fragment shader that prepends `#version 330 core`
+    + sampler decls + `main()` onto `marine_colormap::colormap_glsl()`. (No
+    `precision` qualifier — that is GLES-only; desktop GLSL 330 rejects it.)
+    Returns false (+ log) on compile fail.
   - `set_palette(const marine_colormap::Palette&, int n=256)` — bake the 1-D LUT
     via `marine_colormap::bake_lut(pal, TransferParams{}, n)`, upload as an Nx1
     RGBA8 texture. Re-bake only on palette change.

@@ -36,10 +36,12 @@ QOpenGLWidget swap is stage 2 (see plan.md).
 tests **executed and passed** on this box (Mesa swrast offscreen GL), confirming
 real CPU/GPU agreement of the marine_colormap#5 shader.
 
-### Dependency / merge order
+### Dependency
 - Needs `marine_colormap/shader.hpp` (`colormap_glsl()`) from marine_colormap
-  PR #6. During dev the worktree's `marine_colormap` symlink is repointed at the
-  issue-5 worktree. **Do not merge before #6**; PR CI will fail until #6 lands.
+  **≥ #6** (merged into `jazzy` 2026-06-07). Satisfied by the main-tree
+  marine_colormap. (Historical: while #6 was open the worktree symlink was
+  temporarily repointed at the issue-5 worktree and this PR was held until #6
+  merged.)
 
 ### Deferred to stage 2
 - `WaterfallWidget : QOpenGLWidget` (R32F scrolling ring texture, uniforms for
@@ -203,3 +205,15 @@ code findings + 3 doc/plan staleness items.
 
 ### False positives
 - none — the 7 repeats were valid findings already fixed in f5dbe71.
+
+## Resolution (Copilot R3/R4 fixes applied)
+**When**: 2026-06-07 · **By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+- [x] GpuColorMap::draw() now unbinds texture units 1 and 0 (restoring active
+  unit 0) before releasing the program — no GL state leak into the QPainter overlay.
+- [x] upload_texture staging vector wrapped in try/catch(std::exception) → warn +
+  placeholder fallback on allocation failure (`+#include <exception>`).
+- [x] test_gpu_color_map expect_parity doc comment updated to match ASSERT_FALSE.
+- [x] plan.md: dependency reworded (#6 merged, no merge-order gate); preamble note
+  corrected to `#version 330 core` with no `precision` (GLES-only).
+- [x] progress.md stage-1 dependency note reworded (#6 merged).
+colcon test: 219 tests, 0 failures.
