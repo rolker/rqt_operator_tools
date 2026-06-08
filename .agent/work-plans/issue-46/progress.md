@@ -43,3 +43,19 @@ issue: 46
 
 ### False positives
 - None.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-07 20:20 -0400
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #47 at `840ec71` (round 2, after rebase onto jazzy + the #43 CI gate)
+**Sources**: 2 (Copilot review @ `840ec71`; prior Integrated Review @ `9a686ad`)
+**Cross-source confirmations**: 0
+**CI**: build-and-test pass (3m7s); copilot check pass
+
+### Findings
+- [ ] (valid, Copilot) subscribe() clears range_seeded_ but doesn't reset range_max_spin_ to the pre-message fallback, so a source switch (e.g. UINT8 255 -> not-yet-publishing UINT16) clips in manual mode until first message — reset the spin to the fallback on (re)subscribe; factor 65535.0 into one shared constant — `src/sonar_waterfall_plugin.cpp:459`
+
+### False positives
+- (Copilot) "restoreSettings() still uses 32767.0" — already fixed in `36d9c2a` (round-1 finding #2); restoreSettings now defaults to 65535.0 (line 358), so the revert-to-32767 failure mode cannot occur.
