@@ -29,6 +29,7 @@
 #ifndef RQT_SONAR_WATERFALL__WATERFALL_MODEL_HPP_
 #define RQT_SONAR_WATERFALL__WATERFALL_MODEL_HPP_
 
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -73,6 +74,23 @@ struct WaterfallRow
 /// dtype.
 std::vector<float> decode_samples(
   const marine_acoustic_msgs::msg::SonarImageData & image);
+
+/// Full-scale intensity for a SonarImageData `dtype`, for seeding the manual
+/// range control so its default matches the source's bit depth.
+///
+/// Returns the maximum positive value of the integer types
+/// (UINT8 -> 255, INT8 -> 127, UINT16 -> 65535, INT16 -> 32767), clamped to
+/// 1e9 for 32-/64-bit integers (the manual-range spin box maxes at 1e9; use
+/// auto-range for data this wide). Float types return 1.0 and unrecognized
+/// dtypes return 65535.0 — neither has a meaningful fixed full scale, so
+/// auto-range is the right tool there and the value is only a starting point
+/// the operator can override. Kept separate from `decode_samples` because the
+/// manual-range default needs the dtype semantics without decoding a payload.
+///
+/// Takes the full `uint32` dtype (matching SonarImageData::dtype) so an
+/// out-of-range value falls through to the same default branch as
+/// `decode_samples`, rather than aliasing a valid case via narrowing.
+double default_full_scale(uint32_t dtype);
 
 /// Combine an optional port and starboard row into one centered row.
 ///

@@ -65,6 +65,12 @@ namespace
 {
 const QString kNoneLabel = QStringLiteral("(none)");
 
+// Manual-range Max default used before any message has been seen (and after a
+// source switch, until the new source's first message re-seeds it). The widest
+// common bit depth (16-bit) so manual mode never clips before data arrives;
+// maybe_seed_manual_range() refines it to the source's exact full scale.
+constexpr double kDefaultRangeMax = 65535.0;
+
 // Rebuild a topic combo from the discovered names, preserving the current
 // selection (and keeping it listed even if it is not currently advertised).
 void repopulate(QComboBox * combo, const std::vector<std::string> & names)
@@ -230,7 +236,9 @@ QWidget * SonarWaterfallPlugin::build_controls_bar(QWidget * parent)
   h->addWidget(new QLabel(tr("Max:"), bar));
   range_max_spin_ = new QDoubleSpinBox(bar);
   range_max_spin_->setRange(-1.0e9, 1.0e9);
-  range_max_spin_->setValue(32767.0);
+  // Pre-message fallback (see kDefaultRangeMax); maybe_seed_manual_range()
+  // refines it to the source's exact full scale on the first message.
+  range_max_spin_->setValue(kDefaultRangeMax);
   range_max_spin_->setEnabled(false);
   h->addWidget(range_max_spin_);
 
@@ -350,7 +358,10 @@ void SonarWaterfallPlugin::restoreSettings(
     freeze_button_->setChecked(instance_settings.value("frozen", false).toBool());
     auto_range_check_->setChecked(instance_settings.value("auto_range", true).toBool());
     range_min_spin_->setValue(instance_settings.value("range_min", 0.0).toDouble());
-    range_max_spin_->setValue(instance_settings.value("range_max", 32767.0).toDouble());
+    // Same pre-message fallback as build_controls_bar(); a saved layout missing
+    // range_max (older config) must not revert to a 15-bit clip.
+    range_max_spin_->setValue(
+      instance_settings.value("range_max", kDefaultRangeMax).toDouble());
     apply_view_settings();
   }
 }
@@ -443,6 +454,22 @@ void SonarWaterfallPlugin::subscribe(
   rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr & sub,
   const std::string & topic, bool is_port)
 {
+  // Changing a subscription invalidates the prior source. Bump this side's id
+  // (and clear range_seeded_) BEFORE resetting the old subscription: an old
+  // in-flight callback then sees the id mismatch and returns early. Resetting
+  // first would leave a window where such a callback still observes the
+  // un-bumped id and proceeds to seed/post from the stale source.
+  auto & sub_id = is_port ? port_sub_id_ : starboard_sub_id_;
+  const uint64_t id = sub_id.fetch_add(1) + 1;
+  range_seeded_.store(false);
+  // Restore the pre-message fallback so a previous source's seeded value (e.g.
+  // 255 for UINT8) can't clip a newly selected source in manual mode before its
+  // first message re-seeds. subscribe() runs on the GUI thread (topic-changed
+  // slots / restoreSettings / initPlugin), so the spin is set directly. In
+  // restoreSettings the saved range_max is applied after this and wins.
+  if (range_max_spin_) {
+    range_max_spin_->setValue(kDefaultRangeMax);
+  }
   sub.reset();
   if (topic.empty() || !node_) {
     return;
@@ -451,17 +478,21 @@ void SonarWaterfallPlugin::subscribe(
   if (is_port) {
     sub = node_->create_subscription<RawSonarImage>(
       topic, rclcpp::SensorDataQoS(),
-      [this](RawSonarImage::ConstSharedPtr msg) {on_port_msg(msg);});
+      [this, id](RawSonarImage::ConstSharedPtr msg) {on_port_msg(msg, id);});
   } else {
     sub = node_->create_subscription<RawSonarImage>(
       topic, rclcpp::SensorDataQoS(),
-      [this](RawSonarImage::ConstSharedPtr msg) {on_starboard_msg(msg);});
+      [this, id](RawSonarImage::ConstSharedPtr msg) {on_starboard_msg(msg, id);});
   }
 }
 
 void SonarWaterfallPlugin::on_port_msg(
-  marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr msg)
+  marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr msg, uint64_t sub_id)
 {
+  if (sub_id != port_sub_id_.load()) {
+    return;  // message from a replaced subscription; ignore.
+  }
+  maybe_seed_manual_range(msg->image.dtype);
   const auto row = extractor_.extract(*msg);
   if (!row) {
     return;
@@ -477,8 +508,12 @@ void SonarWaterfallPlugin::on_port_msg(
 }
 
 void SonarWaterfallPlugin::on_starboard_msg(
-  marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr msg)
+  marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr msg, uint64_t sub_id)
 {
+  if (sub_id != starboard_sub_id_.load()) {
+    return;  // message from a replaced subscription; ignore.
+  }
+  maybe_seed_manual_range(msg->image.dtype);
   const auto row = extractor_.extract(*msg);
   if (!row) {
     return;
@@ -506,6 +541,55 @@ void SonarWaterfallPlugin::post_row(const WaterfallRow & row)
     [target, copy]() {
       if (target) {
         target->add_row(copy);
+      }
+    },
+    Qt::QueuedConnection);
+}
+
+void SonarWaterfallPlugin::maybe_seed_manual_range(uint32_t dtype)
+{
+  // Seed the manual-range spin default to the source's full scale once per
+  // (re)subscribe, on the first message of whichever side arrives first. The
+  // GUI-thread check below applies it only when auto-range is on OR the spin is
+  // still at its fallback, so a deliberate/restored manual value is never
+  // clobbered. exchange() makes the "first wins" decision atomic across the
+  // racing port/starboard callbacks.
+  // Callers gate this on a current subscription id (see on_*_msg), so a stale
+  // source can't reach here. Ordering of the queued setValue below relies on rqt
+  // spinning the node on a single executor thread (callbacks serialized,
+  // enqueued FIFO).
+  if (range_seeded_.exchange(true)) {
+    return;
+  }
+  const double full_scale = default_full_scale(dtype);
+  // Capture QPointers (not `this`) so a teardown during the queued call is a
+  // no-op even if the widgets outlive nothing — same pattern as post_row, and
+  // safe against the widget being destroyed before the plugin (raw member
+  // pointers would dangle). The widget *state* read (isChecked) and write
+  // (setValue) both run on the GUI thread.
+  QPointer<QDoubleSpinBox> spin = range_max_spin_;
+  QPointer<QCheckBox> auto_check = auto_range_check_;
+  if (!spin) {
+    return;
+  }
+  // Seed when EITHER auto-range is enabled (the spin is disabled, its value a
+  // pending default — safe to refresh) OR the spin is still at the pre-message
+  // fallback (the operator hasn't set a deliberate manual value yet). The latter
+  // keeps a dtype-aware default in manual mode without clobbering a value the
+  // operator (or a restored config) deliberately set. range_seeded_ is consumed
+  // either way, so this one-shot decision must cover the manual-from-start case
+  // too — otherwise the spin would stay stuck at the 65535 fallback for an 8-bit
+  // source. Exact == is reliable: kDefaultRangeMax is set programmatically.
+  QMetaObject::invokeMethod(
+    spin.data(),
+    [spin, auto_check, full_scale]() {
+      if (!spin) {
+        return;
+      }
+      const bool auto_on = auto_check && auto_check->isChecked();
+      const bool untouched = (spin->value() == kDefaultRangeMax);
+      if (auto_on || untouched) {
+        spin->setValue(full_scale);
       }
     },
     Qt::QueuedConnection);
