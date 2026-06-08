@@ -146,3 +146,33 @@ All pre-push + Copilot R1 findings addressed (colcon test: 219 tests, 0 failures
 - [x] NewestRowAtTop test asserts V orientation (dark history + bright newest →
   top bright, bottom dark).
 - Deferred (tracked follow-up): ring-buffer glTexSubImage2D upload.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-07 20:25 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #49 at `f5dbe71` (fix commit)
+**Sources**: 1 (Copilot R2 @ `7edd9aa`)
+**Cross-source confirmations**: 0
+**CI**: none (repo has no CI gate, #42)
+
+Copilot R2 re-raised the **identical 6 findings as R1** because it re-reviewed the
+pre-fix tree (`7edd9aa`, a progress.md-only commit) — the code fixes landed in the
+next push (`f5dbe71`). Verified all 6 against the current head: every one is
+addressed.
+
+### Findings
+- [x] (addressed @f5dbe71) gpu_color_map.cpp missing <QOpenGLContext> — now included `src/gpu_color_map.cpp:31`
+- [x] (addressed @f5dbe71) dtor unconditional glDeleteTextures — now guarded on currentContext()+cleanup() `src/gpu_color_map.cpp:87`
+- [x] (addressed @f5dbe71) widget dtor leaves gpu_ GL cleanup contextless — now gpu_.cleanup() inside context()/isValid() guard `src/waterfall_widget.cpp:64-71`
+- [x] (addressed @f5dbe71) gl_available()/GlContext require >=3 not 3.3 — now minorVersion()>=3 gates `test/test_waterfall_widget.cpp:91`,`test/test_gpu_color_map.cpp:93`
+- [x] (addressed @f5dbe71) expect_parity GTEST_SKIP on shader fail — now ASSERT_FALSE `test/test_gpu_color_map.cpp:204`
+
+### False positives
+- none — R2 is a stale re-review of pre-fix code; all findings are valid but already fixed.
+
+### Note
+Copilot graded `7edd9aa`, not the fix `f5dbe71`. A clean Copilot pass on the fix
+needs a manual re-review trigger from the PR Reviewers dropdown (web UI) — the
+API/CLI re-review path no-ops (reference_copilot_review_no_api_trigger).
