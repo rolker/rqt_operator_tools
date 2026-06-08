@@ -76,3 +76,19 @@ issue: 46
 
 ### False positives
 - (Copilot) "subscribe() never resets range_max_spin_ to the fallback" — already fixed at this head (f0722d9, subscribe lines 470-472 reset to kDefaultRangeMax); re-emitted round-2 comment with a drifted anchor.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-07 21:04 -0400
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #47 at `dbb435e` (round 4)
+**Sources**: Copilot review @ `dbb435e`; prior rounds
+**CI**: build-and-test pass
+
+### Findings
+- [x] (valid/regression, Copilot) round-3 auto-range gate + exchange() consumed the one-shot seed even when auto-range was off at first message, leaving the spin stuck at the 65535 fallback (bad for 8-bit/INT16 manual default) — seed when auto-range on OR spin still at fallback (untouched) — `src/sonar_waterfall_plugin.cpp`
+
+### False positives
+- (Copilot) "subscribe() never resets range_max_spin_" — already fixed (subscribe 470-472); stale re-emission.
+- (Copilot) "maybe_seed seeds regardless of auto-range / overwrites manual" — addressed in round 3 (now gated); the executor-thread QPointer copy is the established post_row pattern, safe vs widget-before-plugin teardown.

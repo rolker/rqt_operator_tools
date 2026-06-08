@@ -549,10 +549,11 @@ void SonarWaterfallPlugin::post_row(const WaterfallRow & row)
 void SonarWaterfallPlugin::maybe_seed_manual_range(uint32_t dtype)
 {
   // Seed the manual-range spin default to the source's full scale once per
-  // (re)subscribe, on the first message of whichever side arrives first, and
-  // only while auto-range is enabled (see the GUI-thread check below) so a
-  // deliberate/restored manual value is never clobbered. exchange() makes the
-  // "first wins" decision atomic across the racing port/starboard callbacks.
+  // (re)subscribe, on the first message of whichever side arrives first. The
+  // GUI-thread check below applies it only when auto-range is on OR the spin is
+  // still at its fallback, so a deliberate/restored manual value is never
+  // clobbered. exchange() makes the "first wins" decision atomic across the
+  // racing port/starboard callbacks.
   // Callers gate this on a current subscription id (see on_*_msg), so a stale
   // source can't reach here. Ordering of the queued setValue below relies on rqt
   // spinning the node on a single executor thread (callbacks serialized,
@@ -571,13 +572,23 @@ void SonarWaterfallPlugin::maybe_seed_manual_range(uint32_t dtype)
   if (!spin) {
     return;
   }
-  // Only seed while auto-range is enabled: then the manual spin is disabled and
-  // its value is just a pending default, safe to refresh. In manual mode the Max
-  // is the operator's deliberate (or restored) value and must not be clobbered.
+  // Seed when EITHER auto-range is enabled (the spin is disabled, its value a
+  // pending default — safe to refresh) OR the spin is still at the pre-message
+  // fallback (the operator hasn't set a deliberate manual value yet). The latter
+  // keeps a dtype-aware default in manual mode without clobbering a value the
+  // operator (or a restored config) deliberately set. range_seeded_ is consumed
+  // either way, so this one-shot decision must cover the manual-from-start case
+  // too — otherwise the spin would stay stuck at the 65535 fallback for an 8-bit
+  // source. Exact == is reliable: kDefaultRangeMax is set programmatically.
   QMetaObject::invokeMethod(
     spin.data(),
     [spin, auto_check, full_scale]() {
-      if (spin && auto_check && auto_check->isChecked()) {
+      if (!spin) {
+        return;
+      }
+      const bool auto_on = auto_check && auto_check->isChecked();
+      const bool untouched = (spin->value() == kDefaultRangeMax);
+      if (auto_on || untouched) {
         spin->setValue(full_scale);
       }
     },
