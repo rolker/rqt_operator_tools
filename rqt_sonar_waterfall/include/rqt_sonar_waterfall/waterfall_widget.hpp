@@ -29,25 +29,33 @@
 #ifndef RQT_SONAR_WATERFALL__WATERFALL_WIDGET_HPP_
 #define RQT_SONAR_WATERFALL__WATERFALL_WIDGET_HPP_
 
-#include <QImage>
-#include <QWidget>
+#include <QOpenGLFunctions_3_3_Core>
+#include <QOpenGLWidget>
 
 #include <cstddef>
 #include <utility>
 
 #include "rqt_sonar_waterfall/color_map.hpp"
+#include "rqt_sonar_waterfall/gpu_color_map.hpp"
 #include "rqt_sonar_waterfall/waterfall_buffer.hpp"
 #include "rqt_sonar_waterfall/waterfall_model.hpp"
 
 namespace rqt_sonar_waterfall
 {
 
-/// Scrolling backscatter waterfall canvas.
+/// Scrolling backscatter waterfall canvas, rendered on the GPU.
 ///
-/// Geometry-agnostic: it consumes already-assembled WaterfallRows (the newest is
-/// drawn at the top and older rows scroll downward) and renders them with a
-/// client-side intensity scaling (gain/contrast) and a selectable color map.
-class WaterfallWidget : public QWidget
+/// Geometry-agnostic: it consumes already-assembled WaterfallRows (newest drawn
+/// at the top, older rows scroll downward). The raw (full-precision) intensities
+/// are uploaded to an R32F texture and colormapped in a fragment shader via the
+/// shared marine_colormap GLSL (see GpuColorMap), so intensity range, gain,
+/// contrast and palette are GPU uniforms / a small LUT — changing them is a
+/// redraw, never a CPU recolor, and the data is not quantized to 8 bits.
+///
+/// The public API matches the former CPU widget so the control panel / plugin
+/// are unchanged. GL work happens only in initializeGL/paintGL (context current);
+/// the setters just stage state and call update().
+class WaterfallWidget : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Core
 {
   Q_OBJECT
 
@@ -56,6 +64,11 @@ public:
   ~WaterfallWidget() override;
 
   /// Append the newest row. No-op while frozen.
+  ///
+  /// GUI-thread only: this touches `buffer_` and the GL dirty flags with no
+  /// locking. ROS subscription callbacks run on the executor thread and MUST
+  /// marshal to the GUI thread (the plugin uses a queued `QMetaObject::invokeMethod`)
+  /// before calling this. Calling it directly from another thread races.
   void add_row(const WaterfallRow & row);
 
   /// Drop all buffered rows.
@@ -78,35 +91,33 @@ public:
   std::size_t history() const {return buffer_.capacity();}
 
 protected:
-  void paintEvent(QPaintEvent * event) override;
+  void initializeGL() override;
+  void resizeGL(int w, int h) override;
+  void paintGL() override;
 
 private:
-  /// Full O(rows x width) recolor of the whole buffer. Used on first row and
-  /// whenever the cheap incremental path can't stay correct (view-setting
-  /// change, width growth, history change, or an auto-range expansion).
-  void rebuild_image();
-  /// Cheap path for a new ping: scroll image_ down one row and paint only the
-  /// new top row. Returns false (caller falls back to rebuild_image) when it
-  /// can't preserve correctness.
-  bool try_incremental_add(const WaterfallRow & row);
-  /// Color one scanline of `img` (row 0 = top) from `row`, scaling intensities
-  /// into [min, max] with the current gain/contrast/color map.
-  void paint_row(QImage & img, int y, const WaterfallRow & row, float min, float max) const;
+  /// (Re)upload the whole buffer to the intensity texture. Must run with the GL
+  /// context current (called from paintGL when data_dirty_). Resamples each row
+  /// to the buffer's max width; rows are stored oldest-first so screen-top maps
+  /// to the newest row without a V flip.
+  void upload_texture();
   /// Min/max intensity of a single row (empty -> {0, 1}).
   static std::pair<float, float> row_min_max(const WaterfallRow & row);
+  /// Intensity range fed to the shader: manual range, or the buffer auto-range.
+  std::pair<float, float> active_range() const;
 
   WaterfallBuffer buffer_;
-  ColorMap color_map_;
-  QImage image_;          ///< cached render of the whole buffer
-  double range_max_ = 0.0;  ///< slant range of the newest row, meters (0 = unknown)
-  // Intensity range currently baked into image_. In auto-range mode it tracks
-  // the buffer's exact min/max: each ping recomputes it in O(rows) from the
-  // per-row cached extremes, and any change (a brighter ping, or an extreme
-  // scrolling off) forces a full recolor. In manual mode it mirrors
-  // manual_min_/manual_max_.
-  float range_lo_ = 0.0f;
-  float range_hi_ = 1.0f;
+  GpuColorMap gpu_;
 
+  unsigned int intensity_tex_ = 0;  ///< R32F, width x height = max-samples x rows
+  bool has_data_ = false;           ///< intensity_tex_ holds at least one row
+  bool gl_ready_ = false;           ///< initializeGL completed
+  bool data_dirty_ = false;         ///< buffer changed -> re-upload in paintGL
+  bool palette_dirty_ = false;      ///< color map changed -> re-bake LUT in paintGL
+
+  double range_max_ = 0.0;  ///< slant range of the newest row, meters (0 = unknown)
+
+  ColorMapType color_map_type_ = ColorMapType::Grayscale;
   float gain_ = 1.0f;
   float contrast_ = 1.0f;
   bool frozen_ = false;
