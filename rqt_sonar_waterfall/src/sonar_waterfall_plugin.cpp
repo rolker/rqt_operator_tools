@@ -65,6 +65,12 @@ namespace
 {
 const QString kNoneLabel = QStringLiteral("(none)");
 
+// Manual-range Max default used before any message has been seen (and after a
+// source switch, until the new source's first message re-seeds it). The widest
+// common bit depth (16-bit) so manual mode never clips before data arrives;
+// maybe_seed_manual_range() refines it to the source's exact full scale.
+constexpr double kDefaultRangeMax = 65535.0;
+
 // Rebuild a topic combo from the discovered names, preserving the current
 // selection (and keeping it listed even if it is not currently advertised).
 void repopulate(QComboBox * combo, const std::vector<std::string> & names)
@@ -230,10 +236,9 @@ QWidget * SonarWaterfallPlugin::build_controls_bar(QWidget * parent)
   h->addWidget(new QLabel(tr("Max:"), bar));
   range_max_spin_ = new QDoubleSpinBox(bar);
   range_max_spin_->setRange(-1.0e9, 1.0e9);
-  // Pre-message fallback is the widest common depth (16-bit) so manual mode
-  // never clips before any data arrives; maybe_seed_manual_range() refines this
-  // to the source's exact full scale (e.g. 255 for 8-bit) on the first message.
-  range_max_spin_->setValue(65535.0);
+  // Pre-message fallback (see kDefaultRangeMax); maybe_seed_manual_range()
+  // refines it to the source's exact full scale on the first message.
+  range_max_spin_->setValue(kDefaultRangeMax);
   range_max_spin_->setEnabled(false);
   h->addWidget(range_max_spin_);
 
@@ -353,9 +358,10 @@ void SonarWaterfallPlugin::restoreSettings(
     freeze_button_->setChecked(instance_settings.value("frozen", false).toBool());
     auto_range_check_->setChecked(instance_settings.value("auto_range", true).toBool());
     range_min_spin_->setValue(instance_settings.value("range_min", 0.0).toDouble());
-    // Same 16-bit-safe pre-message fallback as build_controls_bar(); a saved
-    // layout missing range_max (older config) must not revert to a 15-bit clip.
-    range_max_spin_->setValue(instance_settings.value("range_max", 65535.0).toDouble());
+    // Same pre-message fallback as build_controls_bar(); a saved layout missing
+    // range_max (older config) must not revert to a 15-bit clip.
+    range_max_spin_->setValue(
+      instance_settings.value("range_max", kDefaultRangeMax).toDouble());
     apply_view_settings();
   }
 }
@@ -456,6 +462,14 @@ void SonarWaterfallPlugin::subscribe(
   auto & sub_id = is_port ? port_sub_id_ : starboard_sub_id_;
   const uint64_t id = sub_id.fetch_add(1) + 1;
   range_seeded_.store(false);
+  // Restore the pre-message fallback so a previous source's seeded value (e.g.
+  // 255 for UINT8) can't clip a newly selected source in manual mode before its
+  // first message re-seeds. subscribe() runs on the GUI thread (topic-changed
+  // slots / restoreSettings / initPlugin), so the spin is set directly. In
+  // restoreSettings the saved range_max is applied after this and wins.
+  if (range_max_spin_) {
+    range_max_spin_->setValue(kDefaultRangeMax);
+  }
   sub.reset();
   if (topic.empty() || !node_) {
     return;
