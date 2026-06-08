@@ -104,3 +104,23 @@ On-screen verification against the Garmin sidescan bag (`bag_2026-06-05T14.07.32
 
 ### Verified correct (both reviewers)
 - LUT texel-center remap (t*(N-1)+0.5)/N matches bake_lut entry i=sample(i/(N-1)) under GL_LINEAR; V-orientation newest-at-top (oldest at row 0, no flip); resample lround index with divide guards; #version 330 core w/o precision; CompatibilityProfile for QPainter overlay coexistence.
+
+## Integrated Review
+**Status**: complete
+**When**: 2026-06-07 19:58 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**PR**: #49 at `68dcb9f`
+**Sources**: 2 (Copilot R1 @ `68dcb9f`, Local Review (Pre-Push) @ `da7782b` — same code) + the pre-push run's Claude+Copilot adversarial specialists
+**Cross-source confirmations**: 2
+**CI**: none (repo has no CI gate, #42)
+
+### Findings
+- [ ] (cross-confirmed: Copilot R1 + Local Review pre-push #1/#4 + adversarials) GL cleanup without a current context — widget doneCurrent() before gpu_ member dtor's glDeleteTextures → undefined/leak/crash; add context-guarded gpu_.cleanup() — `src/gpu_color_map.cpp:87`,`src/waterfall_widget.cpp:67`
+- [ ] (cross-confirmed: Copilot R1 + Local Review pre-push #2 + adversarials) shader compile/link failure GTEST_SKIPs instead of FAIL — masks regressions — `test/test_gpu_color_map.cpp:198`
+- [ ] (must-fix, Copilot R1 — NEW, not in pre-push) GL-skip gate checks majorVersion()>=3 but code needs 3.3; a 3.0–3.2 context won't skip and the #version 330 shader then fails confusingly. Require >=3.3 — `test/test_waterfall_widget.cpp:90`,`test/test_gpu_color_map.cpp:93`
+- [ ] (note, Copilot R1) the context-guarded dtor fix needs #include <QOpenGLContext> — `src/gpu_color_map.cpp:32`
+- [ ] (carry-over from pre-push, not raised by Copilot) GL_MAX_TEXTURE_SIZE guard `src/waterfall_widget.cpp:185-219`; NaN shader guard `src/gpu_color_map.cpp:110`; add_row GUI-thread-only doc `waterfall_widget.hpp:67`; V-orientation test assertion; ring-buffer perf (tracked follow-up)
+
+### False positives
+- none — all 6 Copilot inline comments are valid.
