@@ -60,6 +60,15 @@ jobs:
           find . -maxdepth 1 -mindepth 1 -type d \
             ! -name marine_radar_control_msgs ! -name '.git' -exec rm -rf {} +
 
+      # marine_colormap (shared scalar colormap library, used by
+      # rqt_sonar_waterfall after the #45 migration) is also a source sibling,
+      # not a rosdep/binary package. It's a single-package repo, so clone it
+      # whole — no prune needed.
+      - name: Clone marine_colormap source dependency
+        run: |
+          git clone --depth 1 -b jazzy \
+            https://github.com/rolker/marine_colormap.git ../ws/src/marine_colormap
+
       - name: Install ROS dependencies
         working-directory: ../ws
         run: >
