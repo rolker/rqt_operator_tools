@@ -53,3 +53,22 @@ divide, member-poisoning-before-validation).
 ### Result
 Builds clean; 46 ament tests, 0 failures (8 gtest cases). Awaiting a fresh Copilot
 round at the new head before merge.
+
+## Integrated Review (PR #52 — Copilot round 2)
+**Status**: complete
+**When**: 2026-06-11 13:55 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Reviewed at**: `dcc1715` | **Fixes at**: pending push
+**Copilot comments**: 4 new (+4 round-1 re-anchored, already fixed) | **Valid**: 4 | **False positives**: 0
+
+Round 2 surfaced finer-grained versions of the same robustness theme plus the
+escalated teardown race. All valid, all fixed.
+
+### Findings
+- [x] (valid) sampleAt index static_cast<int> before bounds check — float->int overflow UB on malformed ping — `src/ping.cpp` (fixed: bound index_d in double, narrow to size_t)
+- [x] (valid) adjustPixmap starty/endy cast to int before clamp — out-of-int-range double UB — `src/echogram_widget.cpp` (fixed: std::clamp in double then cast)
+- [x] (valid) updateEchogram depth_sample_count cast to int before kMaxDepthSamples clamp — UB — `src/echogram_widget.cpp` (fixed: clamp in double then cast)
+- [x] (valid) shutdownPlugin queue-clear doesn't close teardown UAF — `src/marine_echogram_plugin.cpp` (fixed: QPointer<EchogramWidget> guard in newPings, matching sibling waterfall)
+
+### Result
+Builds clean; 46 ament tests, 0 failures. Awaiting Copilot round 3 at the new head.
