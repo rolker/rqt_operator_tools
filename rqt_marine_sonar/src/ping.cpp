@@ -58,9 +58,16 @@ float Ping::binSize() const
 float Ping::sampleAt(float depth) const
 {
   if (message_.image.dtype == marine_acoustic_msgs::msg::SonarImageData::DTYPE_FLOAT32) {
-    if (depth >= minimumDepth() && depth <= maximumDepth()) {
-      int index = (depth - minimumDepth()) / binSize();
-      return reinterpret_cast<const float *>(message_.image.data.data())[index];
+    // Half-open [minimumDepth, maximumDepth): at exactly maximumDepth the index
+    // would equal samples_per_beam, one past the last sample.
+    if (depth >= minimumDepth() && depth < maximumDepth()) {
+      const int index = static_cast<int>((depth - minimumDepth()) / binSize());
+      // samples_per_beam is a wire field; bound the read against the bytes that
+      // actually arrived (a truncated/malformed message must not over-read).
+      const size_t float_count = message_.image.data.size() / sizeof(float);
+      if (index >= 0 && static_cast<size_t>(index) < float_count) {
+        return reinterpret_cast<const float *>(message_.image.data.data())[index];
+      }
     }
   }
   return std::nan("");

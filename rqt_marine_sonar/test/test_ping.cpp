@@ -101,6 +101,29 @@ TEST(PingTest, SampleOutOfRangeIsNan)
   EXPECT_TRUE(std::isnan(ping.sampleAt(100.0f)));
 }
 
+TEST(PingTest, SampleAtUpperBoundIsNan)
+{
+  // At exactly maximumDepth() the index would be samples_per_beam (one past the
+  // last sample); the half-open interval must return NaN, not over-read.
+  const auto msg = makeFloatPing({1.0f, 2.0f, 3.0f, 4.0f}, /*sample0=*/0);
+  rqt_marine_sonar::Ping ping(msg);
+
+  EXPECT_TRUE(std::isnan(ping.sampleAt(ping.maximumDepth())));
+}
+
+TEST(PingTest, TruncatedDataIsNan)
+{
+  // samples_per_beam claims 4 samples but only 2 floats of data arrived; reads
+  // beyond the actual buffer must return NaN rather than over-reading.
+  auto msg = makeFloatPing({1.0f, 2.0f}, /*sample0=*/0);
+  msg.samples_per_beam = 4;  // lie about the count; data still holds 2 floats
+
+  rqt_marine_sonar::Ping ping(msg);
+  // Index 0 and 1 are backed by real data; 2 and 3 are past the buffer.
+  EXPECT_FLOAT_EQ(ping.sampleAt(0.0f), 1.0f);
+  EXPECT_TRUE(std::isnan(ping.sampleAt(2.0f)));   // index 2 -> beyond data
+}
+
 TEST(PingTest, NonFloatDtypeIsNan)
 {
   auto msg = makeFloatPing({1.0f, 2.0f}, /*sample0=*/0);

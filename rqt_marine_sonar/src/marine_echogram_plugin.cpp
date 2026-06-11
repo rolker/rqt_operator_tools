@@ -92,7 +92,11 @@ void MarineEchogramPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
 
 void MarineEchogramPlugin::shutdownPlugin()
 {
+  // Stop new callbacks first, then drop any pings already queued so a
+  // late newPings() (posted just before teardown) has nothing to push.
   data_subscriber_.reset();
+  std::lock_guard<std::mutex> lock(new_pings_mutex_);
+  new_pings_.clear();
 }
 
 void MarineEchogramPlugin::saveSettings(

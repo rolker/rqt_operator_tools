@@ -47,6 +47,11 @@ namespace rqt_marine_sonar
 namespace
 {
 
+/// Upper bound on the echogram's depth-sample (row) count. A degenerate ping
+/// (near-zero sample_rate, hence a tiny bin size) could otherwise produce a
+/// pathologically tall QImage that fails to allocate.
+constexpr int kMaxDepthSamples = 1 << 16;
+
 /// Map a message stamp to a strictly-ordered nanosecond key for the ping buffer.
 /// (The ROS 1 plugin keyed an std::map on ros::Time; this is the ROS 2 analogue
 /// without pulling in rclcpp::Time clock-source semantics.)
@@ -112,6 +117,9 @@ void EchogramWidget::wheelEvent(QWheelEvent * event)
 
   // figure out mouse position to focus zoom
   auto area = chart()->plotArea();
+  if (area.height() <= 0.0) {
+    return;  // not laid out yet / collapsed — nothing to zoom against
+  }
 
   auto pixel_focus = event->position().y() - area.top();
 
@@ -140,8 +148,11 @@ void EchogramWidget::mouseMoveEvent(QMouseEvent * event)
 {
   QChartView::mouseMoveEvent(event);
   if (translating_depth_) {
-    float dy = event->localPos().y() - depth_translation_start_;
     auto area = chart()->plotArea();
+    if (area.height() <= 0.0) {
+      return;
+    }
+    float dy = event->localPos().y() - depth_translation_start_;
     auto axis_range = depth_axis_->max() - depth_axis_->min();
     auto delta_depth = axis_range * dy / area.height();
     depth_offset_ = depth_offset_start_ - delta_depth;
@@ -175,6 +186,9 @@ void EchogramWidget::adjustAxis()
   depth_axis_->setRange(min, max);
 
   auto area = chart()->plotArea();
+  if (area.height() <= 0.0) {
+    return;  // not laid out yet — tick interval would divide by zero
+  }
   auto meters_per_pixel = range / area.height();
 
   // 100 pixel tick interval
@@ -199,6 +213,9 @@ void EchogramWidget::adjustAxis()
 void EchogramWidget::adjustPixmap()
 {
   auto area = chart()->plotArea();
+  if (bin_size_ <= 0.0 || area.width() <= 0.0 || area.height() <= 0.0) {
+    return;  // no valid ping geometry or no layout yet — nothing to place
+  }
 
   // scale to match display area width with echogram width
   double area_to_echogram_scale = area.width() / static_cast<double>(echogram_.width());
@@ -266,8 +283,16 @@ void EchogramWidget::updateEchogram()
     bin_size_ = std::min(bin_size_, ping.binSize());
   }
 
-  if (bin_size_ > 0.0) {
-    int depth_sample_count = (max_depth_ - min_depth_) / bin_size_;
+  const float db_range = max_db_ - min_db_;
+  if (bin_size_ > 0.0 && std::isfinite(bin_size_) && max_depth_ > min_depth_ &&
+    db_range > 0.0f)
+  {
+    // Clamp so a degenerate ping can't request an unallocatably tall image.
+    const int depth_sample_count =
+      std::min(static_cast<int>((max_depth_ - min_depth_) / bin_size_), kMaxDepthSamples);
+    if (depth_sample_count <= 0) {
+      return;
+    }
     echogram_ = QImage(maximum_ping_count_, depth_sample_count, QImage::Format_Grayscale8);
     echogram_.fill(Qt::black);
 
@@ -278,7 +303,7 @@ void EchogramWidget::updateEchogram()
       for (int sample_number = 0; sample_number < depth_sample_count; sample_number++) {
         float value = ping.sampleAt(min_depth_ + sample_number * bin_size_);
         if (!std::isnan(value)) {
-          const int gray = static_cast<int>(255 * ((value - min_db_) / (max_db_ - min_db_)));
+          const int gray = static_cast<int>(255 * ((value - min_db_) / db_range));
           echogram_.scanLine(sample_number)[ping_number] =
             std::max(0, std::min(254, gray));
         }
