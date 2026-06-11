@@ -1,0 +1,19 @@
+<library path="rqt_marine_sonar">
+  <class name="rqt_marine_sonar/MarineEchogram"
+         type="rqt_marine_sonar::MarineEchogramPlugin"
+         base_class_type="rqt_gui_cpp::Plugin">
+    <description>
+      Water-column echogram viewer for marine_acoustic_msgs/RawSonarImage.
+      Renders a depth-vs-ping "curtain" from a single-beam sonar or the nadir
+      beam of a multibeam, with mouse-wheel depth zoom and drag pan.
+    </description>
+    <qtgui>
+      <group>
+        <label>Robot Tools</label>
+      </group>
+      <label>Marine Echogram</label>
+      <icon type="theme">image-x-generic</icon>
+      <statustip>Display a water-column sonar echogram (depth vs. ping).</statustip>
+    </qtgui>
+  </class>
+</library>
