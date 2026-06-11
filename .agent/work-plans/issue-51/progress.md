@@ -32,3 +32,24 @@ real ones with behavior-preserving guards.
 ### Static analysis
 ament lint (cpplint, cpplint include-order, uncrustify, xmllint, copyright, etc.) — all pass.
 Unit tests: 7 gtest cases (Ping geometry + sampleAt boundary/truncation), 0 failures.
+
+## Integrated Review (PR #52 — Copilot round 1)
+**Status**: complete
+**When**: 2026-06-11 11:10 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Reviewed at**: `a1d9e1c` | **Fixes at**: `f20832d`
+**Copilot comments**: 4 | **Valid**: 4 | **False positives**: 0
+
+All four Copilot inline comments triaged against local code — all valid, all fixed.
+Three caught gaps the pre-push adversarial pass missed/deferred (endianness, ping_spacing
+divide, member-poisoning-before-validation).
+
+### Findings
+- [x] (valid) sampleAt reinterpret_cast strict-aliasing/alignment UB + ignores is_bigendian — `src/ping.cpp` (fixed: byte-assemble per is_bigendian + memcpy; +big-endian gtest)
+- [x] (valid) ping.cpp missing <cstring>/<cstdint> — `src/ping.cpp` (fixed: added)
+- [x] (valid) adjustPixmap divides by ping_spacing_; corrupted persisted value bypasses spin-box min — `src/echogram_widget.cpp` (fixed: finite/>0 guard)
+- [x] (valid) updateEchogram commits geometry to members before validating; malformed ping poisons wheelEvent/adjustAxis state — `src/echogram_widget.cpp` (fixed: validate in locals, commit only if finite/ordered/positive)
+
+### Result
+Builds clean; 46 ament tests, 0 failures (8 gtest cases). Awaiting a fresh Copilot
+round at the new head before merge.
