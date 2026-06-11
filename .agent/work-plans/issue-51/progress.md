@@ -87,3 +87,16 @@ Builds clean; 46 ament tests, 0 failures. Awaiting Copilot round 3 at the new he
 
 ### Result
 Builds clean; 58 ament tests, 0 failures (widget test runs offscreen, 7/7). Awaiting Copilot round 4.
+
+## Integrated Review (PR #52 — Copilot round 4)
+**Status**: complete
+**When**: 2026-06-11 15:05 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Reviewed at**: `2629e55` | **Copilot comments**: 1 new | **Valid**: 1 | **False positives**: 0
+(Round 4 first errored out Copilot-side; re-requested → clean review with 1 comment.)
+
+### Findings
+- [x] (valid) depth_sample_count truncating cast under-counts the deepest row (FP rounding) — `src/echogram_widget.cpp` (fixed: std::ceil before clamp/cast)
+
+### Result
+Builds clean; 58 ament tests, 0 failures. Findings converging (R1-3: 4 each, R4: 1). Awaiting round 5.
