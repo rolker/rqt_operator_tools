@@ -29,6 +29,7 @@
 #ifndef RQT_MARINE_SONAR__MARINE_ECHOGRAM_PLUGIN_HPP_
 #define RQT_MARINE_SONAR__MARINE_ECHOGRAM_PLUGIN_HPP_
 
+#include <QPointer>
 #include <QString>
 
 #include <rqt_gui_cpp/plugin.h>
@@ -79,6 +80,11 @@ protected slots:
 private:
   Ui::MarineEchogramWidget ui_;
   QWidget * widget_ = nullptr;
+
+  /// Guarded handle to the embedded canvas. QPointer auto-nulls when the widget
+  /// is destroyed, so a newPings() event queued just before teardown can't
+  /// dereference a freed widget on the GUI thread.
+  QPointer<EchogramWidget> echogram_;
 
   QString arg_topic_;
 

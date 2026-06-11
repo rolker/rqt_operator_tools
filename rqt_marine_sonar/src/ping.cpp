@@ -63,15 +63,18 @@ float Ping::sampleAt(float depth) const
     // Half-open [minimumDepth, maximumDepth): at exactly maximumDepth the index
     // would equal samples_per_beam, one past the last sample.
     if (depth >= minimumDepth() && depth < maximumDepth()) {
-      const int index = static_cast<int>((depth - minimumDepth()) / binSize());
       // samples_per_beam is a wire field; bound the read against the bytes that
       // actually arrived (a truncated/malformed message must not over-read).
+      // Bound the index in floating point before narrowing — a malformed ping
+      // (huge samples_per_beam / tiny bin) could otherwise overflow an int cast.
+      const double index_d = (depth - minimumDepth()) / binSize();
       const size_t float_count = message_.image.data.size() / sizeof(float);
-      if (index >= 0 && static_cast<size_t>(index) < float_count) {
+      if (index_d >= 0.0 && index_d < static_cast<double>(float_count)) {
+        const size_t index = static_cast<size_t>(index_d);
         // Assemble the 4 bytes per is_bigendian and memcpy into the float,
         // rather than reinterpret_cast'ing the uint8 blob (which would be a
         // strict-aliasing violation and could fault on strict-alignment archs).
-        const uint8_t * p = message_.image.data.data() + static_cast<size_t>(index) * sizeof(float);
+        const uint8_t * p = message_.image.data.data() + index * sizeof(float);
         uint32_t bits;
         if (message_.image.is_bigendian) {
           bits = (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |

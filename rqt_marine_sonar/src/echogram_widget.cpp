@@ -245,10 +245,13 @@ void EchogramWidget::adjustPixmap()
   // meters per pixel
   auto axis_scale = axis_range / static_cast<double>(area.height());
 
-  int starty = std::max(
-    0, std::min(echogram_.height(), static_cast<int>((axis_min_depth - min_depth_) / bin_size_)));
-  int endy = std::max(
-    0, std::min(echogram_.height(), static_cast<int>((axis_max_depth - min_depth_) / bin_size_)));
+  // Clamp in double before narrowing: after a large pan/zoom the ratio can fall
+  // outside the representable int range, where the float->int cast would be UB.
+  const double img_h = static_cast<double>(echogram_.height());
+  const int starty =
+    static_cast<int>(std::clamp((axis_min_depth - min_depth_) / bin_size_, 0.0, img_h));
+  const int endy =
+    static_cast<int>(std::clamp((axis_max_depth - min_depth_) / bin_size_, 0.0, img_h));
 
   auto pixmap = QPixmap::fromImage(echogram_).copy(
     startx, starty, visible_echogram_pixels, endy - starty);
@@ -299,9 +302,12 @@ void EchogramWidget::updateEchogram()
     max_depth_ = max_depth;
     bin_size_ = bin_size;
 
-    // Clamp so a degenerate ping can't request an unallocatably tall image.
-    const int depth_sample_count =
-      std::min(static_cast<int>((max_depth_ - min_depth_) / bin_size_), kMaxDepthSamples);
+    // Clamp in double before narrowing so a degenerate ping (tiny finite bin)
+    // can't overflow the int cast; the cap also bounds the image allocation.
+    const int depth_sample_count = static_cast<int>(
+      std::min(
+        static_cast<double>(max_depth_ - min_depth_) / bin_size_,
+        static_cast<double>(kMaxDepthSamples)));
     if (depth_sample_count <= 0) {
       return;
     }

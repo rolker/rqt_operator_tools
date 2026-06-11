@@ -57,6 +57,7 @@ void MarineEchogramPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
 {
   widget_ = new QWidget();
   ui_.setupUi(widget_);
+  echogram_ = ui_.echogramWidget;
 
   widget_->setWindowTitle(
     widget_->windowTitle() + " (" + QString::number(context.serialNumber()) + ")");
@@ -205,8 +206,12 @@ void MarineEchogramPlugin::dataCallback(
 void MarineEchogramPlugin::newPings()
 {
   std::lock_guard<std::mutex> lock(new_pings_mutex_);
-  for (const auto & ping : new_pings_) {
-    ui_.echogramWidget->addPing(ping);
+  // echogram_ is null once the widget is torn down — a stale queued event then
+  // drops its pings instead of dereferencing freed memory on the GUI thread.
+  if (echogram_) {
+    for (const auto & ping : new_pings_) {
+      echogram_->addPing(ping);
+    }
   }
   new_pings_.clear();
 }
