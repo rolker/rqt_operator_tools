@@ -302,11 +302,14 @@ void EchogramWidget::updateEchogram()
     max_depth_ = max_depth;
     bin_size_ = bin_size;
 
-    // Clamp in double before narrowing so a degenerate ping (tiny finite bin)
-    // can't overflow the int cast; the cap also bounds the image allocation.
+    // ceil so the image height fully covers the half-open interval
+    // [min_depth, max_depth) — a truncating cast can drop the deepest row to
+    // floating-point rounding. Clamp in double before narrowing so a degenerate
+    // ping (tiny finite bin) can't overflow the int cast; the cap also bounds
+    // the image allocation.
     const int depth_sample_count = static_cast<int>(
       std::min(
-        static_cast<double>(max_depth_ - min_depth_) / bin_size_,
+        std::ceil(static_cast<double>(max_depth_ - min_depth_) / bin_size_),
         static_cast<double>(kMaxDepthSamples)));
     if (depth_sample_count <= 0) {
       return;
