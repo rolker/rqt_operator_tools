@@ -72,3 +72,18 @@ escalated teardown race. All valid, all fixed.
 
 ### Result
 Builds clean; 46 ament tests, 0 failures. Awaiting Copilot round 3 at the new head.
+
+## Integrated Review (PR #52 — Copilot round 3)
+**Status**: complete
+**When**: 2026-06-11 14:15 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Reviewed at**: `e8ea0f8` | **Copilot comments**: 4 new | **Valid**: 4 | **False positives**: 0
+
+### Findings
+- [x] (valid) newPings holds mutex during GUI redraw — blocks executor thread — `src/marine_echogram_plugin.cpp` (fixed: swap-under-lock, redraw lock-free)
+- [x] (valid) +/-inf samples pass !isnan -> int(inf) UB in gray mapping — `src/echogram_widget.cpp` (fixed: std::isfinite)
+- [x] (valid) string SIGNAL/SLOT vs repo's typed connects — `src/marine_echogram_plugin.cpp` (fixed: function-pointer overloads)
+- [x] (valid) EchogramWidget hardening untested — (fixed: added offscreen test_echogram_widget.cpp, 7 cases, mirrors sibling waterfall widget test)
+
+### Result
+Builds clean; 58 ament tests, 0 failures (widget test runs offscreen, 7/7). Awaiting Copilot round 4.
