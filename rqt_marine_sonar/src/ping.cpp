@@ -29,6 +29,8 @@
 #include "rqt_marine_sonar/ping.hpp"
 
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <utility>
 
 namespace rqt_marine_sonar
@@ -66,7 +68,21 @@ float Ping::sampleAt(float depth) const
       // actually arrived (a truncated/malformed message must not over-read).
       const size_t float_count = message_.image.data.size() / sizeof(float);
       if (index >= 0 && static_cast<size_t>(index) < float_count) {
-        return reinterpret_cast<const float *>(message_.image.data.data())[index];
+        // Assemble the 4 bytes per is_bigendian and memcpy into the float,
+        // rather than reinterpret_cast'ing the uint8 blob (which would be a
+        // strict-aliasing violation and could fault on strict-alignment archs).
+        const uint8_t * p = message_.image.data.data() + static_cast<size_t>(index) * sizeof(float);
+        uint32_t bits;
+        if (message_.image.is_bigendian) {
+          bits = (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+            (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
+        } else {
+          bits = (static_cast<uint32_t>(p[3]) << 24) | (static_cast<uint32_t>(p[2]) << 16) |
+            (static_cast<uint32_t>(p[1]) << 8) | static_cast<uint32_t>(p[0]);
+        }
+        float value;
+        std::memcpy(&value, &bits, sizeof(value));
+        return value;
       }
     }
   }

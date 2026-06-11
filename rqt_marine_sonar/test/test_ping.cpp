@@ -29,6 +29,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <vector>
 
@@ -131,4 +132,30 @@ TEST(PingTest, NonFloatDtypeIsNan)
   rqt_marine_sonar::Ping ping(msg);
 
   EXPECT_TRUE(std::isnan(ping.sampleAt(0.0f)));
+}
+
+TEST(PingTest, BigEndianDecode)
+{
+  // A single FLOAT32 sample encoded big-endian; with is_bigendian set, sampleAt
+  // must reassemble the bytes correctly (host-byte-order independent).
+  marine_acoustic_msgs::msg::RawSonarImage msg;
+  msg.ping_info.sound_speed = 1500.0f;
+  msg.sample_rate = 1000.0f;
+  msg.sample0 = 0;
+  msg.samples_per_beam = 1;
+  msg.image.dtype = marine_acoustic_msgs::msg::SonarImageData::DTYPE_FLOAT32;
+  msg.image.is_bigendian = true;
+
+  const float expected = 42.5f;
+  uint32_t bits;
+  std::memcpy(&bits, &expected, sizeof(bits));
+  msg.image.data = {
+    static_cast<uint8_t>((bits >> 24) & 0xFF),
+    static_cast<uint8_t>((bits >> 16) & 0xFF),
+    static_cast<uint8_t>((bits >> 8) & 0xFF),
+    static_cast<uint8_t>(bits & 0xFF),
+  };
+
+  rqt_marine_sonar::Ping ping(msg);
+  EXPECT_FLOAT_EQ(ping.sampleAt(0.0f), expected);
 }

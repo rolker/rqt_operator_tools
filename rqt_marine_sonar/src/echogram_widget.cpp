@@ -213,7 +213,11 @@ void EchogramWidget::adjustAxis()
 void EchogramWidget::adjustPixmap()
 {
   auto area = chart()->plotArea();
-  if (bin_size_ <= 0.0 || area.width() <= 0.0 || area.height() <= 0.0) {
+  // ping_spacing_ divides below; a corrupted persisted value can reach here
+  // (restoreSettings sets it before the spin box clamps to its 1.0 minimum).
+  if (bin_size_ <= 0.0 || ping_spacing_ <= 0.0f || !std::isfinite(ping_spacing_) ||
+    area.width() <= 0.0 || area.height() <= 0.0)
+  {
     return;  // no valid ping geometry or no layout yet — nothing to place
   }
 
@@ -272,21 +276,29 @@ void EchogramWidget::updateEchogram()
     return;
   }
 
+  // Compute geometry into locals and validate before committing to members:
+  // a malformed ping (e.g. sample_rate == 0) yields inf/NaN here, and the
+  // members feed wheelEvent()/adjustAxis() — poisoning them could hang the
+  // tick-interval loop on a NaN comparison.
   Ping first_ping(pings_.begin()->second);
-  min_depth_ = first_ping.minimumDepth();
-  max_depth_ = first_ping.maximumDepth();
-  bin_size_ = first_ping.binSize();
+  float min_depth = first_ping.minimumDepth();
+  float max_depth = first_ping.maximumDepth();
+  float bin_size = first_ping.binSize();
   for (const auto & p : pings_) {
     Ping ping(p.second);
-    min_depth_ = std::min(min_depth_, ping.minimumDepth());
-    max_depth_ = std::max(max_depth_, ping.maximumDepth());
-    bin_size_ = std::min(bin_size_, ping.binSize());
+    min_depth = std::min(min_depth, ping.minimumDepth());
+    max_depth = std::max(max_depth, ping.maximumDepth());
+    bin_size = std::min(bin_size, ping.binSize());
   }
 
   const float db_range = max_db_ - min_db_;
-  if (bin_size_ > 0.0 && std::isfinite(bin_size_) && max_depth_ > min_depth_ &&
-    db_range > 0.0f)
+  if (bin_size > 0.0f && std::isfinite(bin_size) && std::isfinite(min_depth) &&
+    std::isfinite(max_depth) && max_depth > min_depth && db_range > 0.0f)
   {
+    min_depth_ = min_depth;
+    max_depth_ = max_depth;
+    bin_size_ = bin_size;
+
     // Clamp so a degenerate ping can't request an unallocatably tall image.
     const int depth_sample_count =
       std::min(static_cast<int>((max_depth_ - min_depth_) / bin_size_), kMaxDepthSamples);
