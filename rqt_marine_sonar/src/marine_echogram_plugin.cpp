@@ -29,12 +29,15 @@
 #include "rqt_marine_sonar/marine_echogram_plugin.hpp"
 
 #include <QChart>
+#include <QComboBox>
 #include <QIcon>
 #include <QList>
 #include <QMetaObject>
+#include <QPushButton>
 
 #include <algorithm>
 #include <string>
+#include <vector>
 
 #include <pluginlib/class_list_macros.hpp>
 
@@ -78,10 +81,13 @@ void MarineEchogramPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
 
   ui_.topicsComboBox->setCurrentIndex(ui_.topicsComboBox->findText(""));
   connect(
-    ui_.topicsComboBox, SIGNAL(currentIndexChanged(int)), this, SLOT(onTopicChanged(int)));
+    ui_.topicsComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
+    this, &MarineEchogramPlugin::onTopicChanged);
 
   ui_.refreshTopicsPushButton->setIcon(QIcon::fromTheme("view-refresh"));
-  connect(ui_.refreshTopicsPushButton, SIGNAL(pressed()), this, SLOT(updateTopicList()));
+  connect(
+    ui_.refreshTopicsPushButton, &QPushButton::pressed,
+    this, &MarineEchogramPlugin::updateTopicList);
 
   // set topic name if passed in as argument
   const QStringList & argv = context.argv();
@@ -205,15 +211,21 @@ void MarineEchogramPlugin::dataCallback(
 
 void MarineEchogramPlugin::newPings()
 {
-  std::lock_guard<std::mutex> lock(new_pings_mutex_);
-  // echogram_ is null once the widget is torn down — a stale queued event then
-  // drops its pings instead of dereferencing freed memory on the GUI thread.
+  // Swap the queue out under the lock, then redraw without holding it: addPing()
+  // rebuilds the whole image, and holding new_pings_mutex_ across that would
+  // block dataCallback() on the executor thread (callback latency / drops).
+  std::vector<marine_acoustic_msgs::msg::RawSonarImage> pings;
+  {
+    std::lock_guard<std::mutex> lock(new_pings_mutex_);
+    pings.swap(new_pings_);
+  }
+  // echogram_ is null once the widget is torn down — drop the pings instead of
+  // dereferencing freed memory on the GUI thread.
   if (echogram_) {
-    for (const auto & ping : new_pings_) {
+    for (const auto & ping : pings) {
       echogram_->addPing(ping);
     }
   }
-  new_pings_.clear();
 }
 
 void MarineEchogramPlugin::on_minDbDoubleSpinBox_valueChanged(double value)

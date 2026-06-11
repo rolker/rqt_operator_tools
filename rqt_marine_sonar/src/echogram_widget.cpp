@@ -320,7 +320,9 @@ void EchogramWidget::updateEchogram()
       Ping ping(ping_message.second);
       for (int sample_number = 0; sample_number < depth_sample_count; sample_number++) {
         float value = ping.sampleAt(min_depth_ + sample_number * bin_size_);
-        if (!std::isnan(value)) {
+        // isfinite (not just !isnan): a FLOAT32 payload may legally contain
+        // +/-inf, and int(inf) in the gray mapping below would be UB.
+        if (std::isfinite(value)) {
           const int gray = static_cast<int>(255 * ((value - min_db_) / db_range));
           echogram_.scanLine(sample_number)[ping_number] =
             std::max(0, std::min(254, gray));

@@ -103,6 +103,19 @@ if(BUILD_TESTING)
   target_include_directories(test_ping PRIVATE include)
   ament_target_dependencies(test_ping marine_acoustic_msgs)
 
+  # Offscreen widget smoke/robustness test. Links the main library so the
+  # widget's MOC metaobjects are available; CPU QtCharts rendering needs no GL,
+  # only the offscreen QPA platform.
+  ament_add_gtest(test_echogram_widget
+    test/test_echogram_widget.cpp
+  )
+  target_include_directories(test_echogram_widget PRIVATE include)
+  ament_target_dependencies(test_echogram_widget marine_acoustic_msgs)
+  target_link_libraries(test_echogram_widget
+    ${PROJECT_NAME} Qt5::Widgets Qt5::Gui Qt5::Charts)
+  set_tests_properties(test_echogram_widget PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
   ament_lint_auto_find_test_dependencies()
 endif()
 
