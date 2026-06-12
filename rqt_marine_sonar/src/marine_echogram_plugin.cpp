@@ -37,6 +37,7 @@
 #include <QSignalBlocker>
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -261,9 +262,7 @@ void MarineEchogramPlugin::newPings()
   // echogram_ is null once the widget is torn down — drop the pings instead of
   // dereferencing freed memory on the GUI thread.
   if (echogram_) {
-    if (!pings.empty()) {
-      maybeSeedValueWindow(pings.front());
-    }
+    maybeSeedValueWindow(pings);
     // Batch ingest: one image rebuild for the whole burst instead of one per
     // ping (fast bag replay can queue dozens of pings per GUI-thread wakeup).
     echogram_->addPings(pings);
@@ -271,7 +270,7 @@ void MarineEchogramPlugin::newPings()
 }
 
 void MarineEchogramPlugin::maybeSeedValueWindow(
-  const marine_acoustic_msgs::msg::RawSonarImage & ping)
+  const std::vector<marine_acoustic_msgs::msg::RawSonarImage> & pings)
 {
   // Runs on the GUI thread (newPings). A degenerate window (max <= min) means
   // "not yet configured" -- neither restored settings nor the operator set it
@@ -288,10 +287,25 @@ void MarineEchogramPlugin::maybeSeedValueWindow(
   if (ui_.maxValueDoubleSpinBox->value() > ui_.minValueDoubleSpinBox->value()) {
     return;
   }
+  // Seed from the first ping the widget can actually display: a malformed
+  // leading ping (unsupported dtype, empty image) gets dropped at ingest, and
+  // seeding from its dtype would lock in a wrong, no-longer-degenerate
+  // window. The extra decode runs only while the window is unset.
+  const marine_acoustic_msgs::msg::RawSonarImage * seed_ping = nullptr;
+  for (const auto & ping : pings) {
+    if (!rqt_sonar_waterfall::decode_samples(ping.image).empty()) {
+      seed_ping = &ping;
+      break;
+    }
+  }
+  if (seed_ping == nullptr) {
+    return;
+  }
   using Img = marine_acoustic_msgs::msg::SonarImageData;
+  const uint32_t dtype = seed_ping->image.dtype;
   double lo = 0.0;
-  double hi = rqt_sonar_waterfall::default_full_scale(ping.image.dtype);
-  if (ping.image.dtype == Img::DTYPE_FLOAT32 || ping.image.dtype == Img::DTYPE_FLOAT64) {
+  double hi = rqt_sonar_waterfall::default_full_scale(dtype);
+  if (dtype == Img::DTYPE_FLOAT32 || dtype == Img::DTYPE_FLOAT64) {
     lo = -100.0;
     hi = 10.0;
   }

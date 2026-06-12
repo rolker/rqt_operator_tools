@@ -66,6 +66,12 @@ public:
   int colorMapIndex() const;
   float pingSpacing() const;
 
+  /// The rendered echogram raster (pings x depth bins, before on-screen
+  /// scaling). Exposed so tests can assert on actual sample rendering --
+  /// grabbing the whole widget picks up axis-label text, whose subpixel
+  /// antialiasing fringes defeat color-based checks.
+  QImage echogramImage() const {return echogram_;}
+
 signals:
   void mouseMoved(QPointF position);
 

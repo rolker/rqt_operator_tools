@@ -101,9 +101,11 @@ private:
   std::vector<marine_acoustic_msgs::msg::RawSonarImage> new_pings_;
   std::mutex new_pings_mutex_;
 
-  /// Seed the value window from a ping's dtype when the window is unset
-  /// (degenerate, max <= min). Runs on the GUI thread (newPings).
-  void maybeSeedValueWindow(const marine_acoustic_msgs::msg::RawSonarImage & ping);
+  /// Seed the value window when it is unset (degenerate, max <= min) from the
+  /// dtype of the first displayable ping in the burst. Runs on the GUI thread
+  /// (newPings).
+  void maybeSeedValueWindow(
+    const std::vector<marine_acoustic_msgs::msg::RawSonarImage> & pings);
 };
 
 }  // namespace rqt_marine_sonar

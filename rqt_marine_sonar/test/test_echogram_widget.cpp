@@ -70,6 +70,24 @@ marine_acoustic_msgs::msg::RawSonarImage makePing(
   return msg;
 }
 
+// Count "amber" pixels (r >> b, the Bronze palette's signature) in an image.
+// Run against EchogramWidget::echogramImage(), not a widget grab: axis-label
+// text in a grab carries subpixel-antialiasing color fringes that satisfy any
+// color heuristic and would make these checks pass without any rendering.
+int countAmber(const QImage & img)
+{
+  int n = 0;
+  for (int y = 0; y < img.height(); ++y) {
+    for (int x = 0; x < img.width(); ++x) {
+      const QRgb px = img.pixel(x, y);
+      if (qRed(px) > qBlue(px) + 20) {
+        ++n;
+      }
+    }
+  }
+  return n;
+}
+
 class EchogramWidgetTest : public ::testing::Test
 {
 protected:
@@ -162,17 +180,7 @@ TEST_F(EchogramWidgetTest, Uint16PingRendersColormapped)
   }
   QCoreApplication::processEvents();
 
-  const QImage grabbed = w.grab().toImage();
-  int amber = 0;
-  for (int y = 0; y < grabbed.height(); ++y) {
-    for (int x = 0; x < grabbed.width(); ++x) {
-      const QRgb px = grabbed.pixel(x, y);
-      if (qRed(px) > qBlue(px) + 20) {
-        ++amber;
-      }
-    }
-  }
-  EXPECT_GT(amber, 0) << "no colormapped sample pixels rendered";
+  EXPECT_GT(countAmber(w.echogramImage()), 0) << "no colormapped sample pixels rendered";
 }
 
 TEST_F(EchogramWidgetTest, NanGeometryPingDoesNotPoisonRender)
@@ -199,17 +207,32 @@ TEST_F(EchogramWidgetTest, NanGeometryPingDoesNotPoisonRender)
   w.addPing(good);
   QCoreApplication::processEvents();
 
-  const QImage grabbed = w.grab().toImage();
-  int amber = 0;
-  for (int y = 0; y < grabbed.height(); ++y) {
-    for (int x = 0; x < grabbed.width(); ++x) {
-      const QRgb px = grabbed.pixel(x, y);
-      if (qRed(px) > qBlue(px) + 20) {
-        ++amber;
-      }
-    }
+  EXPECT_GT(countAmber(w.echogramImage()), 0)
+    << "good pings must still render after a NaN-geometry ping";
+}
+
+TEST_F(EchogramWidgetTest, ResetWindowClearsStaleImage)
+{
+  // Setting a degenerate value window (the operator's "reseed" request) must
+  // clear the rendering, not leave the previous image on screen.
+  EchogramWidget w(nullptr);
+  w.resize(320, 240);
+  w.setMinimumValue(0.0f);
+  w.setMaximumValue(10.0f);
+  w.setColorMapIndex(1);  // Bronze: rendered samples are amber (r >> b)
+  for (int i = 0; i < 8; ++i) {
+    auto ping = makePing({5.0f, 6.0f, 7.0f, 8.0f});
+    ping.header.stamp.nanosec = 1000u * static_cast<uint32_t>(i);
+    w.addPing(ping);
   }
-  EXPECT_GT(amber, 0) << "good pings must still render after a NaN-geometry ping";
+  QCoreApplication::processEvents();
+
+  ASSERT_GT(countAmber(w.echogramImage()), 0) << "precondition: pings rendered";
+
+  w.setMaximumValue(0.0f);  // window now degenerate = "unset"
+  QCoreApplication::processEvents();
+  EXPECT_EQ(countAmber(w.echogramImage()), 0)
+    << "stale rendering survived a value-window reset";
 }
 
 TEST_F(EchogramWidgetTest, AddPingsBatchMixedValidity)

@@ -342,10 +342,6 @@ void EchogramWidget::updateEchogram()
   if (bin_size > 0.0f && std::isfinite(bin_size) && std::isfinite(min_depth) &&
     std::isfinite(max_depth) && max_depth > min_depth && value_max_ > value_min_)
   {
-    min_depth_ = min_depth;
-    max_depth_ = max_depth;
-    bin_size_ = bin_size;
-
     // ceil so the image height fully covers the half-open interval
     // [min_depth, max_depth) — a truncating cast can drop the deepest row to
     // floating-point rounding. Clamp in double before narrowing so a degenerate
@@ -353,18 +349,25 @@ void EchogramWidget::updateEchogram()
     // the image allocation.
     const int depth_sample_count = static_cast<int>(
       std::min(
-        std::ceil(static_cast<double>(max_depth_ - min_depth_) / bin_size_),
+        std::ceil(static_cast<double>(max_depth - min_depth) / bin_size),
         static_cast<double>(kMaxDepthSamples)));
     if (depth_sample_count <= 0) {
       return;
     }
-    echogram_ = QImage(maximum_ping_count_, depth_sample_count, QImage::Format_RGB32);
-    if (echogram_.isNull()) {
-      // Allocation can fail (worst case kMaxDepthSamples rows ~ half a GiB);
-      // QImage signals that with a null image rather than throwing.
+    // Render into a local image and commit it together with the geometry
+    // members only on success: allocation can fail (worst case
+    // kMaxDepthSamples rows ~ half a GiB; QImage signals that with a null
+    // image rather than throwing), and adjustPixmap() divides by the
+    // committed image's width — keep the previous consistent image/geometry
+    // pair rather than a null one.
+    QImage fresh(maximum_ping_count_, depth_sample_count, QImage::Format_RGB32);
+    if (fresh.isNull()) {
       return;
     }
-    echogram_.fill(Qt::black);
+    fresh.fill(Qt::black);
+    min_depth_ = min_depth;
+    max_depth_ = max_depth;
+    bin_size_ = bin_size;
 
     uint32_t ping_count = pings_.size();
     uint32_t ping_number = maximum_ping_count_ - ping_count;
@@ -393,14 +396,22 @@ void EchogramWidget::updateEchogram()
           const float t = rqt_sonar_waterfall::scale_intensity(
             value, value_min_, value_max_, gain_, contrast_);
           const rqt_sonar_waterfall::Rgb c = color_map_.lookup(t);
-          reinterpret_cast<QRgb *>(echogram_.scanLine(sample_number))[ping_number] =
+          reinterpret_cast<QRgb *>(fresh.scanLine(sample_number))[ping_number] =
             qRgb(c.r, c.g, c.b);
         }
       }
       ping_number++;
     }
+    echogram_ = std::move(fresh);
 
     adjustAxis();
+  } else {
+    // Degenerate value window = the "unset" state (also how the operator
+    // requests a reseed): show the placeholder instead of a stale rendering
+    // so the reset visibly takes effect.
+    echogram_ = QImage(maximum_ping_count_, maximum_ping_count_, QImage::Format_RGB32);
+    echogram_.fill(Qt::lightGray);
+    pixmap_item_->setPixmap(QPixmap::fromImage(echogram_));
   }
 }
 
