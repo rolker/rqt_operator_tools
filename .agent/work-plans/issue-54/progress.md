@@ -35,3 +35,27 @@ old inverted-form bounds checks, which NaN geometry sails through.
 ament lint — pass. gtest: 283 tests, 0 failures (new: NanGeometryPingDoesNotPoisonRender,
 AddPingsBatchMixedValidity; existing #54 dtype-decode + render regressions all green).
 Local uncrustify 0.78.1 drift not applicable (CI version is authoritative).
+
+## Integrated Review (PR #55 — Copilot round 1)
+**Status**: complete
+**When**: 2026-06-12 13:55 -04:00
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Reviewed at**: `646b6be` | **Fixes at**: `b01aa46`
+
+All 3 comments real; all fixed.
+
+- [x] null `echogram_` after failed allocation feeds adjustPixmap()'s division —
+  render into a local QImage, commit image + geometry members together only on
+  success (previous consistent pair kept otherwise)
+- [x] degenerate value window left the stale rendering on screen — else branch
+  now resets to the lightGray placeholder, so the operator's reseed request
+  (max <= min) visibly takes effect (ResetWindowClearsStaleImage test)
+- [x] maybeSeedValueWindow() seeded from the burst's front ping even if
+  undisplayable — now scans for the first ping decode_samples() accepts; the
+  extra decode runs only while the window is unset
+
+Collateral find while testing the blank-on-reset behavior: the grab()-based
+amber-pixel assertions were satisfied by subpixel-antialiasing fringes on the
+QtCharts axis-label text — they could pass with no rendering at all. Added an
+echogramImage() accessor and pointed all render assertions at the raster.
+gtest: 284 tests, 0 failures.
