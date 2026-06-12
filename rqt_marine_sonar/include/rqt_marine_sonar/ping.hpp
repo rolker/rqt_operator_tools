@@ -30,6 +30,7 @@
 #define RQT_MARINE_SONAR__PING_HPP_
 
 #include <utility>
+#include <vector>
 
 #include <marine_acoustic_msgs/msg/raw_sonar_image.hpp>
 
@@ -53,9 +54,11 @@ public:
   /// Depth (m) spanned by one sample.
   float binSize() const;
 
-  /// Backscatter value at the given depth (m), or NaN if out of range or the
-  /// image is not FLOAT32.
-  float sampleAt(float depth) const;
+  /// All backscatter samples decoded to float, any dtype (UINT8..FLOAT64,
+  /// endian-safe; integer counts and dB floats alike). Delegates to the shared
+  /// rqt_sonar_waterfall decoder so both sonar plugins read samples
+  /// identically. Empty for an unknown dtype.
+  std::vector<float> samples() const;
 
 private:
   const marine_acoustic_msgs::msg::RawSonarImage & message_;

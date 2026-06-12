@@ -36,17 +36,22 @@
 
 #include <cstdint>
 #include <map>
+#include <vector>
 
 #include <marine_acoustic_msgs/msg/raw_sonar_image.hpp>
+#include <rqt_sonar_waterfall/color_map.hpp>
 
 namespace rqt_marine_sonar
 {
 
 /// Scrolling water-column echogram. Each incoming RawSonarImage ping becomes a
-/// vertical column of the grayscale image; depth runs down the left QValueAxis.
-/// Pings are depth-binned to a shared bin size and mapped from a [min dB, max dB]
-/// window onto the grayscale ramp. The view supports mouse-wheel depth zoom
-/// (Ctrl for fine zoom, focused on the cursor) and left-drag depth panning.
+/// vertical column of the image; depth runs down the left QValueAxis. Pings of
+/// any sample dtype (decoded once on arrival via the shared
+/// rqt_sonar_waterfall decoder) are depth-binned to a shared bin size and
+/// mapped through the marine_colormap pipeline (normalize against the
+/// [min, max] value window -> gain -> contrast -> palette). The view supports
+/// mouse-wheel depth zoom (Ctrl for fine zoom, focused on the cursor) and
+/// left-drag depth panning.
 class EchogramWidget : public QtCharts::QChartView
 {
   Q_OBJECT
@@ -54,8 +59,11 @@ class EchogramWidget : public QtCharts::QChartView
 public:
   explicit EchogramWidget(QWidget * parent);
 
-  float minimumDB() const;
-  float maximumDB() const;
+  float minimumValue() const;
+  float maximumValue() const;
+  float gain() const;
+  float contrast() const;
+  int colorMapIndex() const;
   float pingSpacing() const;
 
 signals:
@@ -63,8 +71,11 @@ signals:
 
 public slots:
   void addPing(const marine_acoustic_msgs::msg::RawSonarImage & ping);
-  void setMinimumDB(float min_db);
-  void setMaximumDB(float max_db);
+  void setMinimumValue(float value);
+  void setMaximumValue(float value);
+  void setGain(float gain);
+  void setContrast(float contrast);
+  void setColorMapIndex(int index);
 
   /// Set the horizontal spacing between pings for display.
   void setPingSpacing(float spacing);
@@ -82,11 +93,26 @@ protected slots:
   void adjustAxis();
 
 private:
-  std::map<int64_t, marine_acoustic_msgs::msg::RawSonarImage> pings_;
+  /// One ping, decoded once on arrival: geometry + float samples (any dtype).
+  struct DecodedPing
+  {
+    float min_depth;
+    float max_depth;
+    float bin_size;
+    std::vector<float> samples;
+  };
+
+  std::map<int64_t, DecodedPing> pings_;
   int maximum_ping_count_ = 2048;
 
-  float min_db_ = -100.0;
-  float max_db_ = 10.0;
+  // Display window: raw sample values mapped to [0, 1] before gain/contrast.
+  // Degenerate (max <= min) means "not yet configured" -- the plugin seeds a
+  // dtype-aware default on the first ping.
+  float value_min_ = 0.0;
+  float value_max_ = 0.0;
+  float gain_ = 1.0;
+  float contrast_ = 1.0;
+  rqt_sonar_waterfall::ColorMap color_map_;
   float ping_spacing_ = 1.0;
 
   float min_depth_ = 0.0;

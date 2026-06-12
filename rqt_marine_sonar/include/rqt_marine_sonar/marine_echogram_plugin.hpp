@@ -73,8 +73,11 @@ protected slots:
   virtual void onTopicChanged(int index);
   void newPings();
 
-  void on_minDbDoubleSpinBox_valueChanged(double value);
-  void on_maxDbDoubleSpinBox_valueChanged(double value);
+  void on_minValueDoubleSpinBox_valueChanged(double value);
+  void on_maxValueDoubleSpinBox_valueChanged(double value);
+  void on_gainDoubleSpinBox_valueChanged(double value);
+  void on_contrastDoubleSpinBox_valueChanged(double value);
+  void on_paletteComboBox_currentIndexChanged(int index);
   void on_pingSpacingDoubleSpinBox_valueChanged(double value);
 
 private:
@@ -93,6 +96,10 @@ private:
 
   std::vector<marine_acoustic_msgs::msg::RawSonarImage> new_pings_;
   std::mutex new_pings_mutex_;
+
+  /// Seed the value window from a ping's dtype when the window is unset
+  /// (degenerate, max <= min). Runs on the GUI thread (newPings).
+  void maybeSeedValueWindow(const marine_acoustic_msgs::msg::RawSonarImage & ping);
 };
 
 }  // namespace rqt_marine_sonar
