@@ -61,7 +61,8 @@ jobs:
             ! -name marine_radar_control_msgs ! -name '.git' -exec rm -rf {} +
 
       # marine_colormap (shared scalar colormap library, used by
-      # rqt_sonar_waterfall after the #45 migration) is also a source sibling,
+      # rqt_sonar_waterfall since the #45 migration and by rqt_marine_sonar
+      # through the shared decode/colormap stack) is also a source sibling,
       # not a rosdep/binary package. It's a single-package repo, so clone it
       # whole — no prune needed.
       - name: Clone marine_colormap source dependency
