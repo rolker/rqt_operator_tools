@@ -71,6 +71,11 @@ signals:
 
 public slots:
   void addPing(const marine_acoustic_msgs::msg::RawSonarImage & ping);
+  /// Ingest a burst of pings with a single image rebuild at the end. Prefer
+  /// this over per-ping addPing() when draining a queue (e.g. fast bag
+  /// replay): the rebuild is O(buffer), so per-ping rebuilds make a burst
+  /// of N pings O(N * buffer).
+  void addPings(const std::vector<marine_acoustic_msgs::msg::RawSonarImage> & pings);
   void setMinimumValue(float value);
   void setMaximumValue(float value);
   void setGain(float gain);
@@ -101,6 +106,10 @@ private:
     float bin_size;
     std::vector<float> samples;
   };
+
+  /// Decode and buffer one ping without rebuilding the image. Returns true if
+  /// the ping was accepted (displayable dtype, finite non-degenerate geometry).
+  bool ingestPing(const marine_acoustic_msgs::msg::RawSonarImage & ping);
 
   std::map<int64_t, DecodedPing> pings_;
   int maximum_ping_count_ = 2048;

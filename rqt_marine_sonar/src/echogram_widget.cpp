@@ -31,6 +31,7 @@
 #include <QChart>
 #include <QGuiApplication>
 #include <QWheelEvent>
+#include <QtGlobal>
 
 #include <algorithm>
 #include <cmath>
@@ -87,6 +88,25 @@ EchogramWidget::EchogramWidget(QWidget * parent)
 
 void EchogramWidget::addPing(const marine_acoustic_msgs::msg::RawSonarImage & ping)
 {
+  if (ingestPing(ping)) {
+    updateEchogram();
+  }
+}
+
+void EchogramWidget::addPings(
+  const std::vector<marine_acoustic_msgs::msg::RawSonarImage> & pings)
+{
+  bool any_accepted = false;
+  for (const auto & ping : pings) {
+    any_accepted = ingestPing(ping) || any_accepted;
+  }
+  if (any_accepted) {
+    updateEchogram();
+  }
+}
+
+bool EchogramWidget::ingestPing(const marine_acoustic_msgs::msg::RawSonarImage & ping)
+{
   // Decode once on arrival (any dtype, via the shared waterfall decoder);
   // redraws then index the float cache instead of re-reading raw bytes.
   Ping view(ping);
@@ -96,13 +116,28 @@ void EchogramWidget::addPing(const marine_acoustic_msgs::msg::RawSonarImage & pi
   decoded.bin_size = view.binSize();
   decoded.samples = view.samples();
   if (decoded.samples.empty()) {
-    return;  // unknown dtype or empty image -- nothing displayable
+    qWarning(
+      "EchogramWidget: dropping ping with unsupported dtype %u or empty image",
+      static_cast<unsigned>(ping.image.dtype));
+    return false;
+  }
+  // Reject non-finite or degenerate geometry here (e.g. sample_rate == 0
+  // yields NaN/inf depths) so the buffer only ever holds pings the render
+  // loop can index safely. Positive-form checks: a NaN fails them all.
+  if (!std::isfinite(decoded.min_depth) || !std::isfinite(decoded.max_depth) ||
+    !(decoded.bin_size > 0.0f) || !(decoded.max_depth > decoded.min_depth))
+  {
+    qWarning(
+      "EchogramWidget: dropping ping with invalid geometry "
+      "(min_depth=%g max_depth=%g bin_size=%g; check sample_rate/sound_speed)",
+      decoded.min_depth, decoded.max_depth, decoded.bin_size);
+    return false;
   }
   pings_[stampToNanoseconds(ping.header.stamp)] = std::move(decoded);
   while (static_cast<int>(pings_.size()) > maximum_ping_count_) {
     pings_.erase(pings_.begin()->first);
   }
-  updateEchogram();
+  return true;
 }
 
 void EchogramWidget::resizeEvent(QResizeEvent * event)
@@ -324,6 +359,11 @@ void EchogramWidget::updateEchogram()
       return;
     }
     echogram_ = QImage(maximum_ping_count_, depth_sample_count, QImage::Format_RGB32);
+    if (echogram_.isNull()) {
+      // Allocation can fail (worst case kMaxDepthSamples rows ~ half a GiB);
+      // QImage signals that with a null image rather than throwing.
+      return;
+    }
     echogram_.fill(Qt::black);
 
     uint32_t ping_count = pings_.size();
@@ -333,12 +373,15 @@ void EchogramWidget::updateEchogram()
       for (int sample_number = 0; sample_number < depth_sample_count; sample_number++) {
         const float depth = min_depth_ + sample_number * bin_size_;
         // Half-open [min_depth, max_depth): at exactly max_depth the index
-        // would be one past the last sample.
-        if (depth < ping.min_depth || depth >= ping.max_depth || ping.bin_size <= 0.0f) {
+        // would be one past the last sample. Positive-form comparisons so a
+        // NaN anywhere fails the guard instead of slipping through to the
+        // index cast (ingestPing() rejects non-finite geometry, but keep the
+        // loop safe on its own).
+        if (!(depth >= ping.min_depth && depth < ping.max_depth) || !(ping.bin_size > 0.0f)) {
           continue;
         }
         const double index_d = (depth - ping.min_depth) / ping.bin_size;
-        if (index_d < 0.0 || index_d >= static_cast<double>(ping.samples.size())) {
+        if (!(index_d >= 0.0 && index_d < static_cast<double>(ping.samples.size()))) {
           continue;
         }
         const float value = ping.samples[static_cast<size_t>(index_d)];

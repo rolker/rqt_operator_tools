@@ -34,6 +34,7 @@
 #include <QList>
 #include <QMetaObject>
 #include <QPushButton>
+#include <QSignalBlocker>
 
 #include <algorithm>
 #include <string>
@@ -175,6 +176,8 @@ void MarineEchogramPlugin::restoreSettings(
   ui_.contrastDoubleSpinBox->setValue(ui_.echogramWidget->contrast());
   ui_.paletteComboBox->setCurrentIndex(ui_.echogramWidget->colorMapIndex());
   ui_.pingSpacingDoubleSpinBox->setValue(ui_.echogramWidget->pingSpacing());
+
+  settings_restored_ = true;
 }
 
 void MarineEchogramPlugin::updateTopicList()
@@ -261,9 +264,9 @@ void MarineEchogramPlugin::newPings()
     if (!pings.empty()) {
       maybeSeedValueWindow(pings.front());
     }
-    for (const auto & ping : pings) {
-      echogram_->addPing(ping);
-    }
+    // Batch ingest: one image rebuild for the whole burst instead of one per
+    // ping (fast bag replay can queue dozens of pings per GUI-thread wakeup).
+    echogram_->addPings(pings);
   }
 }
 
@@ -277,6 +280,11 @@ void MarineEchogramPlugin::maybeSeedValueWindow(
   // dB window the pre-modernization plugin always used. A deliberate window
   // is never clobbered; re-seeding after a dtype change is the operator's
   // call (set max <= min to request a reseed).
+  if (!settings_restored_) {
+    // A ping could arrive between initPlugin() and restoreSettings(); don't
+    // judge "not yet configured" until the saved window has had its say.
+    return;
+  }
   if (ui_.maxValueDoubleSpinBox->value() > ui_.minValueDoubleSpinBox->value()) {
     return;
   }
@@ -287,9 +295,17 @@ void MarineEchogramPlugin::maybeSeedValueWindow(
     lo = -100.0;
     hi = 10.0;
   }
-  // The spin boxes' valueChanged handlers forward to the widget.
-  ui_.minValueDoubleSpinBox->setValue(lo);
-  ui_.maxValueDoubleSpinBox->setValue(hi);
+  // Block the spin boxes' valueChanged while seeding so the half-set window
+  // (new min against the old max) never reaches the widget; forward the
+  // complete window explicitly instead.
+  {
+    const QSignalBlocker block_min(ui_.minValueDoubleSpinBox);
+    const QSignalBlocker block_max(ui_.maxValueDoubleSpinBox);
+    ui_.minValueDoubleSpinBox->setValue(lo);
+    ui_.maxValueDoubleSpinBox->setValue(hi);
+  }
+  ui_.echogramWidget->setMinimumValue(lo);
+  ui_.echogramWidget->setMaximumValue(hi);
 }
 
 void MarineEchogramPlugin::on_minValueDoubleSpinBox_valueChanged(double value)

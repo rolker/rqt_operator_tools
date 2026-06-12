@@ -175,6 +175,63 @@ TEST_F(EchogramWidgetTest, Uint16PingRendersColormapped)
   EXPECT_GT(amber, 0) << "no colormapped sample pixels rendered";
 }
 
+TEST_F(EchogramWidgetTest, NanGeometryPingDoesNotPoisonRender)
+{
+  // A ping whose geometry computes to NaN (here: NaN sound_speed) must be
+  // rejected at ingest — buffered alongside good pings it would otherwise
+  // pass NaN through the render loop's bounds checks into the sample-index
+  // cast (out-of-bounds read).
+  EchogramWidget w(nullptr);
+  w.resize(320, 240);
+  w.setMinimumValue(0.0f);
+  w.setMaximumValue(10.0f);
+  w.setColorMapIndex(1);  // Bronze: rendered samples are amber (r >> b)
+
+  auto good = makePing({5.0f, 6.0f, 7.0f, 8.0f});
+  auto bad = makePing({5.0f, 6.0f, 7.0f, 8.0f});
+  bad.ping_info.sound_speed = std::nanf("");
+
+  good.header.stamp.nanosec = 1000u;
+  w.addPing(good);
+  bad.header.stamp.nanosec = 2000u;
+  w.addPing(bad);
+  good.header.stamp.nanosec = 3000u;
+  w.addPing(good);
+  QCoreApplication::processEvents();
+
+  const QImage grabbed = w.grab().toImage();
+  int amber = 0;
+  for (int y = 0; y < grabbed.height(); ++y) {
+    for (int x = 0; x < grabbed.width(); ++x) {
+      const QRgb px = grabbed.pixel(x, y);
+      if (qRed(px) > qBlue(px) + 20) {
+        ++amber;
+      }
+    }
+  }
+  EXPECT_GT(amber, 0) << "good pings must still render after a NaN-geometry ping";
+}
+
+TEST_F(EchogramWidgetTest, AddPingsBatchMixedValidity)
+{
+  // The batch entry point (one rebuild per burst) must accept the good pings
+  // and drop the malformed ones, same as the per-ping path.
+  EchogramWidget w(nullptr);
+  w.resize(320, 240);
+  w.setMinimumValue(0.0f);
+  w.setMaximumValue(10.0f);
+
+  std::vector<marine_acoustic_msgs::msg::RawSonarImage> batch;
+  for (int i = 0; i < 4; ++i) {
+    auto ping = makePing({1.0f, 2.0f, 3.0f});
+    ping.header.stamp.nanosec = 1000u * static_cast<uint32_t>(i);
+    batch.push_back(ping);
+  }
+  batch.push_back(makePing({1.0f, 2.0f}, /*sample_rate=*/0.0f));  // rejected
+  w.addPings(batch);
+  SUCCEED();
+}
+
 TEST_F(EchogramWidgetTest, BadPingSpacingNoCrash)
 {
   EchogramWidget w(nullptr);

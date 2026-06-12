@@ -91,6 +91,10 @@ private:
 
   QString arg_topic_;
 
+  /// Set once restoreSettings() has run; maybeSeedValueWindow() waits for it
+  /// so a ping arriving first can't pre-empt a saved value window.
+  bool settings_restored_ = false;
+
   rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr
     data_subscriber_;
 
