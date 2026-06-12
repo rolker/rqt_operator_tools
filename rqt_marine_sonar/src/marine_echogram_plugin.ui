@@ -24,48 +24,107 @@
      </property>
      <layout class="QHBoxLayout" name="horizontalLayout">
       <item>
-       <widget class="QLabel" name="minDbLabel">
+       <widget class="QLabel" name="minValueLabel">
         <property name="text">
-         <string>min dB</string>
+         <string>min</string>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QDoubleSpinBox" name="minDbDoubleSpinBox">
+       <widget class="QDoubleSpinBox" name="minValueDoubleSpinBox">
+        <property name="toolTip">
+         <string>Display-window low value (raw sample units; dB for float sonars, counts for integer sonars). Seeded from the source dtype on the first ping when unset.</string>
+        </property>
         <property name="minimum">
-         <double>-200.000000000000000</double>
+         <double>-1000000000.000000000000000</double>
         </property>
         <property name="maximum">
-         <double>100.000000000000000</double>
+         <double>1000000000.000000000000000</double>
         </property>
         <property name="singleStep">
-         <double>0.500000000000000</double>
+         <double>1.000000000000000</double>
         </property>
         <property name="value">
-         <double>-100.000000000000000</double>
+         <double>0.000000000000000</double>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QLabel" name="maxDbLabel">
+       <widget class="QLabel" name="maxValueLabel">
         <property name="text">
-         <string>max dB</string>
+         <string>max</string>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QDoubleSpinBox" name="maxDbDoubleSpinBox">
+       <widget class="QDoubleSpinBox" name="maxValueDoubleSpinBox">
+        <property name="toolTip">
+         <string>Display-window high value (raw sample units). A window with max &lt;= min is treated as unset and reseeded from the next ping's dtype.</string>
+        </property>
         <property name="minimum">
-         <double>-200.000000000000000</double>
+         <double>-1000000000.000000000000000</double>
         </property>
         <property name="maximum">
-         <double>100.000000000000000</double>
+         <double>1000000000.000000000000000</double>
         </property>
         <property name="singleStep">
-         <double>0.500000000000000</double>
+         <double>1.000000000000000</double>
         </property>
         <property name="value">
+         <double>0.000000000000000</double>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="gainLabel">
+        <property name="text">
+         <string>Gain</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QDoubleSpinBox" name="gainDoubleSpinBox">
+        <property name="minimum">
+         <double>0.100000000000000</double>
+        </property>
+        <property name="maximum">
          <double>10.000000000000000</double>
+        </property>
+        <property name="singleStep">
+         <double>0.100000000000000</double>
+        </property>
+        <property name="value">
+         <double>1.000000000000000</double>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="contrastLabel">
+        <property name="text">
+         <string>Contrast</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QDoubleSpinBox" name="contrastDoubleSpinBox">
+        <property name="minimum">
+         <double>0.100000000000000</double>
+        </property>
+        <property name="maximum">
+         <double>10.000000000000000</double>
+        </property>
+        <property name="singleStep">
+         <double>0.100000000000000</double>
+        </property>
+        <property name="value">
+         <double>1.000000000000000</double>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QComboBox" name="paletteComboBox">
+        <property name="toolTip">
+         <string>Color palette (shared marine_colormap palettes, same as the waterfall).</string>
         </property>
        </widget>
       </item>

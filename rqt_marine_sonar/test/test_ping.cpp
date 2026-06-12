@@ -82,62 +82,72 @@ TEST(PingTest, DepthGeometryWithSampleOffset)
   EXPECT_FLOAT_EQ(range.second, 9.0f);
 }
 
-TEST(PingTest, SampleLookupReturnsBinnedValue)
+TEST(PingTest, SamplesDecodeFloat)
 {
   const auto msg = makeFloatPing({10.0f, 20.0f, 30.0f, 40.0f}, /*sample0=*/0);
   rqt_marine_sonar::Ping ping(msg);
 
-  // bin size 0.75 m: depth 0 -> index 0, depth 0.8 -> index 1, depth 2.2 -> index 2
-  EXPECT_FLOAT_EQ(ping.sampleAt(0.0f), 10.0f);
-  EXPECT_FLOAT_EQ(ping.sampleAt(0.8f), 20.0f);
-  EXPECT_FLOAT_EQ(ping.sampleAt(2.2f), 30.0f);
+  const auto samples = ping.samples();
+  ASSERT_EQ(samples.size(), 4u);
+  EXPECT_FLOAT_EQ(samples[0], 10.0f);
+  EXPECT_FLOAT_EQ(samples[3], 40.0f);
 }
 
-TEST(PingTest, SampleOutOfRangeIsNan)
+TEST(PingTest, TruncatedDataDecodesOnlyCompleteSamples)
 {
-  const auto msg = makeFloatPing({1.0f, 2.0f}, /*sample0=*/0);
-  rqt_marine_sonar::Ping ping(msg);
-
-  EXPECT_TRUE(std::isnan(ping.sampleAt(-1.0f)));
-  EXPECT_TRUE(std::isnan(ping.sampleAt(100.0f)));
-}
-
-TEST(PingTest, SampleAtUpperBoundIsNan)
-{
-  // At exactly maximumDepth() the index would be samples_per_beam (one past the
-  // last sample); the half-open interval must return NaN, not over-read.
-  const auto msg = makeFloatPing({1.0f, 2.0f, 3.0f, 4.0f}, /*sample0=*/0);
-  rqt_marine_sonar::Ping ping(msg);
-
-  EXPECT_TRUE(std::isnan(ping.sampleAt(ping.maximumDepth())));
-}
-
-TEST(PingTest, TruncatedDataIsNan)
-{
-  // samples_per_beam claims 4 samples but only 2 floats of data arrived; reads
-  // beyond the actual buffer must return NaN rather than over-reading.
+  // samples_per_beam claims 4 samples but only 2 floats of data arrived; the
+  // decode is bounded by the bytes that actually arrived, so consumers can
+  // never over-read past the buffer.
   auto msg = makeFloatPing({1.0f, 2.0f}, /*sample0=*/0);
   msg.samples_per_beam = 4;  // lie about the count; data still holds 2 floats
 
   rqt_marine_sonar::Ping ping(msg);
-  // Index 0 and 1 are backed by real data; 2 and 3 are past the buffer.
-  EXPECT_FLOAT_EQ(ping.sampleAt(0.0f), 1.0f);
-  EXPECT_TRUE(std::isnan(ping.sampleAt(2.0f)));   // index 2 -> beyond data
+  EXPECT_EQ(ping.samples().size(), 2u);
 }
 
-TEST(PingTest, NonFloatDtypeIsNan)
+TEST(PingTest, IntegerDtypesDecode)
 {
-  auto msg = makeFloatPing({1.0f, 2.0f}, /*sample0=*/0);
-  msg.image.dtype = marine_acoustic_msgs::msg::SonarImageData::DTYPE_UINT8;
-  rqt_marine_sonar::Ping ping(msg);
+  // Regression for rqt_operator_tools#54: the GCV sidescan publishes UINT16
+  // (GCV-10: UINT8) raw counts, which the pre-modernization plugin silently
+  // discarded -- a blank echogram with a healthy stream.
+  marine_acoustic_msgs::msg::RawSonarImage msg;
+  msg.ping_info.sound_speed = 1500.0f;
+  msg.sample_rate = 1000.0f;
+  msg.sample0 = 0;
+  msg.samples_per_beam = 3;
+  msg.image.dtype = marine_acoustic_msgs::msg::SonarImageData::DTYPE_UINT16;
+  msg.image.is_bigendian = false;
+  msg.image.data = {0x7d, 0x00, 0xdd, 0x2a, 0xfc, 0x92};  // 125, 10973, 37628 LE
 
-  EXPECT_TRUE(std::isnan(ping.sampleAt(0.0f)));
+  rqt_marine_sonar::Ping ping(msg);
+  auto samples = ping.samples();
+  ASSERT_EQ(samples.size(), 3u);
+  EXPECT_FLOAT_EQ(samples[0], 125.0f);
+  EXPECT_FLOAT_EQ(samples[1], 10973.0f);
+  EXPECT_FLOAT_EQ(samples[2], 37628.0f);
+
+  msg.image.dtype = marine_acoustic_msgs::msg::SonarImageData::DTYPE_UINT8;
+  msg.image.data = {0, 128, 255};
+  rqt_marine_sonar::Ping ping8(msg);
+  samples = ping8.samples();
+  ASSERT_EQ(samples.size(), 3u);
+  EXPECT_FLOAT_EQ(samples[0], 0.0f);
+  EXPECT_FLOAT_EQ(samples[1], 128.0f);
+  EXPECT_FLOAT_EQ(samples[2], 255.0f);
+
+  msg.image.dtype = marine_acoustic_msgs::msg::SonarImageData::DTYPE_INT16;
+  msg.image.data = {0xff, 0xff, 0x00, 0x80};  // -1, -32768 LE
+  rqt_marine_sonar::Ping ping16(msg);
+  samples = ping16.samples();
+  ASSERT_EQ(samples.size(), 2u);
+  EXPECT_FLOAT_EQ(samples[0], -1.0f);
+  EXPECT_FLOAT_EQ(samples[1], -32768.0f);
 }
 
 TEST(PingTest, BigEndianDecode)
 {
-  // A single FLOAT32 sample encoded big-endian; with is_bigendian set, sampleAt
-  // must reassemble the bytes correctly (host-byte-order independent).
+  // A single FLOAT32 sample encoded big-endian; with is_bigendian set, the
+  // decode must reassemble the bytes correctly (host-byte-order independent).
   marine_acoustic_msgs::msg::RawSonarImage msg;
   msg.ping_info.sound_speed = 1500.0f;
   msg.sample_rate = 1000.0f;
@@ -157,5 +167,7 @@ TEST(PingTest, BigEndianDecode)
   };
 
   rqt_marine_sonar::Ping ping(msg);
-  EXPECT_FLOAT_EQ(ping.sampleAt(0.0f), expected);
+  const auto samples = ping.samples();
+  ASSERT_EQ(samples.size(), 1u);
+  EXPECT_FLOAT_EQ(samples[0], expected);
 }

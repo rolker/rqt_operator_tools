@@ -34,12 +34,16 @@
 #include <QList>
 #include <QMetaObject>
 #include <QPushButton>
+#include <QSignalBlocker>
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
 #include <vector>
 
 #include <pluginlib/class_list_macros.hpp>
+#include <rqt_sonar_waterfall/color_map.hpp>
+#include <rqt_sonar_waterfall/waterfall_model.hpp>
 
 namespace rqt_marine_sonar
 {
@@ -66,11 +70,27 @@ void MarineEchogramPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
     widget_->windowTitle() + " (" + QString::number(context.serialNumber()) + ")");
 
   connect(
-    ui_.minDbDoubleSpinBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-    this, &MarineEchogramPlugin::on_minDbDoubleSpinBox_valueChanged);
+    ui_.minValueDoubleSpinBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+    this, &MarineEchogramPlugin::on_minValueDoubleSpinBox_valueChanged);
   connect(
-    ui_.maxDbDoubleSpinBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-    this, &MarineEchogramPlugin::on_maxDbDoubleSpinBox_valueChanged);
+    ui_.maxValueDoubleSpinBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+    this, &MarineEchogramPlugin::on_maxValueDoubleSpinBox_valueChanged);
+  connect(
+    ui_.gainDoubleSpinBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+    this, &MarineEchogramPlugin::on_gainDoubleSpinBox_valueChanged);
+  connect(
+    ui_.contrastDoubleSpinBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+    this, &MarineEchogramPlugin::on_contrastDoubleSpinBox_valueChanged);
+  // Palettes come from the shared marine_colormap set (same list, same order
+  // as the waterfall, so the operator sees consistent choices).
+  for (int i = 0; i < rqt_sonar_waterfall::kColorMapCount; ++i) {
+    ui_.paletteComboBox->addItem(
+      rqt_sonar_waterfall::color_map_name(
+        rqt_sonar_waterfall::color_map_from_index(i)));
+  }
+  connect(
+    ui_.paletteComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
+    this, &MarineEchogramPlugin::on_paletteComboBox_currentIndexChanged);
   connect(
     ui_.pingSpacingDoubleSpinBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
     this, &MarineEchogramPlugin::on_pingSpacingDoubleSpinBox_valueChanged);
@@ -114,8 +134,11 @@ void MarineEchogramPlugin::saveSettings(
   QString topic = ui_.topicsComboBox->currentText();
   instance_settings.setValue("topic", topic);
 
-  instance_settings.setValue("minimum_db", ui_.echogramWidget->minimumDB());
-  instance_settings.setValue("maximum_db", ui_.echogramWidget->maximumDB());
+  instance_settings.setValue("value_min", ui_.echogramWidget->minimumValue());
+  instance_settings.setValue("value_max", ui_.echogramWidget->maximumValue());
+  instance_settings.setValue("gain", ui_.echogramWidget->gain());
+  instance_settings.setValue("contrast", ui_.echogramWidget->contrast());
+  instance_settings.setValue("palette", ui_.echogramWidget->colorMapIndex());
   instance_settings.setValue("ping_spacing", ui_.echogramWidget->pingSpacing());
 }
 
@@ -132,13 +155,30 @@ void MarineEchogramPlugin::restoreSettings(
     selectTopic(topic);
   }
 
-  ui_.echogramWidget->setMinimumDB(instance_settings.value("minimum_db", -100.0).toFloat());
-  ui_.echogramWidget->setMaximumDB(instance_settings.value("maximum_db", 10.0).toFloat());
+  // value_min/value_max default to a degenerate (0, 0) window = "unset"; the
+  // first ping then seeds a dtype-aware default (maybeSeedValueWindow). A
+  // perspective saved by the pre-modernization plugin carries minimum_db /
+  // maximum_db instead -- honour those as the window (for float dB sonars
+  // they are exactly the right values).
+  const float legacy_min = instance_settings.value("minimum_db", 0.0).toFloat();
+  const float legacy_max = instance_settings.value("maximum_db", 0.0).toFloat();
+  ui_.echogramWidget->setMinimumValue(
+    instance_settings.value("value_min", legacy_min).toFloat());
+  ui_.echogramWidget->setMaximumValue(
+    instance_settings.value("value_max", legacy_max).toFloat());
+  ui_.echogramWidget->setGain(instance_settings.value("gain", 1.0).toFloat());
+  ui_.echogramWidget->setContrast(instance_settings.value("contrast", 1.0).toFloat());
+  ui_.echogramWidget->setColorMapIndex(instance_settings.value("palette", 0).toInt());
   ui_.echogramWidget->setPingSpacing(instance_settings.value("ping_spacing", 1.0).toFloat());
 
-  ui_.minDbDoubleSpinBox->setValue(ui_.echogramWidget->minimumDB());
-  ui_.maxDbDoubleSpinBox->setValue(ui_.echogramWidget->maximumDB());
+  ui_.minValueDoubleSpinBox->setValue(ui_.echogramWidget->minimumValue());
+  ui_.maxValueDoubleSpinBox->setValue(ui_.echogramWidget->maximumValue());
+  ui_.gainDoubleSpinBox->setValue(ui_.echogramWidget->gain());
+  ui_.contrastDoubleSpinBox->setValue(ui_.echogramWidget->contrast());
+  ui_.paletteComboBox->setCurrentIndex(ui_.echogramWidget->colorMapIndex());
   ui_.pingSpacingDoubleSpinBox->setValue(ui_.echogramWidget->pingSpacing());
+
+  settings_restored_ = true;
 }
 
 void MarineEchogramPlugin::updateTopicList()
@@ -222,20 +262,89 @@ void MarineEchogramPlugin::newPings()
   // echogram_ is null once the widget is torn down — drop the pings instead of
   // dereferencing freed memory on the GUI thread.
   if (echogram_) {
-    for (const auto & ping : pings) {
-      echogram_->addPing(ping);
-    }
+    maybeSeedValueWindow(pings);
+    // Batch ingest: one image rebuild for the whole burst instead of one per
+    // ping (fast bag replay can queue dozens of pings per GUI-thread wakeup).
+    echogram_->addPings(pings);
   }
 }
 
-void MarineEchogramPlugin::on_minDbDoubleSpinBox_valueChanged(double value)
+void MarineEchogramPlugin::maybeSeedValueWindow(
+  const std::vector<marine_acoustic_msgs::msg::RawSonarImage> & pings)
 {
-  ui_.echogramWidget->setMinimumDB(value);
+  // Runs on the GUI thread (newPings). A degenerate window (max <= min) means
+  // "not yet configured" -- neither restored settings nor the operator set it
+  // -- so seed a dtype-aware default: integer sonars get [0, full scale]
+  // (mirrors the waterfall's maybe_seed_manual_range); float sonars get the
+  // dB window the pre-modernization plugin always used. A deliberate window
+  // is never clobbered; re-seeding after a dtype change is the operator's
+  // call (set max <= min to request a reseed).
+  if (!settings_restored_) {
+    // A ping could arrive between initPlugin() and restoreSettings(); don't
+    // judge "not yet configured" until the saved window has had its say.
+    return;
+  }
+  if (ui_.maxValueDoubleSpinBox->value() > ui_.minValueDoubleSpinBox->value()) {
+    return;
+  }
+  // Seed from the first ping the widget can actually display: a malformed
+  // leading ping (unsupported dtype, empty image) gets dropped at ingest, and
+  // seeding from its dtype would lock in a wrong, no-longer-degenerate
+  // window. The extra decode runs only while the window is unset.
+  const marine_acoustic_msgs::msg::RawSonarImage * seed_ping = nullptr;
+  for (const auto & ping : pings) {
+    if (!rqt_sonar_waterfall::decode_samples(ping.image).empty()) {
+      seed_ping = &ping;
+      break;
+    }
+  }
+  if (seed_ping == nullptr) {
+    return;
+  }
+  using Img = marine_acoustic_msgs::msg::SonarImageData;
+  const uint32_t dtype = seed_ping->image.dtype;
+  double lo = 0.0;
+  double hi = rqt_sonar_waterfall::default_full_scale(dtype);
+  if (dtype == Img::DTYPE_FLOAT32 || dtype == Img::DTYPE_FLOAT64) {
+    lo = -100.0;
+    hi = 10.0;
+  }
+  // Block the spin boxes' valueChanged while seeding so the half-set window
+  // (new min against the old max) never reaches the widget; forward the
+  // complete window explicitly instead.
+  {
+    const QSignalBlocker block_min(ui_.minValueDoubleSpinBox);
+    const QSignalBlocker block_max(ui_.maxValueDoubleSpinBox);
+    ui_.minValueDoubleSpinBox->setValue(lo);
+    ui_.maxValueDoubleSpinBox->setValue(hi);
+  }
+  ui_.echogramWidget->setMinimumValue(lo);
+  ui_.echogramWidget->setMaximumValue(hi);
 }
 
-void MarineEchogramPlugin::on_maxDbDoubleSpinBox_valueChanged(double value)
+void MarineEchogramPlugin::on_minValueDoubleSpinBox_valueChanged(double value)
 {
-  ui_.echogramWidget->setMaximumDB(value);
+  ui_.echogramWidget->setMinimumValue(value);
+}
+
+void MarineEchogramPlugin::on_maxValueDoubleSpinBox_valueChanged(double value)
+{
+  ui_.echogramWidget->setMaximumValue(value);
+}
+
+void MarineEchogramPlugin::on_gainDoubleSpinBox_valueChanged(double value)
+{
+  ui_.echogramWidget->setGain(value);
+}
+
+void MarineEchogramPlugin::on_contrastDoubleSpinBox_valueChanged(double value)
+{
+  ui_.echogramWidget->setContrast(value);
+}
+
+void MarineEchogramPlugin::on_paletteComboBox_currentIndexChanged(int index)
+{
+  ui_.echogramWidget->setColorMapIndex(index);
 }
 
 void MarineEchogramPlugin::on_pingSpacingDoubleSpinBox_valueChanged(double value)

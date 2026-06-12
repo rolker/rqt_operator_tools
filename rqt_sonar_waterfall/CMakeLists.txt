@@ -196,9 +196,14 @@ endif()
 ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
 ament_export_targets(export_${PROJECT_NAME})
+# marine_colormap must be exported: the installed export set links the
+# marine_colormap::marine_colormap target into this library's link interface,
+# so any downstream consumer (e.g. rqt_marine_sonar) needs the find_package
+# pulled in by its Config -- without it, importing this package fails with
+# "target marine_colormap::marine_colormap not found".
 ament_export_dependencies(
   rclcpp rqt_gui_cpp qt_gui_cpp pluginlib marine_acoustic_msgs
-  marine_radar_control_msgs ament_index_cpp Qt5
+  marine_radar_control_msgs ament_index_cpp marine_colormap Qt5
 )
 
 ament_package()

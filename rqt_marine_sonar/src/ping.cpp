@@ -32,6 +32,9 @@
 #include <cstdint>
 #include <cstring>
 #include <utility>
+#include <vector>
+
+#include <rqt_sonar_waterfall/waterfall_model.hpp>
 
 namespace rqt_marine_sonar
 {
@@ -57,39 +60,9 @@ float Ping::binSize() const
   return 0.5 * message_.ping_info.sound_speed / message_.sample_rate;
 }
 
-float Ping::sampleAt(float depth) const
+std::vector<float> Ping::samples() const
 {
-  if (message_.image.dtype == marine_acoustic_msgs::msg::SonarImageData::DTYPE_FLOAT32) {
-    // Half-open [minimumDepth, maximumDepth): at exactly maximumDepth the index
-    // would equal samples_per_beam, one past the last sample.
-    if (depth >= minimumDepth() && depth < maximumDepth()) {
-      // samples_per_beam is a wire field; bound the read against the bytes that
-      // actually arrived (a truncated/malformed message must not over-read).
-      // Bound the index in floating point before narrowing — a malformed ping
-      // (huge samples_per_beam / tiny bin) could otherwise overflow an int cast.
-      const double index_d = (depth - minimumDepth()) / binSize();
-      const size_t float_count = message_.image.data.size() / sizeof(float);
-      if (index_d >= 0.0 && index_d < static_cast<double>(float_count)) {
-        const size_t index = static_cast<size_t>(index_d);
-        // Assemble the 4 bytes per is_bigendian and memcpy into the float,
-        // rather than reinterpret_cast'ing the uint8 blob (which would be a
-        // strict-aliasing violation and could fault on strict-alignment archs).
-        const uint8_t * p = message_.image.data.data() + index * sizeof(float);
-        uint32_t bits;
-        if (message_.image.is_bigendian) {
-          bits = (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
-            (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
-        } else {
-          bits = (static_cast<uint32_t>(p[3]) << 24) | (static_cast<uint32_t>(p[2]) << 16) |
-            (static_cast<uint32_t>(p[1]) << 8) | static_cast<uint32_t>(p[0]);
-        }
-        float value;
-        std::memcpy(&value, &bits, sizeof(value));
-        return value;
-      }
-    }
-  }
-  return std::nan("");
+  return rqt_sonar_waterfall::decode_samples(message_.image);
 }
 
 std::pair<float, float> depthRange(

@@ -28,9 +28,9 @@
 
 // Offscreen smoke/robustness tests for the EchogramWidget. The widget renders on
 // the CPU (QtCharts + QImage), so QT_QPA_PLATFORM=offscreen is enough — no GL
-// context required. The point is that the hardening paths (malformed sample_rate,
-// non-finite samples, degenerate dB window, bad ping spacing, extreme resize)
-// never crash or trip undefined behavior.
+// context required. Covers the hardening paths (malformed sample_rate,
+// non-finite samples, degenerate value window, bad ping spacing, extreme
+// resize) and the #54 regression: integer-dtype pings must actually render.
 
 #include <gtest/gtest.h>
 
@@ -68,6 +68,24 @@ marine_acoustic_msgs::msg::RawSonarImage makePing(
   msg.image.data.resize(samples.size() * sizeof(float));
   std::memcpy(msg.image.data.data(), samples.data(), samples.size() * sizeof(float));
   return msg;
+}
+
+// Count "amber" pixels (r >> b, the Bronze palette's signature) in an image.
+// Run against EchogramWidget::echogramImage(), not a widget grab: axis-label
+// text in a grab carries subpixel-antialiasing color fringes that satisfy any
+// color heuristic and would make these checks pass without any rendering.
+int countAmber(const QImage & img)
+{
+  int n = 0;
+  for (int y = 0; y < img.height(); ++y) {
+    for (int x = 0; x < img.width(); ++x) {
+      const QRgb px = img.pixel(x, y);
+      if (qRed(px) > qBlue(px) + 20) {
+        ++n;
+      }
+    }
+  }
+  return n;
 }
 
 class EchogramWidgetTest : public ::testing::Test
@@ -123,13 +141,117 @@ TEST_F(EchogramWidgetTest, NonFiniteSamplesNoCrash)
   SUCCEED();
 }
 
-TEST_F(EchogramWidgetTest, DegenerateDbWindowNoCrash)
+TEST_F(EchogramWidgetTest, DegenerateValueWindowNoCrash)
 {
   EchogramWidget w(nullptr);
   w.resize(320, 240);
-  w.setMinimumDB(5.0f);
-  w.setMaximumDB(5.0f);  // zero-width dB window must not divide by zero
+  w.setMinimumValue(5.0f);
+  w.setMaximumValue(5.0f);  // zero-width window (= the "unset" state) must not draw
   w.addPing(makePing({1.0f, 2.0f, 3.0f}));
+  SUCCEED();
+}
+
+TEST_F(EchogramWidgetTest, Uint16PingRendersColormapped)
+{
+  // Regression for #54: a UINT16 (GCV) ping must produce visible, colormapped
+  // pixels. With the Bronze palette, rendered samples are amber (r >> b) —
+  // a color no chart chrome (white background, black image fill, gray text)
+  // produces, so finding one proves the sample pipeline ran end to end.
+  EchogramWidget w(nullptr);
+  w.resize(320, 240);
+  w.setMinimumValue(0.0f);
+  w.setMaximumValue(65535.0f);
+  w.setColorMapIndex(1);  // Bronze
+
+  marine_acoustic_msgs::msg::RawSonarImage msg;
+  msg.ping_info.sound_speed = 1500.0f;
+  msg.sample_rate = 1000.0f;
+  msg.sample0 = 0;
+  msg.samples_per_beam = 16;
+  msg.image.dtype = marine_acoustic_msgs::msg::SonarImageData::DTYPE_UINT16;
+  msg.image.is_bigendian = false;
+  for (int i = 0; i < 16; ++i) {           // mid-to-high counts, LE
+    msg.image.data.push_back(0x00);
+    msg.image.data.push_back(static_cast<uint8_t>(0x60 + 4 * i));
+  }
+  for (int i = 0; i < 8; ++i) {
+    msg.header.stamp.nanosec = 1000u * static_cast<uint32_t>(i);
+    w.addPing(msg);
+  }
+  QCoreApplication::processEvents();
+
+  EXPECT_GT(countAmber(w.echogramImage()), 0) << "no colormapped sample pixels rendered";
+}
+
+TEST_F(EchogramWidgetTest, NanGeometryPingDoesNotPoisonRender)
+{
+  // A ping whose geometry computes to NaN (here: NaN sound_speed) must be
+  // rejected at ingest — buffered alongside good pings it would otherwise
+  // pass NaN through the render loop's bounds checks into the sample-index
+  // cast (out-of-bounds read).
+  EchogramWidget w(nullptr);
+  w.resize(320, 240);
+  w.setMinimumValue(0.0f);
+  w.setMaximumValue(10.0f);
+  w.setColorMapIndex(1);  // Bronze: rendered samples are amber (r >> b)
+
+  auto good = makePing({5.0f, 6.0f, 7.0f, 8.0f});
+  auto bad = makePing({5.0f, 6.0f, 7.0f, 8.0f});
+  bad.ping_info.sound_speed = std::nanf("");
+
+  good.header.stamp.nanosec = 1000u;
+  w.addPing(good);
+  bad.header.stamp.nanosec = 2000u;
+  w.addPing(bad);
+  good.header.stamp.nanosec = 3000u;
+  w.addPing(good);
+  QCoreApplication::processEvents();
+
+  EXPECT_GT(countAmber(w.echogramImage()), 0)
+    << "good pings must still render after a NaN-geometry ping";
+}
+
+TEST_F(EchogramWidgetTest, ResetWindowClearsStaleImage)
+{
+  // Setting a degenerate value window (the operator's "reseed" request) must
+  // clear the rendering, not leave the previous image on screen.
+  EchogramWidget w(nullptr);
+  w.resize(320, 240);
+  w.setMinimumValue(0.0f);
+  w.setMaximumValue(10.0f);
+  w.setColorMapIndex(1);  // Bronze: rendered samples are amber (r >> b)
+  for (int i = 0; i < 8; ++i) {
+    auto ping = makePing({5.0f, 6.0f, 7.0f, 8.0f});
+    ping.header.stamp.nanosec = 1000u * static_cast<uint32_t>(i);
+    w.addPing(ping);
+  }
+  QCoreApplication::processEvents();
+
+  ASSERT_GT(countAmber(w.echogramImage()), 0) << "precondition: pings rendered";
+
+  w.setMaximumValue(0.0f);  // window now degenerate = "unset"
+  QCoreApplication::processEvents();
+  EXPECT_EQ(countAmber(w.echogramImage()), 0)
+    << "stale rendering survived a value-window reset";
+}
+
+TEST_F(EchogramWidgetTest, AddPingsBatchMixedValidity)
+{
+  // The batch entry point (one rebuild per burst) must accept the good pings
+  // and drop the malformed ones, same as the per-ping path.
+  EchogramWidget w(nullptr);
+  w.resize(320, 240);
+  w.setMinimumValue(0.0f);
+  w.setMaximumValue(10.0f);
+
+  std::vector<marine_acoustic_msgs::msg::RawSonarImage> batch;
+  for (int i = 0; i < 4; ++i) {
+    auto ping = makePing({1.0f, 2.0f, 3.0f});
+    ping.header.stamp.nanosec = 1000u * static_cast<uint32_t>(i);
+    batch.push_back(ping);
+  }
+  batch.push_back(makePing({1.0f, 2.0f}, /*sample_rate=*/0.0f));  // rejected
+  w.addPings(batch);
   SUCCEED();
 }
 
@@ -146,10 +268,16 @@ TEST_F(EchogramWidgetTest, BadPingSpacingNoCrash)
 TEST_F(EchogramWidgetTest, SettersRoundTrip)
 {
   EchogramWidget w(nullptr);
-  w.setMinimumDB(-80.0f);
-  w.setMaximumDB(-5.0f);
+  w.setMinimumValue(-80.0f);
+  w.setMaximumValue(-5.0f);
+  w.setGain(1.5f);
+  w.setContrast(0.7f);
+  w.setColorMapIndex(2);
   w.setPingSpacing(2.5f);
-  EXPECT_FLOAT_EQ(w.minimumDB(), -80.0f);
-  EXPECT_FLOAT_EQ(w.maximumDB(), -5.0f);
+  EXPECT_FLOAT_EQ(w.minimumValue(), -80.0f);
+  EXPECT_FLOAT_EQ(w.maximumValue(), -5.0f);
+  EXPECT_FLOAT_EQ(w.gain(), 1.5f);
+  EXPECT_FLOAT_EQ(w.contrast(), 0.7f);
+  EXPECT_EQ(w.colorMapIndex(), 2);
   EXPECT_FLOAT_EQ(w.pingSpacing(), 2.5f);
 }

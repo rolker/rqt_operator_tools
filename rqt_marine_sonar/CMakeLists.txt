@@ -15,7 +15,13 @@ find_package(rqt_gui_cpp REQUIRED)
 find_package(qt_gui_cpp REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(marine_acoustic_msgs REQUIRED)
-find_package(Qt5 COMPONENTS Widgets Gui Charts REQUIRED)
+# OpenGL is not used here directly, but rqt_sonar_waterfall's exported link
+# interface references Qt5::OpenGL (its GPU path), so the target must exist
+# before that package is imported.
+find_package(Qt5 COMPONENTS Widgets Gui Charts OpenGL REQUIRED)
+# After Qt5-with-components: rqt_sonar_waterfall's exported dependencies
+# include a bare Qt5, which only resolves once components are already found.
+find_package(rqt_sonar_waterfall REQUIRED)
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
@@ -62,6 +68,7 @@ ament_target_dependencies(${PROJECT_NAME}
   qt_gui_cpp
   pluginlib
   marine_acoustic_msgs
+  rqt_sonar_waterfall
 )
 
 target_link_libraries(${PROJECT_NAME} Qt5::Widgets Qt5::Gui Qt5::Charts)
@@ -101,7 +108,7 @@ if(BUILD_TESTING)
     src/ping.cpp
   )
   target_include_directories(test_ping PRIVATE include)
-  ament_target_dependencies(test_ping marine_acoustic_msgs)
+  ament_target_dependencies(test_ping marine_acoustic_msgs rqt_sonar_waterfall)
 
   # Offscreen widget smoke/robustness test. Links the main library so the
   # widget's MOC metaobjects are available; CPU QtCharts rendering needs no GL,
@@ -123,6 +130,7 @@ ament_export_include_directories(include)
 ament_export_libraries(${PROJECT_NAME})
 ament_export_targets(export_${PROJECT_NAME})
 ament_export_dependencies(
-  rclcpp rqt_gui_cpp qt_gui_cpp pluginlib marine_acoustic_msgs Qt5)
+  rclcpp rqt_gui_cpp qt_gui_cpp pluginlib marine_acoustic_msgs
+  rqt_sonar_waterfall Qt5)
 
 ament_package()
