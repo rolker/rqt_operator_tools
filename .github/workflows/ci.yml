@@ -70,6 +70,15 @@ jobs:
           git clone --depth 1 -b jazzy \
             https://github.com/rolker/marine_colormap.git ../ws/src/marine_colormap
 
+      # marine_control (marine_control_interfaces — the device-control messages
+      # the new marine_control_widgets / rqt_marine_control packages render) is a
+      # source sibling, not a rosdep/binary package (unh_marine_autonomy
+      # ADR-0003). Clone whole — no prune needed.
+      - name: Clone marine_control source dependency
+        run: |
+          git clone --depth 1 -b jazzy \
+            https://github.com/rolker/marine_control.git ../ws/src/marine_control
+
       - name: Install ROS dependencies
         working-directory: ../ws
         run: >

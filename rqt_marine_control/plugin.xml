@@ -1,0 +1,20 @@
+<library path="rqt_marine_control">
+  <class name="rqt_marine_control/MarineControl"
+         type="rqt_marine_control::MarineControlPlugin"
+         base_class_type="rqt_gui_cpp::Plugin">
+    <description>
+      Generic device-control panel for the bridgeable device-control contract:
+      select a marine_control_interfaces/ControlSet state topic, view its
+      controls, and change them over the bridge (publishes a ControlValue on the
+      matching change topic). See unh_marine_autonomy ADR-0003.
+    </description>
+    <qtgui>
+      <group>
+        <label>Robot Tools</label>
+      </group>
+      <label>Marine Control</label>
+      <icon type="theme">preferences-system</icon>
+      <statustip>View and change device settings over the bridge.</statustip>
+    </qtgui>
+  </class>
+</library>
