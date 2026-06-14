@@ -39,12 +39,27 @@ namespace
 
 using rqt_sonar_waterfall::derive_change_topic;
 using rqt_sonar_waterfall::radar_control_set_topics;
+using rqt_sonar_waterfall::range_topics;
 using rqt_sonar_waterfall::raw_sonar_image_topics;
 
 const char * kRaw = "marine_acoustic_msgs/msg/RawSonarImage";
 const char * kCtl = "marine_radar_control_msgs/msg/RadarControlSet";
+const char * kRng = "sensor_msgs/msg/Range";
 
 }  // namespace
+
+TEST(TopicFilter, KeepsOnlyRangeTopicsSorted)
+{
+  std::map<std::string, std::vector<std::string>> graph{
+    {"/sonar/nadir_depth", {kRng}},
+    {"/altimeter", {kRng}},
+    {"/zed/port", {kRaw}},
+    {"/clock", {"rosgraph_msgs/msg/Clock"}},
+  };
+  EXPECT_EQ(
+    range_topics(graph),
+    (std::vector<std::string>{"/altimeter", "/sonar/nadir_depth"}));
+}
 
 TEST(TopicFilter, KeepsOnlyRawSonarImageTopicsSorted)
 {

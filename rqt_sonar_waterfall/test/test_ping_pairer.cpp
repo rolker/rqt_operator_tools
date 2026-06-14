@@ -65,7 +65,10 @@ TEST(PingPairer, PortOnlyEmitsPortRow)
   p.set_sides(true, false);
   auto out = p.submit_port(row({1, 2, 3}));
   ASSERT_TRUE(out.has_value());
-  EXPECT_EQ(out->intensities, (std::vector<float>{1, 2, 3}));
+  // Port is laid out reversed (far->nadir) so the renderer can centre nadir even
+  // with a single side; nadir_index marks the split.
+  EXPECT_EQ(out->intensities, (std::vector<float>{3, 2, 1}));
+  EXPECT_EQ(out->nadir_index, 3u);
 }
 
 TEST(PingPairer, StarboardOnlyEmitsStarboardRow)

@@ -44,6 +44,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <cmath>
 #include <cstddef>
 #include <map>
 #include <optional>
@@ -125,11 +126,14 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   port_combo_ = new QComboBox(toolbar);
   starboard_combo_ = new QComboBox(toolbar);
   control_combo_ = new QComboBox(toolbar);
+  depth_combo_ = new QComboBox(toolbar);
   auto * refresh_button = new QPushButton(tr("Refresh"), toolbar);
   hbox->addWidget(new QLabel(tr("Port:"), toolbar));
   hbox->addWidget(port_combo_, 1);
   hbox->addWidget(new QLabel(tr("Starboard:"), toolbar));
   hbox->addWidget(starboard_combo_, 1);
+  hbox->addWidget(new QLabel(tr("Depth:"), toolbar));
+  hbox->addWidget(depth_combo_, 1);
   hbox->addWidget(new QLabel(tr("Controls:"), toolbar));
   hbox->addWidget(control_combo_, 1);
   hbox->addWidget(refresh_button);
@@ -160,6 +164,9 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   connect(
     control_combo_, &QComboBox::currentTextChanged, this,
     [this](const QString & topic) {on_control_topic_changed(topic);});
+  connect(
+    depth_combo_, &QComboBox::currentTextChanged, this,
+    [this](const QString & topic) {on_depth_topic_changed(topic);});
   connect(refresh_button, &QPushButton::clicked, this, [this]() {refresh_topics();});
 
   apply_view_settings();
@@ -192,8 +199,11 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
 QWidget * SonarWaterfallPlugin::build_controls_bar(QWidget * parent)
 {
   auto * bar = new QWidget(parent);
-  auto * h = new QHBoxLayout(bar);
-  h->setContentsMargins(4, 0, 4, 2);
+  auto * v = new QVBoxLayout(bar);
+  v->setContentsMargins(4, 0, 4, 2);
+  v->setSpacing(2);
+  auto * h = new QHBoxLayout();
+  v->addLayout(h);
 
   h->addWidget(new QLabel(tr("Color:"), bar));
   colormap_combo_ = new QComboBox(bar);
@@ -247,6 +257,49 @@ QWidget * SonarWaterfallPlugin::build_controls_bar(QWidget * parent)
   h->addWidget(freeze_button_);
   h->addStretch(1);
 
+  // Second row: geometry / correction controls (issue #58).
+  auto * h2 = new QHBoxLayout();
+  v->addLayout(h2);
+
+  ground_check_ = new QCheckBox(tr("Ground range"), bar);
+  ground_check_->setChecked(true);
+  ground_check_->setToolTip(
+    tr("Remove the water column and show ground (horizontal) range. Needs a depth source."));
+  h2->addWidget(ground_check_);
+
+  uniform_check_ = new QCheckBox(tr("Uniform scale"), bar);
+  uniform_check_->setChecked(true);
+  uniform_check_->setToolTip(
+    tr("Render every visible ping at one scale (auto-fit the widest)."));
+  h2->addWidget(uniform_check_);
+
+  range_lines_check_ = new QCheckBox(tr("Range lines"), bar);
+  range_lines_check_->setChecked(true);
+  h2->addWidget(range_lines_check_);
+
+  h2->addWidget(new QLabel(tr("Density:"), bar));
+  density_spin_ = new QDoubleSpinBox(bar);
+  density_spin_->setRange(0.25, 4.0);
+  density_spin_->setSingleStep(0.25);
+  density_spin_->setValue(1.0);
+  density_spin_->setToolTip(tr("Range-line density (higher = more lines)."));
+  h2->addWidget(density_spin_);
+
+  tvg_check_ = new QCheckBox(tr("TVG"), bar);
+  tvg_check_->setChecked(false);
+  tvg_check_->setToolTip(
+    tr("Display time-varied gain: amplify returns with range to flatten the image."));
+  h2->addWidget(tvg_check_);
+
+  h2->addWidget(new QLabel(tr("TVG slope:"), bar));
+  tvg_slope_spin_ = new QDoubleSpinBox(bar);
+  tvg_slope_spin_->setRange(0.0, 3.0);
+  tvg_slope_spin_->setSingleStep(0.1);
+  tvg_slope_spin_->setValue(1.5);
+  tvg_slope_spin_->setEnabled(false);  // enabled only when TVG is on
+  h2->addWidget(tvg_slope_spin_);
+  h2->addStretch(1);
+
   // Any control change re-applies the full view state to the widget. The
   // widget rebuilds its cached image once per setter; at UI rates the extra
   // rebuilds are negligible and the code stays single-pathed.
@@ -272,6 +325,20 @@ QWidget * SonarWaterfallPlugin::build_controls_bar(QWidget * parent)
     [this](double) {apply_view_settings();});
   connect(
     freeze_button_, &QPushButton::toggled, this, [this](bool) {apply_view_settings();});
+  connect(
+    ground_check_, &QCheckBox::toggled, this, [this](bool) {apply_view_settings();});
+  connect(
+    uniform_check_, &QCheckBox::toggled, this, [this](bool) {apply_view_settings();});
+  connect(
+    range_lines_check_, &QCheckBox::toggled, this, [this](bool) {apply_view_settings();});
+  connect(
+    density_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+    [this](double) {apply_view_settings();});
+  connect(
+    tvg_check_, &QCheckBox::toggled, this, [this](bool) {apply_view_settings();});
+  connect(
+    tvg_slope_spin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+    [this](double) {apply_view_settings();});
 
   return bar;
 }
@@ -297,6 +364,16 @@ void SonarWaterfallPlugin::apply_view_settings()
       static_cast<float>(range_min_spin_->value()),
       static_cast<float>(range_max_spin_->value()));
   }
+
+  // Geometry / correction controls (issue #58).
+  widget_->set_ground_range(ground_check_->isChecked());
+  widget_->set_uniform_scale(uniform_check_->isChecked());
+  widget_->set_range_lines(range_lines_check_->isChecked());
+  widget_->set_range_line_density(static_cast<float>(density_spin_->value()));
+  const bool tvg_on = tvg_check_->isChecked();
+  tvg_slope_spin_->setEnabled(tvg_on);
+  widget_->set_tvg_slope(static_cast<float>(tvg_slope_spin_->value()));
+  widget_->set_tvg(tvg_on);
 }
 
 void SonarWaterfallPlugin::shutdownPlugin()
@@ -308,6 +385,7 @@ void SonarWaterfallPlugin::shutdownPlugin()
   starboard_sub_.reset();
   control_sub_.reset();
   control_pub_.reset();
+  depth_sub_.reset();
 }
 
 void SonarWaterfallPlugin::saveSettings(
@@ -323,6 +401,9 @@ void SonarWaterfallPlugin::saveSettings(
   if (control_combo_) {
     instance_settings.setValue("control_topic", control_combo_->currentText());
   }
+  if (depth_combo_) {
+    instance_settings.setValue("depth_topic", depth_combo_->currentText());
+  }
   if (colormap_combo_) {
     instance_settings.setValue("color_map", colormap_combo_->currentIndex());
     instance_settings.setValue("gain", gain_spin_->value());
@@ -332,6 +413,12 @@ void SonarWaterfallPlugin::saveSettings(
     instance_settings.setValue("auto_range", auto_range_check_->isChecked());
     instance_settings.setValue("range_min", range_min_spin_->value());
     instance_settings.setValue("range_max", range_max_spin_->value());
+    instance_settings.setValue("ground_range", ground_check_->isChecked());
+    instance_settings.setValue("uniform_scale", uniform_check_->isChecked());
+    instance_settings.setValue("range_lines", range_lines_check_->isChecked());
+    instance_settings.setValue("range_line_density", density_spin_->value());
+    instance_settings.setValue("tvg", tvg_check_->isChecked());
+    instance_settings.setValue("tvg_slope", tvg_slope_spin_->value());
   }
 }
 
@@ -349,6 +436,9 @@ void SonarWaterfallPlugin::restoreSettings(
   if (control_combo_ && instance_settings.contains("control_topic")) {
     select_topic(control_combo_, instance_settings.value("control_topic").toString());
   }
+  if (depth_combo_ && instance_settings.contains("depth_topic")) {
+    select_topic(depth_combo_, instance_settings.value("depth_topic").toString());
+  }
 
   if (colormap_combo_ && instance_settings.contains("color_map")) {
     colormap_combo_->setCurrentIndex(instance_settings.value("color_map").toInt());
@@ -362,6 +452,14 @@ void SonarWaterfallPlugin::restoreSettings(
     // range_max (older config) must not revert to a 15-bit clip.
     range_max_spin_->setValue(
       instance_settings.value("range_max", kDefaultRangeMax).toDouble());
+    // Geometry / correction controls (issue #58) — default to the active-on
+    // posture for the three geometry knobs, TVG off, matching build_controls_bar.
+    ground_check_->setChecked(instance_settings.value("ground_range", true).toBool());
+    uniform_check_->setChecked(instance_settings.value("uniform_scale", true).toBool());
+    range_lines_check_->setChecked(instance_settings.value("range_lines", true).toBool());
+    density_spin_->setValue(instance_settings.value("range_line_density", 1.0).toDouble());
+    tvg_check_->setChecked(instance_settings.value("tvg", false).toBool());
+    tvg_slope_spin_->setValue(instance_settings.value("tvg_slope", 1.5).toDouble());
     apply_view_settings();
   }
 }
@@ -377,6 +475,9 @@ void SonarWaterfallPlugin::refresh_topics()
   repopulate(starboard_combo_, image_names);
   if (control_combo_) {
     repopulate(control_combo_, radar_control_set_topics(graph));
+  }
+  if (depth_combo_) {
+    repopulate(depth_combo_, range_topics(graph));
   }
 }
 
@@ -418,6 +519,31 @@ void SonarWaterfallPlugin::on_control_topic_changed(const QString & topic)
     [this](RadarControlSet::ConstSharedPtr msg) {on_control_set(msg);});
   control_pub_ = node_->create_publisher<RadarControlValue>(
     derive_change_topic(name), rclcpp::QoS(10));
+}
+
+void SonarWaterfallPlugin::on_depth_topic_changed(const QString & topic)
+{
+  depth_sub_.reset();
+  latest_altitude_.store(0.0);  // drop stale altitude when the source changes
+  const std::string name = (topic == kNoneLabel) ? std::string() : topic.toStdString();
+  if (name.empty() || !node_) {
+    return;
+  }
+  // Match the driver's BEST_EFFORT nadir_depth publisher; a default-reliable sub
+  // would silently receive nothing (issue #58 plan-review F2).
+  depth_sub_ = node_->create_subscription<sensor_msgs::msg::Range>(
+    name, rclcpp::SensorDataQoS(),
+    [this](sensor_msgs::msg::Range::ConstSharedPtr msg) {on_depth_msg(msg);});
+}
+
+void SonarWaterfallPlugin::on_depth_msg(sensor_msgs::msg::Range::ConstSharedPtr msg)
+{
+  // Range.range is the sonar altitude above the bottom (nadir depth). Ignore
+  // non-finite / non-positive values (out-of-range sentinel, no bottom lock).
+  const double r = static_cast<double>(msg->range);
+  if (std::isfinite(r) && r > 0.0) {
+    latest_altitude_.store(r);
+  }
 }
 
 void SonarWaterfallPlugin::on_control_set(
@@ -536,6 +662,9 @@ void SonarWaterfallPlugin::post_row(const WaterfallRow & row)
   // Hop from the executor thread to the GUI thread before touching the widget.
   QPointer<WaterfallWidget> target = widget_;
   WaterfallRow copy = row;
+  // Stamp the latest cached altitude (nadir depth). Read here on the executor
+  // thread, the same thread the depth callback writes on — no lock needed.
+  copy.altitude = latest_altitude_.load();
   QMetaObject::invokeMethod(
     target.data(),
     [target, copy]() {

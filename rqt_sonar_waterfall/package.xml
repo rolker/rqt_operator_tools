@@ -30,6 +30,7 @@
   <depend>marine_acoustic_msgs</depend>
   <depend>marine_radar_control_msgs</depend>
   <depend>marine_colormap</depend>
+  <depend>sensor_msgs</depend>
   <depend>ament_index_cpp</depend>
 
   <!-- synthetic_sidescan.py test publisher -->

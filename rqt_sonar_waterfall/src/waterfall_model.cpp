@@ -29,6 +29,8 @@
 #include "rqt_sonar_waterfall/waterfall_model.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -144,25 +146,170 @@ std::optional<WaterfallRow> combine_rows(
   if (!port && !starboard) {
     return std::nullopt;
   }
-  if (port && !starboard) {
-    return port;
-  }
-  if (!port && starboard) {
-    return starboard;
-  }
 
   WaterfallRow combined;
-  combined.intensities.reserve(
-    port->intensities.size() + starboard->intensities.size());
-  // Port reversed: nadir (sample 0) ends up adjacent to the center boundary.
-  combined.intensities.assign(
-    port->intensities.rbegin(), port->intensities.rend());
-  combined.intensities.insert(
-    combined.intensities.end(),
-    starboard->intensities.begin(), starboard->intensities.end());
-  combined.range_max = std::max(port->range_max, starboard->range_max);
-  combined.stamp = std::max(port->stamp, starboard->stamp);
+  const std::size_t port_n = port ? port->intensities.size() : 0;
+  const std::size_t stbd_n = starboard ? starboard->intensities.size() : 0;
+  combined.intensities.reserve(port_n + stbd_n);
+  // Port reversed and placed left of nadir; starboard in natural order right of
+  // it. A silent side contributes nothing, so nadir_index (= port count) still
+  // places nadir correctly: port-only -> all left, starboard-only -> all right.
+  if (port) {
+    combined.intensities.assign(
+      port->intensities.rbegin(), port->intensities.rend());
+  }
+  if (starboard) {
+    combined.intensities.insert(
+      combined.intensities.end(),
+      starboard->intensities.begin(), starboard->intensities.end());
+  }
+  combined.nadir_index = port_n;
+  combined.range_max_port = port ? port->range_max : 0.0;
+  combined.range_max_stbd = starboard ? starboard->range_max : 0.0;
+  combined.range_max = std::max(combined.range_max_port, combined.range_max_stbd);
+  // `altitude` is left at its default (0): the per-side extractor never sets it;
+  // the depth subscription stamps it onto the combined row downstream (the
+  // plugin's post_row). Don't derive it here — that value would always be
+  // superseded.
+  combined.stamp = std::max(
+    port ? port->stamp : 0.0, starboard ? starboard->stamp : 0.0);
   return combined;
+}
+
+double ground_range(double slant_range, double altitude)
+{
+  if (altitude <= 0.0) {
+    return slant_range;
+  }
+  const double g2 = slant_range * slant_range - altitude * altitude;
+  return g2 > 0.0 ? std::sqrt(g2) : 0.0;
+}
+
+namespace
+{
+
+// Nearest sample on a side's slant axis, or a negative sentinel when the column
+// has no data (range unknown, or slant beyond the side's reach). `count` is the
+// number of samples on the side; `base` is the storage index of the side's
+// nadir sample; `step` is +1 (starboard, nadir->far) or -1 (reversed port,
+// nadir at base, far toward index 0).
+std::ptrdiff_t sample_on_side(
+  double slant, double side_range, std::size_t count, std::ptrdiff_t base,
+  std::ptrdiff_t step)
+{
+  // Tolerate a hair past the far edge: in ground mode the outermost column's
+  // slant = sqrt(half_width^2 + altitude^2) equals side_range only up to
+  // floating-point rounding, so a hard `>` would black out the last column.
+  if (side_range <= 0.0 || count == 0 || slant > side_range * (1.0 + 1e-9)) {
+    return -1;
+  }
+  double frac = slant / side_range;  // 0 at nadir, 1 at far
+  if (frac > 1.0) {
+    frac = 1.0;  // clamp the rounding overshoot before indexing
+  }
+  const std::ptrdiff_t offset = (count > 1) ?
+    static_cast<std::ptrdiff_t>(std::lround(frac * static_cast<double>(count - 1))) :
+    0;
+  return base + step * offset;
+}
+
+}  // namespace
+
+void project_row_into(
+  float * out, const std::vector<float> & samples, std::size_t nadir_index,
+  double range_port, double range_stbd, double altitude, bool ground,
+  double half_width, std::size_t columns)
+{
+  // Always write every column (0 = no data) so the caller can pass an
+  // uninitialised destination row of the texture staging buffer.
+  for (std::size_t x = 0; x < columns; ++x) {
+    out[x] = 0.0f;
+  }
+  if (columns == 0 || samples.empty() || half_width <= 0.0) {
+    return;
+  }
+  const std::size_t port_n = std::min(nadir_index, samples.size());
+  const std::size_t stbd_n = samples.size() - port_n;
+  const double center = static_cast<double>(columns - 1) / 2.0;
+
+  for (std::size_t x = 0; x < columns; ++x) {
+    // Signed display range for this column: -half_width (left) .. +half_width.
+    const double d = (center > 0.0) ?
+      (static_cast<double>(x) - center) / center * half_width :
+      0.0;
+    const double mag = std::abs(d);
+    const double slant = ground ? std::sqrt(mag * mag + altitude * altitude) : mag;
+
+    // At nadir (d == 0) the sample is the shared centre point; assign it to
+    // whichever side has data, preferring port, so a single-sided ping still
+    // fills the centre column instead of going black.
+    const bool use_port = (d < 0.0) || (d == 0.0 && range_port > 0.0);
+    std::ptrdiff_t idx = -1;
+    if (use_port) {
+      // Port: stored reversed in [0, port_n); nadir at port_n-1, far at 0.
+      idx = sample_on_side(
+        slant, range_port, port_n, static_cast<std::ptrdiff_t>(port_n) - 1, -1);
+    } else {
+      // Starboard: [port_n, size()); nadir at port_n, far at end.
+      idx = sample_on_side(
+        slant, range_stbd, stbd_n, static_cast<std::ptrdiff_t>(port_n), +1);
+    }
+    if (idx >= 0 && static_cast<std::size_t>(idx) < samples.size()) {
+      out[x] = samples[static_cast<std::size_t>(idx)];
+    }
+  }
+}
+
+std::vector<float> project_row(
+  const std::vector<float> & samples, std::size_t nadir_index,
+  double range_port, double range_stbd, double altitude, bool ground,
+  double half_width, std::size_t columns)
+{
+  std::vector<float> out(columns, 0.0f);
+  project_row_into(
+    out.data(), samples, nadir_index, range_port, range_stbd, altitude, ground,
+    half_width, columns);
+  return out;
+}
+
+std::vector<float> apply_tvg(
+  const std::vector<float> & samples, std::size_t nadir_index,
+  double range_port, double range_stbd, double slope, double ref_range)
+{
+  std::vector<float> out = samples;
+  if (slope <= 0.0 || ref_range <= 0.0) {
+    return out;  // identity
+  }
+  const std::size_t port_n = std::min(nadir_index, samples.size());
+  const std::size_t stbd_n = samples.size() - port_n;
+
+  // Per-sample slant range: bin centers at (k + 0.5)/count of the side range.
+  // (project_row maps display columns to samples by endpoint fraction instead;
+  // the two differ by half a bin but both are monotonic, so the TVG amplitude
+  // and the sample-index mapping stay consistent in ordering — the slight slant
+  // offset here is intentional and not shared with project_row's axis.)
+  // Port is reversed, so storage index s in [0, port_n) is original bin
+  // (port_n-1 - s); starboard storage index (port_n + k) is original bin k.
+  for (std::size_t s = 0; s < port_n; ++s) {
+    if (range_port <= 0.0 || port_n == 0) {
+      break;
+    }
+    const std::size_t bin = port_n - 1 - s;
+    const double slant = range_port * (static_cast<double>(bin) + 0.5) /
+      static_cast<double>(port_n);
+    const double factor = std::pow(std::max(slant, ref_range) / ref_range, slope);
+    out[s] = static_cast<float>(static_cast<double>(out[s]) * factor);
+  }
+  for (std::size_t k = 0; k < stbd_n; ++k) {
+    if (range_stbd <= 0.0) {
+      break;
+    }
+    const double slant = range_stbd * (static_cast<double>(k) + 0.5) /
+      static_cast<double>(stbd_n);
+    const double factor = std::pow(std::max(slant, ref_range) / ref_range, slope);
+    out[port_n + k] = static_cast<float>(static_cast<double>(out[port_n + k]) * factor);
+  }
+  return out;
 }
 
 }  // namespace rqt_sonar_waterfall

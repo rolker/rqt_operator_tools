@@ -63,6 +63,11 @@ public:
   /// Stored rows, front = oldest, back = newest.
   const std::deque<WaterfallRow> & rows() const {return rows_;}
 
+  /// Mutable access for in-place enrichment of buffered rows (e.g. populating
+  /// the lazy TVG cache or re-deriving it after a slope change). Does not change
+  /// row count or order.
+  std::deque<WaterfallRow> & mutable_rows() {return rows_;}
+
 private:
   void trim();
 
