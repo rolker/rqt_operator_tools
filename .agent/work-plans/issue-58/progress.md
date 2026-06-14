@@ -1,0 +1,18 @@
+---
+issue: 58
+---
+
+# Issue #58 — rqt_sonar_waterfall: water-column removal + slant→ground range + range lines + uniform ping scaling
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-06-14 11:18 -0400
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+
+**Plan**: `.agent/work-plans/issue-58/plan.md` at `48b1c3c`
+**PR**: https://github.com/rolker/rqt_operator_tools/pull/60 (`[PLAN]` prefix)
+**Phases**: single
+
+### Open questions
+- [ ] Combined-row geometry: store `nadir_index` + per-side range in `WaterfallRow` (plan does); confirm port/stbd may carry asymmetric ranges.
+- [ ] Range-line interval: auto-pick nice 1/2/5·10ⁿ from visible half-width (assumed) vs a fixed-interval control.
