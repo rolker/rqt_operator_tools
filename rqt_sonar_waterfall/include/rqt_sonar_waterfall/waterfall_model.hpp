@@ -157,6 +157,15 @@ std::vector<float> project_row(
   double range_port, double range_stbd, double altitude, bool ground,
   double half_width, std::size_t columns);
 
+/// In-place form of project_row(): writes `columns` floats to `out` (every
+/// column set, 0 = no data) instead of allocating a vector. Lets the renderer
+/// project straight into the texture staging buffer, one row per repaint, with
+/// no per-row heap allocation. `out` must have room for `columns` floats.
+void project_row_into(
+  float * out, const std::vector<float> & samples, std::size_t nadir_index,
+  double range_port, double range_stbd, double altitude, bool ground,
+  double half_width, std::size_t columns);
+
 /// TVG-correct a row in place-shape: multiply each sample by
 /// (max(R, ref_range) / ref_range)^slope, where R is that sample's slant range
 /// derived from its position and the side's range (`range_port` for the reversed

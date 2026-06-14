@@ -435,10 +435,10 @@ void WaterfallWidget::upload_texture()
     // Swap in the precomputed TVG samples when enabled; else the raw samples.
     const std::vector<float> & src =
       (tvg_ && row.has_tvg) ? row.intensities_tvg : row.intensities;
-    const std::vector<float> projected = project_row(
-      src, row.nadir_index, g.range_port, g.range_stbd, g.altitude, g.ground,
-      half, width);
-    std::copy(projected.begin(), projected.end(), data.data() + y * width);
+    // Project straight into this row of the staging buffer (no per-row alloc).
+    project_row_into(
+      data.data() + y * width, src, row.nadir_index, g.range_port, g.range_stbd,
+      g.altitude, g.ground, half, width);
   }
 
   // Overlay state from the newest row (top of the display).

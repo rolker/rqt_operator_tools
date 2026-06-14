@@ -167,9 +167,10 @@ std::optional<WaterfallRow> combine_rows(
   combined.range_max_port = port ? port->range_max : 0.0;
   combined.range_max_stbd = starboard ? starboard->range_max : 0.0;
   combined.range_max = std::max(combined.range_max_port, combined.range_max_stbd);
-  // Altitude: prefer whichever side carries one (they share the nadir depth).
-  combined.altitude = (port && port->altitude > 0.0) ? port->altitude :
-    (starboard ? starboard->altitude : 0.0);
+  // `altitude` is left at its default (0): the per-side extractor never sets it;
+  // the depth subscription stamps it onto the combined row downstream (the
+  // plugin's post_row). Don't derive it here — that value would always be
+  // superseded.
   combined.stamp = std::max(
     port ? port->stamp : 0.0, starboard ? starboard->stamp : 0.0);
   return combined;
@@ -196,10 +197,16 @@ std::ptrdiff_t sample_on_side(
   double slant, double side_range, std::size_t count, std::ptrdiff_t base,
   std::ptrdiff_t step)
 {
-  if (side_range <= 0.0 || count == 0 || slant > side_range) {
+  // Tolerate a hair past the far edge: in ground mode the outermost column's
+  // slant = sqrt(half_width^2 + altitude^2) equals side_range only up to
+  // floating-point rounding, so a hard `>` would black out the last column.
+  if (side_range <= 0.0 || count == 0 || slant > side_range * (1.0 + 1e-9)) {
     return -1;
   }
-  const double frac = slant / side_range;  // 0 at nadir, 1 at far
+  double frac = slant / side_range;  // 0 at nadir, 1 at far
+  if (frac > 1.0) {
+    frac = 1.0;  // clamp the rounding overshoot before indexing
+  }
   const std::ptrdiff_t offset = (count > 1) ?
     static_cast<std::ptrdiff_t>(std::lround(frac * static_cast<double>(count - 1))) :
     0;
@@ -208,14 +215,18 @@ std::ptrdiff_t sample_on_side(
 
 }  // namespace
 
-std::vector<float> project_row(
-  const std::vector<float> & samples, std::size_t nadir_index,
+void project_row_into(
+  float * out, const std::vector<float> & samples, std::size_t nadir_index,
   double range_port, double range_stbd, double altitude, bool ground,
   double half_width, std::size_t columns)
 {
-  std::vector<float> out(columns, 0.0f);
+  // Always write every column (0 = no data) so the caller can pass an
+  // uninitialised destination row of the texture staging buffer.
+  for (std::size_t x = 0; x < columns; ++x) {
+    out[x] = 0.0f;
+  }
   if (columns == 0 || samples.empty() || half_width <= 0.0) {
-    return out;
+    return;
   }
   const std::size_t port_n = std::min(nadir_index, samples.size());
   const std::size_t stbd_n = samples.size() - port_n;
@@ -247,6 +258,17 @@ std::vector<float> project_row(
       out[x] = samples[static_cast<std::size_t>(idx)];
     }
   }
+}
+
+std::vector<float> project_row(
+  const std::vector<float> & samples, std::size_t nadir_index,
+  double range_port, double range_stbd, double altitude, bool ground,
+  double half_width, std::size_t columns)
+{
+  std::vector<float> out(columns, 0.0f);
+  project_row_into(
+    out.data(), samples, nadir_index, range_port, range_stbd, altitude, ground,
+    half_width, columns);
   return out;
 }
 
@@ -262,6 +284,10 @@ std::vector<float> apply_tvg(
   const std::size_t stbd_n = samples.size() - port_n;
 
   // Per-sample slant range: bin centers at (k + 0.5)/count of the side range.
+  // (project_row maps display columns to samples by endpoint fraction instead;
+  // the two differ by half a bin but both are monotonic, so the TVG amplitude
+  // and the sample-index mapping stay consistent in ordering — the slight slant
+  // offset here is intentional and not shared with project_row's axis.)
   // Port is reversed, so storage index s in [0, port_n) is original bin
   // (port_n-1 - s); starboard storage index (port_n + k) is original bin k.
   for (std::size_t s = 0; s < port_n; ++s) {
