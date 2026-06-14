@@ -36,9 +36,13 @@
 #include <QLineEdit>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QString>
 
+#include <algorithm>
+#include <cmath>
 #include <limits>
 #include <map>
+#include <memory>
 #include <string>
 
 namespace marine_control_widgets
@@ -48,10 +52,37 @@ namespace
 {
 using Item = marine_control_interfaces::msg::ControlItem;
 
-// A stringified value parses to "true" for the common truthy spellings.
+// A stringified value parses to "true" for the common truthy spellings,
+// case-insensitively (a device may echo "TRUE"/"On"/"Yes").
 bool parseBool(const std::string & value)
 {
-  return value == "true" || value == "1" || value == "on" || value == "True";
+  QString v = QString::fromStdString(value).trimmed().toLower();
+  return v == "true" || v == "1" || v == "on" || v == "yes";
+}
+
+// Decimal places a QDoubleSpinBox needs so it can represent values without
+// silently rounding (which would round-trip a coarser value back to the
+// device). Prefer the control's step; otherwise match the current value's own
+// precision. Clamped to a sane [2, 6].
+int decimalsFor(const Item & item)
+{
+  if (item.step > 0.0 && item.step < 1.0) {
+    return std::clamp(static_cast<int>(std::ceil(-std::log10(item.step))), 2, 6);
+  }
+  const std::string & v = item.value;
+  const auto dot = v.find('.');
+  const int from_value = (dot == std::string::npos) ?
+    0 : static_cast<int>(v.size() - dot - 1);
+  return std::clamp(from_value, 2, 6);
+}
+
+// Clamp a float64 bound to the int range before narrowing (a device could
+// advertise INT bounds beyond INT_MAX; the raw cast would be UB).
+int toIntBound(double v)
+{
+  const double lo = static_cast<double>(std::numeric_limits<int>::min());
+  const double hi = static_cast<double>(std::numeric_limits<int>::max());
+  return static_cast<int>(std::clamp(v, lo, hi));
 }
 }  // namespace
 
@@ -84,6 +115,11 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
     return;
   }
 
+  // Last value applied from the device (or last published). An edit publishes
+  // only when it differs, so a no-op focus-out / re-select doesn't spam the
+  // change topic (and the ADR-0003 D8.3 audit) with redundant commands.
+  auto last = std::make_shared<QString>(QString::fromStdString(item.value));
+
   switch (item.type) {
     case Item::TYPE_FLOAT: {
         auto * spin = new QDoubleSpinBox();
@@ -92,9 +128,8 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
         } else {
           spin->setRange(-1.0e9, 1.0e9);   // unbounded control: wide range
         }
+        spin->setDecimals(decimalsFor(item));
         spin->setSingleStep(item.step > 0.0 ? item.step : 0.1);
-        // Decimals from the step's magnitude so the field can represent it.
-        spin->setDecimals(item.step > 0.0 && item.step < 1.0 ? 3 : 2);
         if (!item.units.empty()) {
           spin->setSuffix(QStringLiteral(" ") + QString::fromStdString(item.units));
         }
@@ -102,12 +137,16 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
         spin->setValue(QString::fromStdString(item.value).toDouble());
         connect(
           spin, &QAbstractSpinBox::editingFinished, this,
-          [this, name, spin]() {emit controlChanged(name, QString::number(spin->value()));});
+          [this, name, spin, last]() {
+            const QString v = QString::number(spin->value());
+            if (v != *last) {*last = v; emit controlChanged(name, v);}
+          });
         row.input = spin;
-        row.set_value = [spin](const std::string & value) {
+        row.set_value = [spin, last](const std::string & value) {
+            *last = QString::fromStdString(value);
             if (!spin->hasFocus()) {
               const QSignalBlocker block(spin);
-              spin->setValue(QString::fromStdString(value).toDouble());
+              spin->setValue(last->toDouble());
             }
           };
         return;
@@ -115,11 +154,11 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
     case Item::TYPE_INT: {
         auto * spin = new QSpinBox();
         if (item.max_value > item.min_value) {
-          spin->setRange(static_cast<int>(item.min_value), static_cast<int>(item.max_value));
+          spin->setRange(toIntBound(item.min_value), toIntBound(item.max_value));
         } else {
           spin->setRange(std::numeric_limits<int>::min(), std::numeric_limits<int>::max());
         }
-        spin->setSingleStep(item.step > 0.0 ? static_cast<int>(item.step) : 1);
+        spin->setSingleStep(item.step > 0.0 ? toIntBound(item.step) : 1);
         if (!item.units.empty()) {
           spin->setSuffix(QStringLiteral(" ") + QString::fromStdString(item.units));
         }
@@ -127,12 +166,16 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
         spin->setValue(QString::fromStdString(item.value).toInt());
         connect(
           spin, &QAbstractSpinBox::editingFinished, this,
-          [this, name, spin]() {emit controlChanged(name, QString::number(spin->value()));});
+          [this, name, spin, last]() {
+            const QString v = QString::number(spin->value());
+            if (v != *last) {*last = v; emit controlChanged(name, v);}
+          });
         row.input = spin;
-        row.set_value = [spin](const std::string & value) {
+        row.set_value = [spin, last](const std::string & value) {
+            *last = QString::fromStdString(value);
             if (!spin->hasFocus()) {
               const QSignalBlocker block(spin);
-              spin->setValue(QString::fromStdString(value).toInt());
+              spin->setValue(last->toInt());
             }
           };
         return;
@@ -142,16 +185,19 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
         check->setChecked(parseBool(item.value));
         connect(
           check, &QCheckBox::toggled, this,
-          [this, name](bool checked) {
-            emit controlChanged(name, checked ? QStringLiteral("true") : QStringLiteral("false"));
+          [this, name, last](bool checked) {
+            const QString v = checked ? QStringLiteral("true") : QStringLiteral("false");
+            if (v != *last) {*last = v; emit controlChanged(name, v);}
           });
         row.input = check;
-        row.set_value = [check](const std::string & value) {
+        row.set_value = [check, last](const std::string & value) {
+            // Canonicalize so an echoed "True"/"on" doesn't read as a change.
+            *last = parseBool(value) ? QStringLiteral("true") : QStringLiteral("false");
             // setChecked emits toggled(); block it so a device refresh never
             // re-publishes the value back as a change.
             if (!check->hasFocus()) {
               const QSignalBlocker block(check);
-              check->setChecked(parseBool(value));
+              check->setChecked(*last == QStringLiteral("true"));
             }
           };
         return;
@@ -161,15 +207,27 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
         for (const auto & choice : item.enums) {
           combo->addItem(QString::fromStdString(choice));
         }
+        // Show the device value even if it's not one of the advertised choices,
+        // so the combo never silently disagrees with the value label.
+        if (combo->findText(QString::fromStdString(item.value)) < 0) {
+          combo->addItem(QString::fromStdString(item.value));
+        }
         combo->setCurrentText(QString::fromStdString(item.value));
         connect(
           combo, QOverload<int>::of(&QComboBox::activated), this,
-          [this, name, combo](int index) {emit controlChanged(name, combo->itemText(index));});
+          [this, name, combo, last](int index) {
+            const QString v = combo->itemText(index);
+            if (v != *last) {*last = v; emit controlChanged(name, v);}
+          });
         row.input = combo;
-        row.set_value = [combo](const std::string & value) {
-            // setCurrentText does not emit activated(), so no spurious publish.
+        row.set_value = [combo, last](const std::string & value) {
+            *last = QString::fromStdString(value);
             if (!combo->hasFocus()) {
-              combo->setCurrentText(QString::fromStdString(value));
+              if (combo->findText(*last) < 0) {
+                combo->addItem(*last);
+              }
+              // setCurrentText does not emit activated(), so no spurious publish.
+              combo->setCurrentText(*last);
             }
           };
         return;
@@ -180,11 +238,15 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
         edit->setText(QString::fromStdString(item.value));
         connect(
           edit, &QLineEdit::editingFinished, this,
-          [this, name, edit]() {emit controlChanged(name, edit->text());});
+          [this, name, edit, last]() {
+            const QString v = edit->text();
+            if (v != *last) {*last = v; emit controlChanged(name, v);}
+          });
         row.input = edit;
-        row.set_value = [edit](const std::string & value) {
+        row.set_value = [edit, last](const std::string & value) {
+            *last = QString::fromStdString(value);
             if (!edit->hasFocus()) {
-              edit->setText(QString::fromStdString(value));
+              edit->setText(*last);
             }
           };
         return;

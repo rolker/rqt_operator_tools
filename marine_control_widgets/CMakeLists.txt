@@ -31,7 +31,9 @@ install(
   RUNTIME DESTINATION bin)
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(marine_control_interfaces Qt5)
+# Export Qt5 with the component a downstream linker needs (the exported target
+# links Qt5::Widgets), so consumers don't have to find Qt5 components first.
+ament_export_dependencies(marine_control_interfaces Qt5 Qt5Widgets)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

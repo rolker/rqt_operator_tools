@@ -173,6 +173,48 @@ TEST_F(ControlSetWidgetTest, RefreshDoesNotReEmitChange)
   EXPECT_TRUE(dynamic_cast<QCheckBox *>(w.inputFor("enabled"))->isChecked());
 }
 
+TEST_F(ControlSetWidgetTest, CaseInsensitiveBoolParse)
+{
+  // A device echoing "TRUE"/"On" must read as checked (not flip to false).
+  ControlSetWidget w;
+  ControlSet set;
+  set.items.push_back(item("enabled", ControlItem::TYPE_BOOL, "TRUE"));
+  w.apply(set);
+  EXPECT_TRUE(dynamic_cast<QCheckBox *>(w.inputFor("enabled"))->isChecked());
+}
+
+TEST_F(ControlSetWidgetTest, EnumShowsValueOutsideChoices)
+{
+  // A device value not in the advertised enum list is still shown (combo and
+  // value label must not disagree).
+  ControlSetWidget w;
+  ControlSet set;
+  auto en = item("mode", ControlItem::TYPE_ENUM, "custom");
+  en.enums = {"auto", "manual"};
+  set.items.push_back(en);
+  w.apply(set);
+  auto * combo = dynamic_cast<QComboBox *>(w.inputFor("mode"));
+  ASSERT_NE(combo, nullptr);
+  EXPECT_EQ(combo->currentText(), QStringLiteral("custom"));
+}
+
+TEST_F(ControlSetWidgetTest, NoOpToggleBackEmitsOnlyDistinctValues)
+{
+  // Toggling true then back to false emits each distinct value once; the
+  // change-suppression only blocks a re-emit of the *same* value.
+  ControlSetWidget w;
+  ControlSet set;
+  set.items.push_back(item("enabled", ControlItem::TYPE_BOOL, "false"));
+  w.apply(set);
+  int count = 0;
+  QObject::connect(
+    &w, &ControlSetWidget::controlChanged, [&](const QString &, const QString &) {++count;});
+  auto * check = dynamic_cast<QCheckBox *>(w.inputFor("enabled"));
+  check->click();   // -> true
+  check->click();   // -> false
+  EXPECT_EQ(count, 2);
+}
+
 TEST_F(ControlSetWidgetTest, ClearRemovesAllRows)
 {
   ControlSetWidget w;

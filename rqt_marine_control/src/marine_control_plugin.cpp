@@ -83,7 +83,7 @@ void MarineControlPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
     QStringLiteral("Marine Control (") + QString::number(context.serialNumber()) + ")");
   context.addWidget(widget_);
 
-  connect(refresh, &QPushButton::pressed, this, &MarineControlPlugin::updateTopicList);
+  connect(refresh, &QPushButton::clicked, this, &MarineControlPlugin::updateTopicList);
   connect(
     control_widget_.data(), &marine_control_widgets::ControlSetWidget::controlChanged,
     this, &MarineControlPlugin::publishChange);
