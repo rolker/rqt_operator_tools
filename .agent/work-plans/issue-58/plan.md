@@ -37,13 +37,22 @@ persisted toggle. The three geometry/scaling toggles default **ON**; TVG default
 2. **(a) Ground projection** — pure `resample_row_to_ground(samples, range_max, altitude,
    half_width_m, columns)`: per output column at ground range `g`, slant `s = √(g²+h²)`;
    `s > range_max` → no-data (black); else nearest sample. Water column removed for free
-   (`g≥0 ⇒ s≥h`). Toggle off → existing slant resample.
+   (`g≥0 ⇒ s≥h`). Toggle off → existing slant resample. **Nadir is always the center
+   column**, both sides projected outward to a common half-width (= max ground range over all
+   visible rows and both sides), so the metres-per-pixel scale is identical left and right.
+   A side with no/short data renders black beyond its range — including the **single-sided
+   case**: one side pinging still draws centered, filling its half, the other half black
+   (not a nadir-at-edge half-waterfall).
 3. **(c) Uniform scale** — `upload_texture` sets texture full width to the **max range
    across visible rows** (ground or slant per mode), each row resampled onto that common
    metres-axis; narrower pings occupy fewer columns. Manual range-max override.
 4. **(b) Range lines** — `paintGL` QPainter overlay: across-track gridlines at round range
    intervals + labels, using the widget's half-width→pixel mapping (labels read "slant" or
-   "ground" per mode).
+   "ground" per mode), drawn symmetrically about the centered nadir. Interval is **auto
+   "nice"** (1/2/5·10ⁿ): pick the target division count from the **window pixel width** (aim
+   for a line roughly every ~N px) scaled by a **Range-line density** control, then snap to
+   the nice ladder — so a wider window or higher density yields more lines, all on round
+   values.
 5. **TVG (precomputed, default off)** — `WaterfallRow.intensities_tvg` + the slope `p` it
    was computed at. Factor `(max(R,R_ref)/R_ref)^p` (`R` = per-sample slant from the row's
    own `range_max`), **computed once per ping at ingest** in `add_row`, independent of view
@@ -60,11 +69,11 @@ persisted toggle. The three geometry/scaling toggles default **ON**; TVG default
 | File | Change |
 |------|--------|
 | `rqt_sonar_waterfall/include/.../waterfall_model.hpp` | `WaterfallRow`: add `altitude`, `intensities_tvg`, `tvg_slope`, `nadir_index`, per-side `range_max_port/_stbd`; declare `resample_row_to_ground`, `apply_tvg` |
-| `rqt_sonar_waterfall/src/waterfall_model.cpp` | implement the two pure functions; `combine_rows` records `nadir_index` + per-side range |
+| `rqt_sonar_waterfall/src/waterfall_model.cpp` | implement the two pure functions; `combine_rows` **always** records `nadir_index` + per-side `range_max_port/_stbd` — including the single-sided case (annotates which side + keeps nadir at the boundary) so the widget can center nadir rather than returning a nadir-at-edge row |
 | `rqt_sonar_waterfall/include/.../waterfall_widget.hpp` | state + setters: `set_ground_range`, `set_uniform_scale`, `set_range_lines`, `set_tvg`, `set_tvg_slope`, `set_altitude_*`; ground half-width accessor |
 | `rqt_sonar_waterfall/src/waterfall_widget.cpp` | `add_row` computes TVG (lazy); `upload_texture` selects source + applies ground/uniform remap; `paintGL` range-line overlay; slope-change recompute |
 | `rqt_sonar_waterfall/include/.../sonar_waterfall_plugin.hpp` | depth sub + combo members; altitude cache; new toggle/slope widgets |
-| `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp` | depth combo + `sensor_msgs/Range` subscription (`SensorDataQoS`); stamp altitude; second controls row; save/restore |
+| `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp` | depth combo + `sensor_msgs/Range` subscription (`SensorDataQoS`); stamp altitude; second controls row incl. **Range-line density** control; save/restore |
 | `rqt_sonar_waterfall/include/.../topic_filter.hpp` | declare `range_topics()` (filter `sensor_msgs/msg/Range`) |
 | `rqt_sonar_waterfall/src/topic_filter.cpp` | implement `range_topics()`; plugin wires it into `refresh_topics()` |
 | `rqt_sonar_waterfall/test/test_topic_filter.cpp` | extend for `range_topics()` |
@@ -98,15 +107,16 @@ persisted toggle. The three geometry/scaling toggles default **ON**; TVG default
 | Add `sensor_msgs` dep | `package.xml` + `CMakeLists.txt` | Yes |
 | `upload_texture` resample path | `test_waterfall_widget.cpp` expectations | Yes — review/extend |
 
-## Open Questions
+## Open Questions (resolved 2026-06-14)
 
-- **Combined-row geometry**: `combine_rows` currently keeps only `max(range_max)` and drops
-  the nadir boundary (= port sample count). Plan adds `nadir_index` + per-side range to
-  `WaterfallRow` so the per-side ground projection is exact. Confirm port/stbd may carry
-  *different* ranges (asymmetric) — if always symmetric in practice, the per-side fields are
-  belt-and-suspenders but harmless.
-- **Range-line interval policy**: auto-pick a "nice" interval (1/2/5·10ⁿ) from the visible
-  half-width — assumed; flag if a fixed interval control is wanted.
+- **Combined-row geometry** — RESOLVED. Keep per-side `range_max_port/_stbd` + `nadir_index`
+  on `WaterfallRow` so it works with one side or asymmetric pings. **Nadir is always rendered
+  at the center column**, even when only one side is pinging (the active side fills its half,
+  the other half is black) — `combine_rows` annotates the single-sided case rather than
+  returning a nadir-at-edge row.
+- **Range-line interval policy** — RESOLVED. Auto "nice" interval (1/2/5·10ⁿ); target line
+  count derived from the **window pixel width** and scaled by a **Range-line density**
+  control, then snapped to the nice ladder.
 
 ## Estimated Scope
 
