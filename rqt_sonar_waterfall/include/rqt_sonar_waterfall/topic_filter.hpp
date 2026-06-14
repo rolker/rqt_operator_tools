@@ -44,6 +44,10 @@ inline constexpr const char * kRawSonarImageType =
 inline constexpr const char * kRadarControlSetType =
   "marine_radar_control_msgs/msg/RadarControlSet";
 
+/// The depth/altitude message type used to remove the water column and convert
+/// slant range to ground range (e.g. the sidescan driver's nadir_depth).
+inline constexpr const char * kRangeType = "sensor_msgs/msg/Range";
+
 /// From a node-graph topic->types map, return the sorted names of topics that
 /// publish RawSonarImage. A topic qualifies if any of its advertised types
 /// matches, so multi-type topics are still offered.
@@ -52,6 +56,10 @@ std::vector<std::string> raw_sonar_image_topics(
 
 /// As raw_sonar_image_topics(), but for RadarControlSet control-state topics.
 std::vector<std::string> radar_control_set_topics(
+  const std::map<std::string, std::vector<std::string>> & topics);
+
+/// As raw_sonar_image_topics(), but for sensor_msgs/Range depth/altitude topics.
+std::vector<std::string> range_topics(
   const std::map<std::string, std::vector<std::string>> & topics);
 
 /// Derive the change-state (command) topic from a control-state topic, matching

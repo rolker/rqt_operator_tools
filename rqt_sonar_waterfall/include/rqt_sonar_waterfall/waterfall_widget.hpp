@@ -87,6 +87,20 @@ public:
   /// Fixed intensity range used when auto-range is disabled.
   void set_manual_range(float min, float max);
 
+  // --- geometry / correction controls (issue #58) ---
+  /// Remove the water column and convert slant->ground range (needs altitude).
+  void set_ground_range(bool enabled);
+  /// Render all visible pings at one metres-per-pixel scale (auto-fit widest).
+  void set_uniform_scale(bool enabled);
+  /// Draw across-track range gridlines + labels.
+  void set_range_lines(bool enabled);
+  /// Scale the range-line count (>0; higher = more lines). Clamped to a sane range.
+  void set_range_line_density(float density);
+  /// Display TVG correction, using the precomputed per-row corrected samples.
+  void set_tvg(bool enabled);
+  /// TVG slope exponent (R/ref)^slope; <=0 is identity. Re-derives the cache.
+  void set_tvg_slope(float slope);
+
   bool frozen() const {return frozen_;}
   std::size_t history() const {return buffer_.capacity();}
 
@@ -105,6 +119,12 @@ private:
   static std::pair<float, float> row_min_max(const WaterfallRow & row);
   /// Intensity range fed to the shader: manual range, or the buffer auto-range.
   std::pair<float, float> active_range() const;
+  /// Auto-range over the buffered rows' active (raw or TVG) cached extremes.
+  std::pair<float, float> buffer_auto_range() const;
+  /// Populate/refresh each buffered row's TVG cache for the current slope.
+  void ensure_tvg_cache();
+  /// Compute one row's TVG-corrected samples + extremes for the current slope.
+  void compute_row_tvg(WaterfallRow & row) const;
 
   WaterfallBuffer buffer_;
   GpuColorMap gpu_;
@@ -124,6 +144,20 @@ private:
   bool auto_range_ = true;
   float manual_min_ = 0.0f;
   float manual_max_ = 1.0f;
+
+  // --- geometry / correction state (issue #58) ---
+  bool ground_range_ = true;       ///< water-column removal + slant->ground
+  bool uniform_scale_ = true;      ///< one scale for all visible pings
+  bool range_lines_ = true;        ///< draw across-track range gridlines
+  float range_line_density_ = 1.0f;  ///< multiplies the auto line count
+  bool tvg_ = false;               ///< apply display TVG (default off)
+  float tvg_slope_ = 1.5f;         ///< TVG exponent when enabled
+
+  /// Half-width and axis nature of the most recent render, for the overlay.
+  double display_half_width_ = 0.0;  ///< meters (or samples if non-metric)
+  bool display_is_ground_ = false;   ///< axis is ground range
+  bool display_metric_ = false;      ///< axis is metres (label with "m")
+  bool depth_missing_ = false;       ///< ground requested but newest row has no altitude
 };
 
 }  // namespace rqt_sonar_waterfall

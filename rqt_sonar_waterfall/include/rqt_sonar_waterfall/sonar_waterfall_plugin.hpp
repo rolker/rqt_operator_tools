@@ -43,6 +43,7 @@
 #include <marine_acoustic_msgs/msg/raw_sonar_image.hpp>
 #include <marine_radar_control_msgs/msg/radar_control_set.hpp>
 #include <marine_radar_control_msgs/msg/radar_control_value.hpp>
+#include <sensor_msgs/msg/range.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include "rqt_sonar_waterfall/ping_pairer.hpp"
@@ -96,6 +97,8 @@ private:
   void on_control_topic_changed(const QString & topic);
   void on_control_set(
     marine_radar_control_msgs::msg::RadarControlSet::ConstSharedPtr msg);
+  void on_depth_topic_changed(const QString & topic);
+  void on_depth_msg(sensor_msgs::msg::Range::ConstSharedPtr msg);
   void publish_control(const QString & key, const QString & value);
   void subscribe(
     rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr & sub,
@@ -112,6 +115,7 @@ private:
   QComboBox * port_combo_ = nullptr;
   QComboBox * starboard_combo_ = nullptr;
   QComboBox * control_combo_ = nullptr;
+  QComboBox * depth_combo_ = nullptr;
   QTimer * refresh_timer_ = nullptr;
 
   ControlPanel * control_panel_ = nullptr;
@@ -131,9 +135,24 @@ private:
   QDoubleSpinBox * range_max_spin_ = nullptr;
   QPushButton * freeze_button_ = nullptr;
 
+  // Geometry / correction controls (issue #58), wired to WaterfallWidget setters.
+  QCheckBox * ground_check_ = nullptr;
+  QCheckBox * uniform_check_ = nullptr;
+  QCheckBox * range_lines_check_ = nullptr;
+  QDoubleSpinBox * density_spin_ = nullptr;
+  QCheckBox * tvg_check_ = nullptr;
+  QDoubleSpinBox * tvg_slope_spin_ = nullptr;
+
   rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr port_sub_;
   rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr
     starboard_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr depth_sub_;
+
+  /// Latest sonar altitude (nadir depth), metres, stamped onto each row at
+  /// post_row. Written by the depth callback and read by the image callbacks —
+  /// all on rqt's single executor thread, so no lock; atomic guards against a
+  /// future multi-threaded executor.
+  std::atomic<double> latest_altitude_{0.0};
 
   SingleBeamExtractor extractor_;
   PingPairer pairer_;

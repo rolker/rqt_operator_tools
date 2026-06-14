@@ -62,6 +62,12 @@ std::vector<std::string> radar_control_set_topics(
   return topics_of_type(topics, kRadarControlSetType);
 }
 
+std::vector<std::string> range_topics(
+  const std::map<std::string, std::vector<std::string>> & topics)
+{
+  return topics_of_type(topics, kRangeType);
+}
+
 std::string derive_change_topic(const std::string & state_topic)
 {
   if (state_topic.empty()) {

@@ -123,3 +123,16 @@ persisted toggle. The three geometry/scaling toggles default **ON**; TVG default
 Single PR. Cohesive, all within `rqt_sonar_waterfall`; the pure-function split keeps the
 diff testable. If review prefers, TVG (precompute path) could split to a follow-on, but the
 geometry work is the bulk and naturally lands together.
+
+## Implementation Notes
+
+- **Non-metric fallback in `upload_texture`.** When a ping carries no usable range
+  (`range_max_port`/`_stbd` both 0 — driver left sound-speed/sample-rate unset), the widget
+  falls back to a unit-less *sample* axis (per-side sample count as the "range", ground
+  forced off) so the row still renders centred on nadir; range-line labels then read
+  "samples". This is broader than the depth-only fallback the plan described and keeps the
+  viewer usable against minimal drivers. See `RowGeom`/`row_geom` in `waterfall_widget.cpp`.
+- **Nadir at `d == 0`.** `project_row` assigns the exact centre column to whichever side has
+  data (preferring port), rather than strictly by sign, so a single-sided ping fills the
+  centre column instead of leaving a black seam at nadir. Covered by
+  `ProjectRow.PortOnlyFillsLeftHalfNadirCentered`.

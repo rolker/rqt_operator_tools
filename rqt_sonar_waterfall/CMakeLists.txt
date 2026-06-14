@@ -17,6 +17,7 @@ find_package(pluginlib REQUIRED)
 find_package(marine_acoustic_msgs REQUIRED)
 find_package(marine_radar_control_msgs REQUIRED)
 find_package(marine_colormap REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(Qt5 COMPONENTS Widgets Gui OpenGL REQUIRED)
 
@@ -70,6 +71,7 @@ ament_target_dependencies(${PROJECT_NAME}
   marine_acoustic_msgs
   marine_radar_control_msgs
   marine_colormap
+  sensor_msgs
   ament_index_cpp
 )
 
@@ -119,6 +121,13 @@ if(BUILD_TESTING)
   )
   target_include_directories(test_combine_rows PRIVATE include)
   ament_target_dependencies(test_combine_rows marine_acoustic_msgs)
+
+  ament_add_gtest(test_ground_resample
+    test/test_ground_resample.cpp
+    src/waterfall_model.cpp
+  )
+  target_include_directories(test_ground_resample PRIVATE include)
+  ament_target_dependencies(test_ground_resample marine_acoustic_msgs)
 
   ament_add_gtest(test_single_beam_extractor
     test/test_single_beam_extractor.cpp
@@ -203,7 +212,7 @@ ament_export_targets(export_${PROJECT_NAME})
 # "target marine_colormap::marine_colormap not found".
 ament_export_dependencies(
   rclcpp rqt_gui_cpp qt_gui_cpp pluginlib marine_acoustic_msgs
-  marine_radar_control_msgs ament_index_cpp marine_colormap Qt5
+  marine_radar_control_msgs ament_index_cpp marine_colormap sensor_msgs Qt5
 )
 
 ament_package()

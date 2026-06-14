@@ -62,6 +62,9 @@ TEST(CombineRows, BothSidesPortReversedThenStarboard)
   EXPECT_EQ(out->intensities, (std::vector<float>{3, 2, 1, 4, 5, 6}));
   EXPECT_DOUBLE_EQ(out->range_max, 30.0);  // larger of the two
   EXPECT_DOUBLE_EQ(out->stamp, 12.0);      // later of the two
+  EXPECT_EQ(out->nadir_index, 3u);         // split = port sample count
+  EXPECT_DOUBLE_EQ(out->range_max_port, 30.0);
+  EXPECT_DOUBLE_EQ(out->range_max_stbd, 25.0);
 }
 
 TEST(CombineRows, DifferingWidths)
@@ -69,21 +72,30 @@ TEST(CombineRows, DifferingWidths)
   auto out = combine_rows(row({1, 2}, 0.0, 0.0), row({7, 8, 9}, 0.0, 0.0));
   ASSERT_TRUE(out.has_value());
   EXPECT_EQ(out->intensities, (std::vector<float>{2, 1, 7, 8, 9}));
+  EXPECT_EQ(out->nadir_index, 2u);
 }
 
-TEST(CombineRows, PortOnly)
+TEST(CombineRows, PortOnlyReversedAllLeftOfNadir)
 {
+  // Single side is laid out the same way as a pair so nadir stays centered:
+  // port is reversed (far->nadir) and nadir_index = full size (all left).
   auto out = combine_rows(row({1, 2, 3}, 30.0, 5.0), std::nullopt);
   ASSERT_TRUE(out.has_value());
-  EXPECT_EQ(out->intensities, (std::vector<float>{1, 2, 3}));
+  EXPECT_EQ(out->intensities, (std::vector<float>{3, 2, 1}));
+  EXPECT_EQ(out->nadir_index, 3u);
   EXPECT_DOUBLE_EQ(out->range_max, 30.0);
+  EXPECT_DOUBLE_EQ(out->range_max_port, 30.0);
+  EXPECT_DOUBLE_EQ(out->range_max_stbd, 0.0);
 }
 
-TEST(CombineRows, StarboardOnly)
+TEST(CombineRows, StarboardOnlyAllRightOfNadir)
 {
   auto out = combine_rows(std::nullopt, row({4, 5}, 20.0, 7.0));
   ASSERT_TRUE(out.has_value());
   EXPECT_EQ(out->intensities, (std::vector<float>{4, 5}));
+  EXPECT_EQ(out->nadir_index, 0u);  // all right of nadir
+  EXPECT_DOUBLE_EQ(out->range_max_stbd, 20.0);
+  EXPECT_DOUBLE_EQ(out->range_max_port, 0.0);
 }
 
 TEST(CombineRows, NeitherReturnsNullopt)
