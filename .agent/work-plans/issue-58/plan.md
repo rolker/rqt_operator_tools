@@ -24,9 +24,16 @@ subscription that stamps altitude onto each row. Every correction is an independ
 persisted toggle. The three geometry/scaling toggles default **ON**; TVG defaults **OFF**.
 
 1. **Depth input** — Plugin gains a **Depth** combo subscribing to `sensor_msgs/Range`
-   (the `garmin_sidescan` driver's `~/nadir_depth`, configurable). Latest value cached and
-   stamped onto each row (`WaterfallRow.altitude`) at `post_row`. Absent/stale depth →
-   ground mode falls back to raw slant with an on-canvas indicator.
+   (the `garmin_sidescan` driver's `~/nadir_depth`, configurable). The combo is populated by
+   a new `range_topics()` filter in `topic_filter` (alongside the existing
+   `raw_sonar_image_topics`/`radar_control_set_topics`). The subscription uses
+   `rclcpp::SensorDataQoS()` — the driver publishes `~/nadir_depth` **BEST_EFFORT**
+   (`node.py:347,359`), so a default-reliable sub would silently receive no altitude. Latest
+   value cached and stamped onto each row (`WaterfallRow.altitude`) at `post_row`; the cache
+   is written by the depth callback and read at `post_row`, both on rqt's single executor
+   thread (the file's existing threading comments rely on this) — no extra lock needed, but
+   the assumption is stated so a future multi-threaded executor doesn't introduce a race.
+   Absent/stale depth → ground mode falls back to raw slant with an on-canvas indicator.
 2. **(a) Ground projection** — pure `resample_row_to_ground(samples, range_max, altitude,
    half_width_m, columns)`: per output column at ground range `g`, slant `s = √(g²+h²)`;
    `s > range_max` → no-data (black); else nearest sample. Water column removed for free
@@ -57,7 +64,10 @@ persisted toggle. The three geometry/scaling toggles default **ON**; TVG default
 | `rqt_sonar_waterfall/include/.../waterfall_widget.hpp` | state + setters: `set_ground_range`, `set_uniform_scale`, `set_range_lines`, `set_tvg`, `set_tvg_slope`, `set_altitude_*`; ground half-width accessor |
 | `rqt_sonar_waterfall/src/waterfall_widget.cpp` | `add_row` computes TVG (lazy); `upload_texture` selects source + applies ground/uniform remap; `paintGL` range-line overlay; slope-change recompute |
 | `rqt_sonar_waterfall/include/.../sonar_waterfall_plugin.hpp` | depth sub + combo members; altitude cache; new toggle/slope widgets |
-| `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp` | depth combo + `sensor_msgs/Range` subscription; stamp altitude; second controls row; save/restore |
+| `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp` | depth combo + `sensor_msgs/Range` subscription (`SensorDataQoS`); stamp altitude; second controls row; save/restore |
+| `rqt_sonar_waterfall/include/.../topic_filter.hpp` | declare `range_topics()` (filter `sensor_msgs/msg/Range`) |
+| `rqt_sonar_waterfall/src/topic_filter.cpp` | implement `range_topics()`; plugin wires it into `refresh_topics()` |
+| `rqt_sonar_waterfall/test/test_topic_filter.cpp` | extend for `range_topics()` |
 | `rqt_sonar_waterfall/test/test_ground_resample.cpp` (new) | geometry + TVG unit tests |
 | `rqt_sonar_waterfall/CMakeLists.txt` | register new test; `sensor_msgs` dep if not present |
 | `rqt_sonar_waterfall/package.xml` | add `sensor_msgs` if not already a dep |
@@ -84,6 +94,7 @@ persisted toggle. The three geometry/scaling toggles default **ON**; TVG default
 |---|---|---|
 | `WaterfallRow` fields | `combine_rows`, `add_row` caching, any row construction in tests | Yes |
 | New view toggles | `saveSettings`/`restoreSettings` persistence | Yes |
+| Add Depth combo | `range_topics()` in `topic_filter` + `refresh_topics()` + test | Yes |
 | Add `sensor_msgs` dep | `package.xml` + `CMakeLists.txt` | Yes |
 | `upload_texture` resample path | `test_waterfall_widget.cpp` expectations | Yes — review/extend |
 
