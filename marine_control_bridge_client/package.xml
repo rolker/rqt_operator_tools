@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>marine_control_bridge_client</name>
+  <version>0.0.1</version>
+  <description>
+    Operator-side, no-Qt helper for marine_control's dynamic bridge wiring
+    (unh_marine_autonomy ADR-0003 D7-dyn): discover controllable devices from
+    udp_bridge bridge_info, and connect/disconnect their state/change topics on
+    explicit request via the local udp_bridge's remote_subscribe/advertise and
+    remove_subscribe/advertise services. Consumed by rqt_marine_control.
+  </description>
+  <maintainer email="roland@ccom.unh.edu">Roland Arsenault</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>udp_bridge_interfaces</depend>
+  <depend>marine_control_interfaces</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
