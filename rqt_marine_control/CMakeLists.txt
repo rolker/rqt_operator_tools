@@ -16,6 +16,7 @@ find_package(Qt5 COMPONENTS Widgets REQUIRED)
 # After Qt5-with-components: marine_control_widgets's exported dependencies
 # include a bare Qt5, which only resolves once components are already found.
 find_package(marine_control_widgets REQUIRED)
+find_package(marine_control_bridge_client REQUIRED)
 
 set(CMAKE_AUTOMOC ON)
 
@@ -44,6 +45,7 @@ ament_target_dependencies(${PROJECT_NAME}
   pluginlib
   marine_control_interfaces
   marine_control_widgets
+  marine_control_bridge_client
 )
 target_link_libraries(${PROJECT_NAME} Qt5::Widgets)
 
@@ -79,6 +81,6 @@ ament_export_libraries(${PROJECT_NAME})
 ament_export_targets(export_${PROJECT_NAME})
 ament_export_dependencies(
   rclcpp rqt_gui_cpp qt_gui_cpp pluginlib
-  marine_control_interfaces marine_control_widgets Qt5)
+  marine_control_interfaces marine_control_widgets marine_control_bridge_client Qt5)
 
 ament_package()

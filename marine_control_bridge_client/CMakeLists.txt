@@ -13,7 +13,7 @@ find_package(rclcpp REQUIRED)
 find_package(udp_bridge_interfaces REQUIRED)
 find_package(marine_control_interfaces REQUIRED)
 
-add_library(${PROJECT_NAME} src/bridge_control_client.cpp)
+add_library(${PROJECT_NAME} SHARED src/bridge_control_client.cpp)
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
