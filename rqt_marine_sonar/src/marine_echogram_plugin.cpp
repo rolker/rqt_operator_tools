@@ -28,13 +28,12 @@
 
 #include "rqt_marine_sonar/marine_echogram_plugin.hpp"
 
-#include <QChart>
 #include <QComboBox>
 #include <QIcon>
 #include <QList>
-#include <QMetaObject>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QTimer>
 
 #include <algorithm>
 #include <cstdint>
@@ -97,6 +96,12 @@ void MarineEchogramPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
 
   context.addWidget(widget_);
 
+  // Coalesce incoming pings into a fixed-cadence redraw (~20 Hz) on the GUI
+  // thread, so a fast feed doesn't post one repaint per message.
+  redraw_timer_ = new QTimer(this);
+  connect(redraw_timer_, &QTimer::timeout, this, &MarineEchogramPlugin::newPings);
+  redraw_timer_->start(50);
+
   updateTopicList();
 
   ui_.topicsComboBox->setCurrentIndex(ui_.topicsComboBox->findText(""));
@@ -119,8 +124,11 @@ void MarineEchogramPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
 
 void MarineEchogramPlugin::shutdownPlugin()
 {
-  // Stop new callbacks first, then drop any pings already queued so a
-  // late newPings() (posted just before teardown) has nothing to push.
+  // Stop new callbacks and the redraw timer first, then drop any pings already
+  // queued so a late drain has nothing to push.
+  if (redraw_timer_) {
+    redraw_timer_->stop();
+  }
   data_subscriber_.reset();
   std::lock_guard<std::mutex> lock(new_pings_mutex_);
   new_pings_.clear();
@@ -226,7 +234,6 @@ void MarineEchogramPlugin::selectTopic(const QString & topic)
 void MarineEchogramPlugin::onTopicChanged(int index)
 {
   data_subscriber_.reset();
-  ui_.echogramWidget->chart()->setTitle("");
   QString topic = ui_.topicsComboBox->itemData(index).toString();
   if (!topic.isEmpty() && node_) {
     // SensorDataQoS (best_effort) matches this stack's sonar publishers and the
@@ -235,25 +242,25 @@ void MarineEchogramPlugin::onTopicChanged(int index)
     data_subscriber_ = node_->create_subscription<marine_acoustic_msgs::msg::RawSonarImage>(
       topic.toStdString(), rclcpp::SensorDataQoS(),
       std::bind(&MarineEchogramPlugin::dataCallback, this, std::placeholders::_1));
-    ui_.echogramWidget->chart()->setTitle(topic);
+  }
+  if (widget_) {
+    widget_->setToolTip(topic);
   }
 }
 
 void MarineEchogramPlugin::dataCallback(
   marine_acoustic_msgs::msg::RawSonarImage::ConstSharedPtr message)
 {
-  {
-    std::lock_guard<std::mutex> lock(new_pings_mutex_);
-    new_pings_.push_back(*message);
-  }
-  QMetaObject::invokeMethod(this, "newPings", Qt::QueuedConnection);
+  // Enqueue only; the GUI-thread redraw_timer_ drains the queue at a fixed
+  // cadence (initPlugin), coalescing bursts into one redraw.
+  std::lock_guard<std::mutex> lock(new_pings_mutex_);
+  new_pings_.push_back(*message);
 }
 
 void MarineEchogramPlugin::newPings()
 {
-  // Swap the queue out under the lock, then redraw without holding it: addPing()
-  // rebuilds the whole image, and holding new_pings_mutex_ across that would
-  // block dataCallback() on the executor thread (callback latency / drops).
+  // Swap the queue out under the lock, then redraw without holding it: the GPU
+  // upload/redraw shouldn't block dataCallback() on the executor thread.
   std::vector<marine_acoustic_msgs::msg::RawSonarImage> pings;
   {
     std::lock_guard<std::mutex> lock(new_pings_mutex_);

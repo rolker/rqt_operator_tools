@@ -186,7 +186,7 @@
  <customwidgets>
   <customwidget>
    <class>rqt_marine_sonar::EchogramWidget</class>
-   <extends>QGraphicsView</extends>
+   <extends>QOpenGLWidget</extends>
    <header>rqt_marine_sonar/echogram_widget.hpp</header>
   </customwidget>
  </customwidgets>

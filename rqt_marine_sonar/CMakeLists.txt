@@ -15,10 +15,11 @@ find_package(rqt_gui_cpp REQUIRED)
 find_package(qt_gui_cpp REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(marine_acoustic_msgs REQUIRED)
-# OpenGL is not used here directly, but rqt_sonar_waterfall's exported link
-# interface references Qt5::OpenGL (its GPU path), so the target must exist
-# before that package is imported.
-find_package(Qt5 COMPONENTS Widgets Gui Charts OpenGL REQUIRED)
+# The echogram renders on the GPU (QOpenGLWidget + the shared GpuColorMap),
+# so OpenGL is a direct dependency now; Qt5 components must be found before
+# rqt_sonar_waterfall is imported (its exported link interface references a
+# bare Qt5).
+find_package(Qt5 COMPONENTS Widgets Gui OpenGL REQUIRED)
 # After Qt5-with-components: rqt_sonar_waterfall's exported dependencies
 # include a bare Qt5, which only resolves once components are already found.
 find_package(rqt_sonar_waterfall REQUIRED)
@@ -71,7 +72,7 @@ ament_target_dependencies(${PROJECT_NAME}
   rqt_sonar_waterfall
 )
 
-target_link_libraries(${PROJECT_NAME} Qt5::Widgets Qt5::Gui Qt5::Charts)
+target_link_libraries(${PROJECT_NAME} Qt5::Widgets Qt5::Gui Qt5::OpenGL)
 
 pluginlib_export_plugin_description_file(rqt_gui plugin.xml)
 
@@ -111,17 +112,17 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_ping marine_acoustic_msgs rqt_sonar_waterfall)
 
   # Offscreen widget smoke/robustness test. Links the main library so the
-  # widget's MOC metaobjects are available; CPU QtCharts rendering needs no GL,
-  # only the offscreen QPA platform.
+  # widget's MOC metaobjects are available; the GPU render path needs an
+  # offscreen GL context (software GL when no GPU is present).
   ament_add_gtest(test_echogram_widget
     test/test_echogram_widget.cpp
   )
   target_include_directories(test_echogram_widget PRIVATE include)
   ament_target_dependencies(test_echogram_widget marine_acoustic_msgs)
   target_link_libraries(test_echogram_widget
-    ${PROJECT_NAME} Qt5::Widgets Qt5::Gui Qt5::Charts)
+    ${PROJECT_NAME} Qt5::Widgets Qt5::Gui Qt5::OpenGL)
   set_tests_properties(test_echogram_widget PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;LIBGL_ALWAYS_SOFTWARE=1")
 
   ament_lint_auto_find_test_dependencies()
 endif()

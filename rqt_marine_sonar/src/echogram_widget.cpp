@@ -28,14 +28,18 @@
 
 #include "rqt_marine_sonar/echogram_widget.hpp"
 
-#include <QChart>
+#include <QColor>
 #include <QGuiApplication>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QRect>
+#include <QString>
+#include <QSurfaceFormat>
 #include <QWheelEvent>
-#include <QtGlobal>
 
 #include <algorithm>
 #include <cmath>
-#include <cstdint>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -49,66 +53,88 @@ namespace rqt_marine_sonar
 namespace
 {
 
-/// Upper bound on the echogram's depth-sample (row) count. A degenerate ping
-/// (near-zero sample_rate, hence a tiny bin size) could otherwise produce a
-/// pathologically tall QImage that fails to allocate.
-constexpr int kMaxDepthSamples = 1 << 16;
+/// Upper bound on the echogram's depth-sample (row) count, bounding the texture
+/// height so a degenerate ping (near-zero bin) can't request a huge allocation.
+constexpr int kMaxDepthSamples = 1 << 14;
 
-/// Map a message stamp to a strictly-ordered nanosecond key for the ping buffer.
-/// (The ROS 1 plugin keyed an std::map on ros::Time; this is the ROS 2 analogue
-/// without pulling in rclcpp::Time clock-source semantics.)
 int64_t stampToNanoseconds(const builtin_interfaces::msg::Time & stamp)
 {
   return static_cast<int64_t>(stamp.sec) * 1000000000LL +
          static_cast<int64_t>(stamp.nanosec);
 }
 
+/// Snap a raw spacing to the nearest "nice" 1/2/5 x 10^n value for round labels.
+double niceInterval(double raw)
+{
+  if (!(raw > 0.0)) {
+    return 0.0;
+  }
+  const double e = std::floor(std::log10(raw));
+  const double base = std::pow(10.0, e);
+  const double f = raw / base;
+  double nice = 10.0;
+  if (f < 1.5) {
+    nice = 1.0;
+  } else if (f < 3.0) {
+    nice = 2.0;
+  } else if (f < 7.0) {
+    nice = 5.0;
+  }
+  return nice * base;
+}
+
 }  // namespace
 
 EchogramWidget::EchogramWidget(QWidget * parent)
-: QtCharts::QChartView(parent)
+: QOpenGLWidget(parent)
 {
-  echogram_ = QImage(maximum_ping_count_, maximum_ping_count_, QImage::Format_RGB32);
-  echogram_.fill(Qt::lightGray);
-  pixmap_item_ = scene()->addPixmap(QPixmap::fromImage(echogram_));
-  pixmap_item_->setTransformationMode(Qt::SmoothTransformation);
+  // 3.3 compatibility profile so the QPainter axis overlay (legacy GL paint
+  // engine) coexists with GpuColorMap's modern shader path — same arrangement
+  // as WaterfallWidget.
+  QSurfaceFormat fmt = format();
+  fmt.setVersion(3, 3);
+  fmt.setProfile(QSurfaceFormat::CompatibilityProfile);
+  setFormat(fmt);
+  setMinimumSize(256, 128);
+  setMouseTracking(true);
+}
 
-  setChart(new QtCharts::QChart());
-
-  pixmap_item_->setParentItem(chart());
-
-  depth_axis_ = new QtCharts::QValueAxis();
-  depth_axis_->setTickType(QtCharts::QValueAxis::TicksDynamic);
-  depth_axis_->setTickInterval(20.0);
-  depth_axis_->setTickAnchor(0.0);
-  chart()->addAxis(depth_axis_, Qt::AlignLeft);
-
-  setRenderHints(QPainter::Antialiasing);
+EchogramWidget::~EchogramWidget()
+{
+  if (context() != nullptr && context()->isValid()) {
+    makeCurrent();
+    if (intensity_tex_ != 0) {
+      glDeleteTextures(1, &intensity_tex_);
+      intensity_tex_ = 0;
+    }
+    gpu_.cleanup();
+    doneCurrent();
+  }
 }
 
 void EchogramWidget::addPing(const marine_acoustic_msgs::msg::RawSonarImage & ping)
 {
   if (ingestPing(ping)) {
-    updateEchogram();
+    data_dirty_ = true;
+    update();
   }
 }
 
 void EchogramWidget::addPings(
   const std::vector<marine_acoustic_msgs::msg::RawSonarImage> & pings)
 {
-  bool any_accepted = false;
+  bool any = false;
   for (const auto & ping : pings) {
-    any_accepted = ingestPing(ping) || any_accepted;
+    any = ingestPing(ping) || any;
   }
-  if (any_accepted) {
-    updateEchogram();
+  if (any) {
+    data_dirty_ = true;
+    update();
   }
 }
 
 bool EchogramWidget::ingestPing(const marine_acoustic_msgs::msg::RawSonarImage & ping)
 {
-  // Decode once on arrival (any dtype, via the shared waterfall decoder);
-  // redraws then index the float cache instead of re-reading raw bytes.
   Ping view(ping);
   DecodedPing decoded;
   decoded.min_depth = view.minimumDepth();
@@ -121,9 +147,8 @@ bool EchogramWidget::ingestPing(const marine_acoustic_msgs::msg::RawSonarImage &
       static_cast<unsigned>(ping.image.dtype));
     return false;
   }
-  // Reject non-finite or degenerate geometry here (e.g. sample_rate == 0
-  // yields NaN/inf depths) so the buffer only ever holds pings the render
-  // loop can index safely. Positive-form checks: a NaN fails them all.
+  // Reject non-finite / degenerate geometry up front so the render path only
+  // indexes pings it can render. Positive-form checks: a NaN fails them all.
   if (!std::isfinite(decoded.min_depth) || !std::isfinite(decoded.max_depth) ||
     !(decoded.bin_size > 0.0f) || !(decoded.max_depth > decoded.min_depth))
   {
@@ -140,196 +165,11 @@ bool EchogramWidget::ingestPing(const marine_acoustic_msgs::msg::RawSonarImage &
   return true;
 }
 
-void EchogramWidget::resizeEvent(QResizeEvent * event)
-{
-  QChartView::resizeEvent(event);
-  adjustPixmap();
-}
-
-void EchogramWidget::wheelEvent(QWheelEvent * event)
-{
-  QChartView::wheelEvent(event);
-
-  // wheel turn angles are encoded in 1/8 degree increments.
-  auto angle_delta_degrees = event->angleDelta().y() / 8.0;
-
-  double zoom_level_per_degree = 0.01;
-
-  // fine zoom if ctrl key is pressed
-  if (QGuiApplication::keyboardModifiers().testFlag(Qt::ControlModifier)) {
-    zoom_level_per_degree /= 3.0;
-  }
-
-  double scale_change = pow(2, zoom_level_per_degree * angle_delta_degrees);
-
-  // figure out mouse position to focus zoom
-  auto area = chart()->plotArea();
-  if (area.height() <= 0.0) {
-    return;  // not laid out yet / collapsed — nothing to zoom against
-  }
-
-  auto pixel_focus = event->position().y() - area.top();
-
-  auto depth_range = depth_axis_->max() - depth_axis_->min();
-  auto meters_per_pixel = depth_range / area.height();
-
-  auto depth_focus = depth_axis_->max() - pixel_focus * meters_per_pixel;
-
-  // apply zoom
-  depth_zoom_ *= scale_change;
-
-  // clamp zoom in
-  depth_zoom_ = std::max(depth_zoom_, 0.5f);
-
-  // adjust offset
-
-  auto new_depth_range = (max_depth_ - min_depth_) / depth_zoom_;
-  auto new_meters_per_pixel = new_depth_range / area.height();
-  auto new_max = depth_focus + (pixel_focus * new_meters_per_pixel);
-  depth_offset_ = -new_max - min_depth_;
-
-  adjustAxis();
-}
-
-void EchogramWidget::mouseMoveEvent(QMouseEvent * event)
-{
-  QChartView::mouseMoveEvent(event);
-  if (translating_depth_) {
-    auto area = chart()->plotArea();
-    if (area.height() <= 0.0) {
-      return;
-    }
-    float dy = event->localPos().y() - depth_translation_start_;
-    auto axis_range = depth_axis_->max() - depth_axis_->min();
-    auto delta_depth = axis_range * dy / area.height();
-    depth_offset_ = depth_offset_start_ - delta_depth;
-    adjustAxis();
-  }
-}
-
-void EchogramWidget::mousePressEvent(QMouseEvent * event)
-{
-  QChartView::mousePressEvent(event);
-  if (event->button() == Qt::LeftButton) {
-    depth_offset_start_ = depth_offset_;
-    depth_translation_start_ = event->localPos().y();
-    translating_depth_ = true;
-  }
-}
-
-void EchogramWidget::mouseReleaseEvent(QMouseEvent * event)
-{
-  QChartView::mouseReleaseEvent(event);
-  if (event->button() == Qt::LeftButton) {
-    translating_depth_ = false;
-  }
-}
-
-void EchogramWidget::adjustAxis()
-{
-  auto range = (max_depth_ - min_depth_) / depth_zoom_;
-  auto max = -(min_depth_ + depth_offset_);
-  auto min = max - range;
-  depth_axis_->setRange(min, max);
-
-  auto area = chart()->plotArea();
-  if (area.height() <= 0.0) {
-    return;  // not laid out yet — tick interval would divide by zero
-  }
-  auto meters_per_pixel = range / area.height();
-
-  // 100 pixel tick interval
-  auto min_tick_interval = 100 * meters_per_pixel;
-  double factor = 0.1;
-  std::vector<double> tick_bases = {1.0, 2.0, 5.0};
-  bool done = false;
-  while (!done) {
-    for (auto tick_base : tick_bases) {
-      if (tick_base * factor >= min_tick_interval) {
-        depth_axis_->setTickInterval(tick_base * factor);
-        done = true;
-        break;
-      }
-    }
-    factor *= 10.0;
-  }
-
-  adjustPixmap();
-}
-
-void EchogramWidget::adjustPixmap()
-{
-  auto area = chart()->plotArea();
-  // ping_spacing_ divides below; a corrupted persisted value can reach here
-  // (restoreSettings sets it before the spin box clamps to its 1.0 minimum).
-  if (bin_size_ <= 0.0 || ping_spacing_ <= 0.0f || !std::isfinite(ping_spacing_) ||
-    area.width() <= 0.0 || area.height() <= 0.0)
-  {
-    return;  // no valid ping geometry or no layout yet — nothing to place
-  }
-
-  // scale to match display area width with echogram width
-  double area_to_echogram_scale = area.width() / static_cast<double>(echogram_.width());
-
-  // make sure we display a ping as at least one pixel when not zoomed in
-  double base_pixel_width = std::max(area_to_echogram_scale, 1.0);
-
-  int visible_echogram_pixels = std::min(
-    echogram_.width(),
-    static_cast<int>(std::ceil(area.width() / (base_pixel_width * ping_spacing_))));
-  int startx = echogram_.width() - visible_echogram_pixels;
-
-  double xscale = area.width() / static_cast<double>(visible_echogram_pixels);
-
-  auto axis_min = depth_axis_->min();
-  auto axis_max = depth_axis_->max();
-
-  auto axis_min_depth = -axis_max;
-  auto axis_max_depth = -axis_min;
-
-  auto axis_range = axis_max - axis_min;
-
-  // meters per pixel
-  auto axis_scale = axis_range / static_cast<double>(area.height());
-
-  // Clamp in double before narrowing: after a large pan/zoom the ratio can fall
-  // outside the representable int range, where the float->int cast would be UB.
-  const double img_h = static_cast<double>(echogram_.height());
-  const int starty =
-    static_cast<int>(std::clamp((axis_min_depth - min_depth_) / bin_size_, 0.0, img_h));
-  const int endy =
-    static_cast<int>(std::clamp((axis_max_depth - min_depth_) / bin_size_, 0.0, img_h));
-
-  auto pixmap = QPixmap::fromImage(echogram_).copy(
-    startx, starty, visible_echogram_pixels, endy - starty);
-
-  pixmap_item_->setPixmap(pixmap);
-
-  // image pixels to area pixels
-  float yscale = bin_size_ / axis_scale;
-
-  pixmap_item_->setTransform(QTransform::fromScale(xscale, yscale));
-
-  auto pixmap_min_depth = min_depth_ + starty * bin_size_;
-  auto yoffset = (axis_min_depth - pixmap_min_depth) / axis_scale;
-  QPointF top_left = area.topLeft();
-  top_left.setY(top_left.y() - yoffset);
-  pixmap_item_->setPos(top_left);
-}
-
-void EchogramWidget::updateEchogram()
+bool EchogramWidget::recomputeGeometry()
 {
   if (pings_.empty()) {
-    echogram_ = QImage(maximum_ping_count_, maximum_ping_count_, QImage::Format_RGB32);
-    echogram_.fill(Qt::lightGray);
-    pixmap_item_->setPixmap(QPixmap::fromImage(echogram_));
-    return;
+    return false;
   }
-
-  // Compute geometry into locals and validate before committing to members:
-  // a malformed ping (e.g. sample_rate == 0) yields inf/NaN here, and the
-  // members feed wheelEvent()/adjustAxis() — poisoning them could hang the
-  // tick-interval loop on a NaN comparison.
   float min_depth = pings_.begin()->second.min_depth;
   float max_depth = pings_.begin()->second.max_depth;
   float bin_size = pings_.begin()->second.bin_size;
@@ -338,88 +178,279 @@ void EchogramWidget::updateEchogram()
     max_depth = std::max(max_depth, p.second.max_depth);
     bin_size = std::min(bin_size, p.second.bin_size);
   }
-
-  if (bin_size > 0.0f && std::isfinite(bin_size) && std::isfinite(min_depth) &&
-    std::isfinite(max_depth) && max_depth > min_depth && value_max_ > value_min_)
+  if (!(bin_size > 0.0f) || !std::isfinite(bin_size) || !std::isfinite(min_depth) ||
+    !std::isfinite(max_depth) || !(max_depth > min_depth))
   {
-    // ceil so the image height fully covers the half-open interval
-    // [min_depth, max_depth) — a truncating cast can drop the deepest row to
-    // floating-point rounding. Clamp in double before narrowing so a degenerate
-    // ping (tiny finite bin) can't overflow the int cast; the cap also bounds
-    // the image allocation.
-    const int depth_sample_count = static_cast<int>(
-      std::min(
-        std::ceil(static_cast<double>(max_depth - min_depth) / bin_size),
-        static_cast<double>(kMaxDepthSamples)));
-    if (depth_sample_count <= 0) {
-      return;
-    }
-    // Render into a local image and commit it together with the geometry
-    // members only on success: allocation can fail (worst case
-    // kMaxDepthSamples rows ~ half a GiB; QImage signals that with a null
-    // image rather than throwing), and adjustPixmap() divides by the
-    // committed image's width — keep the previous consistent image/geometry
-    // pair rather than a null one.
-    QImage fresh(maximum_ping_count_, depth_sample_count, QImage::Format_RGB32);
-    if (fresh.isNull()) {
-      return;
-    }
-    fresh.fill(Qt::black);
-    min_depth_ = min_depth;
-    max_depth_ = max_depth;
-    bin_size_ = bin_size;
-
-    uint32_t ping_count = pings_.size();
-    uint32_t ping_number = maximum_ping_count_ - ping_count;
-    for (const auto & entry : pings_) {
-      const DecodedPing & ping = entry.second;
-      for (int sample_number = 0; sample_number < depth_sample_count; sample_number++) {
-        const float depth = min_depth_ + sample_number * bin_size_;
-        // Half-open [min_depth, max_depth): at exactly max_depth the index
-        // would be one past the last sample. Positive-form comparisons so a
-        // NaN anywhere fails the guard instead of slipping through to the
-        // index cast (ingestPing() rejects non-finite geometry, but keep the
-        // loop safe on its own).
-        if (!(depth >= ping.min_depth && depth < ping.max_depth) || !(ping.bin_size > 0.0f)) {
-          continue;
-        }
-        const double index_d = (depth - ping.min_depth) / ping.bin_size;
-        if (!(index_d >= 0.0 && index_d < static_cast<double>(ping.samples.size()))) {
-          continue;
-        }
-        const float value = ping.samples[static_cast<size_t>(index_d)];
-        // isfinite (not just !isnan): a FLOAT32 payload may legally contain
-        // +/-inf; scale_intensity clamps, but inf*finite in the pipeline is NaN.
-        if (std::isfinite(value)) {
-          // Shared marine_colormap pipeline (normalize -> gain -> contrast ->
-          // palette), identical math to the waterfall's CPU and GPU paths.
-          const float t = rqt_sonar_waterfall::scale_intensity(
-            value, value_min_, value_max_, gain_, contrast_);
-          const rqt_sonar_waterfall::Rgb c = color_map_.lookup(t);
-          reinterpret_cast<QRgb *>(fresh.scanLine(sample_number))[ping_number] =
-            qRgb(c.r, c.g, c.b);
-        }
-      }
-      ping_number++;
-    }
-    echogram_ = std::move(fresh);
-
-    adjustAxis();
-  } else {
-    // Degenerate value window = the "unset" state (also how the operator
-    // requests a reseed): show the placeholder instead of a stale rendering
-    // so the reset visibly takes effect.
-    echogram_ = QImage(maximum_ping_count_, maximum_ping_count_, QImage::Format_RGB32);
-    echogram_.fill(Qt::lightGray);
-    pixmap_item_->setPixmap(QPixmap::fromImage(echogram_));
+    return false;
   }
+  min_depth_ = min_depth;
+  max_depth_ = max_depth;
+  bin_size_ = bin_size;
+  return true;
+}
+
+std::pair<float, float> EchogramWidget::visibleDepthWindow() const
+{
+  if (!(max_depth_ > min_depth_)) {
+    return {0.0f, 0.0f};
+  }
+  const float full = max_depth_ - min_depth_;
+  const float zoom = std::max(depth_zoom_, 0.5f);
+  float range = full / zoom;
+  range = std::min(range, full);
+  float vis_min = min_depth_ + depth_offset_;
+  // Keep the window within the data extent.
+  vis_min = std::clamp(vis_min, min_depth_, max_depth_ - range);
+  return {vis_min, vis_min + range};
+}
+
+void EchogramWidget::initializeGL()
+{
+  initializeOpenGLFunctions();
+  if (!gpu_.initialize()) {
+    gl_ready_ = false;
+    return;
+  }
+  gpu_.set_palette(color_map_type_);
+  palette_dirty_ = false;
+  data_dirty_ = true;
+  gl_ready_ = true;
+}
+
+void EchogramWidget::resizeGL(int w, int /*h*/)
+{
+  glViewport(0, 0, w, height());
+  data_dirty_ = true;  // visible-ping count depends on width
+}
+
+void EchogramWidget::uploadTexture()
+{
+  if (!recomputeGeometry()) {
+    has_data_ = false;
+    return;
+  }
+  const auto window = visibleDepthWindow();
+  vis_min_depth_ = window.first;
+  vis_max_depth_ = window.second;
+  if (!(vis_max_depth_ > vis_min_depth_)) {
+    has_data_ = false;
+    return;
+  }
+
+  GLint max_tex = 0;
+  glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
+  const int max_dim = (max_tex > 0) ? max_tex : 2048;
+
+  int depth_rows = static_cast<int>(
+    std::min(
+      std::ceil(static_cast<double>(vis_max_depth_ - vis_min_depth_) / bin_size_),
+      static_cast<double>(std::min(kMaxDepthSamples, max_dim))));
+  if (depth_rows <= 0) {
+    has_data_ = false;
+    return;
+  }
+
+  // Visible ping columns: honor ping_spacing_ (wider spacing -> fewer, wider
+  // columns) and the canvas width; newest pings on the right.
+  const int ping_count = static_cast<int>(pings_.size());
+  const float spacing = std::max(ping_spacing_, 1.0f);
+  int visible_pings = std::max(1, static_cast<int>(std::ceil(width() / spacing)));
+  visible_pings = std::min(std::min(visible_pings, ping_count), max_dim);
+  const int startx = ping_count - visible_pings;
+
+  std::vector<float> data;
+  try {
+    data.assign(
+      static_cast<std::size_t>(visible_pings) * static_cast<std::size_t>(depth_rows),
+      std::numeric_limits<float>::quiet_NaN());
+  } catch (const std::exception &) {
+    has_data_ = false;
+    return;
+  }
+
+  // Walk the buffered pings (ordered oldest->newest); pack the newest
+  // `visible_pings` into columns [0, visible_pings) left->right.
+  int idx = 0;
+  int col = 0;
+  for (auto it = pings_.begin(); it != pings_.end() && col < visible_pings; ++it, ++idx) {
+    if (idx < startx) {
+      continue;
+    }
+    const DecodedPing & ping = it->second;
+    if (!(ping.bin_size > 0.0f)) {
+      ++col;
+      continue;
+    }
+    for (int r = 0; r < depth_rows; ++r) {
+      const float depth = vis_min_depth_ + r * bin_size_;
+      if (!(depth >= ping.min_depth && depth < ping.max_depth)) {
+        continue;  // outside this ping's water column -> leave NaN (palette floor)
+      }
+      const double si = (depth - ping.min_depth) / ping.bin_size;
+      if (!(si >= 0.0 && si < static_cast<double>(ping.samples.size()))) {
+        continue;
+      }
+      // data row r (r=0 = shallowest) maps to texture v=0; drawn with flip_v so
+      // screen-top shows the shallowest sample.
+      data[static_cast<std::size_t>(r) * visible_pings + col] =
+        ping.samples[static_cast<std::size_t>(si)];
+    }
+    ++col;
+  }
+
+  if (intensity_tex_ == 0) {
+    glGenTextures(1, &intensity_tex_);
+  }
+  glBindTexture(GL_TEXTURE_2D, intensity_tex_);
+  glGetError();
+  glTexImage2D(
+    GL_TEXTURE_2D, 0, GL_R32F, visible_pings, depth_rows, 0, GL_RED, GL_FLOAT,
+    data.data());
+  const GLenum err = glGetError();
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_2D, 0);
+
+  if (err != GL_NO_ERROR) {
+    static bool warned = false;
+    if (!warned) {
+      qWarning("EchogramWidget: intensity texture upload failed (GL 0x%x).", err);
+      warned = true;
+    }
+    has_data_ = false;
+    return;
+  }
+  has_data_ = true;
+}
+
+void EchogramWidget::paintGL()
+{
+  glClearColor(20.0f / 255.0f, 20.0f / 255.0f, 24.0f / 255.0f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT);
+
+  const bool window_set = value_max_ > value_min_;
+  if (gl_ready_) {
+    if (palette_dirty_) {
+      gpu_.set_palette(color_map_type_);
+      palette_dirty_ = false;
+    }
+    if (data_dirty_) {
+      uploadTexture();
+      data_dirty_ = false;
+    }
+    if (has_data_ && window_set) {
+      gpu_.set_range(value_min_, value_max_);
+      gpu_.set_gain(gain_);
+      gpu_.set_contrast(contrast_);
+      gpu_.draw(intensity_tex_, /*flip_v=*/true);
+    }
+  }
+
+  QPainter painter(this);
+  if (!has_data_ || !window_set) {
+    painter.setPen(QColor(120, 120, 130));
+    painter.drawText(rect(), Qt::AlignCenter, tr("No sonar data"));
+    return;
+  }
+
+  // Depth-axis overlay along the left edge: nice gridlines + meter labels.
+  const double h = height();
+  const double span = vis_max_depth_ - vis_min_depth_;
+  if (span > 0.0 && h > 0.0) {
+    const double mpp = span / h;  // meters per pixel
+    const double interval = niceInterval(100.0 * mpp);
+    if (interval > 0.0) {
+      const double first = std::ceil(vis_min_depth_ / interval) * interval;
+      painter.setPen(QColor(180, 180, 190, 110));
+      for (double d = first; d <= vis_max_depth_ + 1e-6; d += interval) {
+        const int y = static_cast<int>(std::lround((d - vis_min_depth_) / mpp));
+        painter.drawLine(0, y, width(), y);
+      }
+      painter.setPen(QColor(225, 225, 230));
+      const int decimals = (interval < 1.0) ? 1 : 0;
+      for (double d = first; d <= vis_max_depth_ + 1e-6; d += interval) {
+        const int y = static_cast<int>(std::lround((d - vis_min_depth_) / mpp));
+        painter.drawText(
+          QRect(2, y - 16, 80, 14), Qt::AlignLeft | Qt::AlignBottom,
+          tr("%1 m").arg(d, 0, 'f', decimals));
+      }
+    }
+  }
+}
+
+void EchogramWidget::wheelEvent(QWheelEvent * event)
+{
+  const double h = height();
+  if (h <= 0.0 || !(max_depth_ > min_depth_)) {
+    return;
+  }
+  const double angle_degrees = event->angleDelta().y() / 8.0;
+  double zoom_per_degree = 0.01;
+  if (QGuiApplication::keyboardModifiers().testFlag(Qt::ControlModifier)) {
+    zoom_per_degree /= 3.0;
+  }
+  const double scale = std::pow(2.0, zoom_per_degree * angle_degrees);
+
+  // Depth under the cursor before the zoom, kept fixed across it.
+  const double frac = std::clamp(event->position().y() / h, 0.0, 1.0);
+  const double cursor_depth = vis_min_depth_ + frac * (vis_max_depth_ - vis_min_depth_);
+
+  depth_zoom_ = std::clamp(static_cast<float>(depth_zoom_ * scale), 0.5f, 5000.0f);
+
+  const float full = max_depth_ - min_depth_;
+  const float new_range = std::min(full / std::max(depth_zoom_, 0.5f), full);
+  const double new_vis_min = cursor_depth - frac * new_range;
+  depth_offset_ = static_cast<float>(new_vis_min - min_depth_);
+
+  data_dirty_ = true;
+  update();
+}
+
+void EchogramWidget::mousePressEvent(QMouseEvent * event)
+{
+  if (event->button() == Qt::LeftButton) {
+    depth_offset_start_ = depth_offset_;
+    depth_translation_start_ = static_cast<float>(event->localPos().y());
+    translating_depth_ = true;
+  }
+  QOpenGLWidget::mousePressEvent(event);
+}
+
+void EchogramWidget::mouseMoveEvent(QMouseEvent * event)
+{
+  const double h = height();
+  if (translating_depth_ && h > 0.0) {
+    const double dy = event->localPos().y() - depth_translation_start_;
+    const double range = vis_max_depth_ - vis_min_depth_;
+    // Drag down -> reveal shallower water (window moves up).
+    depth_offset_ = static_cast<float>(depth_offset_start_ - range * dy / h);
+    data_dirty_ = true;
+    update();
+  }
+  emit mouseMoved(event->localPos());
+  QOpenGLWidget::mouseMoveEvent(event);
+}
+
+void EchogramWidget::mouseReleaseEvent(QMouseEvent * event)
+{
+  if (event->button() == Qt::LeftButton) {
+    translating_depth_ = false;
+  }
+  QOpenGLWidget::mouseReleaseEvent(event);
+}
+
+QImage EchogramWidget::echogramImage()
+{
+  return grabFramebuffer();
 }
 
 void EchogramWidget::setMinimumValue(float value)
 {
   if (value_min_ != value) {
     value_min_ = value;
-    updateEchogram();
+    update();
   }
 }
 
@@ -427,7 +458,7 @@ void EchogramWidget::setMaximumValue(float value)
 {
   if (value_max_ != value) {
     value_max_ = value;
-    updateEchogram();
+    update();
   }
 }
 
@@ -435,7 +466,7 @@ void EchogramWidget::setGain(float gain)
 {
   if (gain_ != gain) {
     gain_ = gain;
-    updateEchogram();
+    update();
   }
 }
 
@@ -443,16 +474,17 @@ void EchogramWidget::setContrast(float contrast)
 {
   if (contrast_ != contrast) {
     contrast_ = contrast;
-    updateEchogram();
+    update();
   }
 }
 
 void EchogramWidget::setColorMapIndex(int index)
 {
   const auto type = rqt_sonar_waterfall::color_map_from_index(index);
-  if (color_map_.type() != type) {
-    color_map_.set_type(type);
-    updateEchogram();
+  if (color_map_type_ != type) {
+    color_map_type_ = type;
+    palette_dirty_ = true;
+    update();
   }
 }
 
@@ -460,38 +492,19 @@ void EchogramWidget::setPingSpacing(float spacing)
 {
   if (ping_spacing_ != spacing) {
     ping_spacing_ = spacing;
-    updateEchogram();
+    data_dirty_ = true;
+    update();
   }
 }
 
-float EchogramWidget::minimumValue() const
-{
-  return value_min_;
-}
-
-float EchogramWidget::maximumValue() const
-{
-  return value_max_;
-}
-
-float EchogramWidget::gain() const
-{
-  return gain_;
-}
-
-float EchogramWidget::contrast() const
-{
-  return contrast_;
-}
-
+float EchogramWidget::minimumValue() const {return value_min_;}
+float EchogramWidget::maximumValue() const {return value_max_;}
+float EchogramWidget::gain() const {return gain_;}
+float EchogramWidget::contrast() const {return contrast_;}
 int EchogramWidget::colorMapIndex() const
 {
-  return rqt_sonar_waterfall::color_map_index(color_map_.type());
+  return rqt_sonar_waterfall::color_map_index(color_map_type_);
 }
-
-float EchogramWidget::pingSpacing() const
-{
-  return ping_spacing_;
-}
+float EchogramWidget::pingSpacing() const {return ping_spacing_;}
 
 }  // namespace rqt_marine_sonar

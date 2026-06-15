@@ -31,6 +31,7 @@
 
 #include <QPointer>
 #include <QString>
+#include <QTimer>
 
 #include <rqt_gui_cpp/plugin.h>
 #include <ui_marine_echogram_plugin.h>
@@ -100,6 +101,10 @@ private:
 
   std::vector<marine_acoustic_msgs::msg::RawSonarImage> new_pings_;
   std::mutex new_pings_mutex_;
+
+  /// GUI-thread timer that drains new_pings_ at a fixed cadence, coalescing
+  /// bursts into one redraw instead of one per incoming message.
+  QTimer * redraw_timer_ = nullptr;
 
   /// Seed the value window when it is unset (degenerate, max <= min) from the
   /// dtype of the first displayable ping in the burst. Runs on the GUI thread

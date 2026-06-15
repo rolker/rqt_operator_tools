@@ -29,35 +29,39 @@
 #ifndef RQT_MARINE_SONAR__ECHOGRAM_WIDGET_HPP_
 #define RQT_MARINE_SONAR__ECHOGRAM_WIDGET_HPP_
 
-#include <QChartView>
-#include <QGraphicsPixmapItem>
-#include <QImage>
-#include <QValueAxis>
+#include <QOpenGLFunctions_3_3_Core>
+#include <QOpenGLWidget>
 
 #include <cstdint>
 #include <map>
+#include <utility>
 #include <vector>
 
 #include <marine_acoustic_msgs/msg/raw_sonar_image.hpp>
 #include <rqt_sonar_waterfall/color_map.hpp>
+#include <rqt_sonar_waterfall/gpu_color_map.hpp>
 
 namespace rqt_marine_sonar
 {
 
-/// Scrolling water-column echogram. Each incoming RawSonarImage ping becomes a
-/// vertical column of the image; depth runs down the left QValueAxis. Pings of
-/// any sample dtype (decoded once on arrival via the shared
-/// rqt_sonar_waterfall decoder) are depth-binned to a shared bin size and
-/// mapped through the marine_colormap pipeline (normalize against the
-/// [min, max] value window -> gain -> contrast -> palette). The view supports
-/// mouse-wheel depth zoom (Ctrl for fine zoom, focused on the cursor) and
-/// left-drag depth panning.
-class EchogramWidget : public QtCharts::QChartView
+/// Scrolling water-column echogram, rendered on the GPU.
+///
+/// Each incoming RawSonarImage ping becomes a vertical column; depth runs down
+/// the left axis. Pings of any dtype are decoded once on arrival (shared
+/// rqt_sonar_waterfall decoder) and depth-binned to a shared bin size. The raw
+/// (full-precision) binned samples for the visible depth window are uploaded to
+/// an R32F texture and colormapped in the shared marine_colormap fragment shader
+/// (GpuColorMap), so value-window / gain / contrast / palette are GPU uniforms /
+/// a small LUT — changing them is a redraw, never a CPU recolor. The depth axis,
+/// ticks, wheel zoom (Ctrl = fine, cursor-focused) and left-drag pan are drawn /
+/// handled by the widget over the GL frame.
+class EchogramWidget : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Core
 {
   Q_OBJECT
 
 public:
   explicit EchogramWidget(QWidget * parent);
+  ~EchogramWidget() override;
 
   float minimumValue() const;
   float maximumValue() const;
@@ -66,21 +70,18 @@ public:
   int colorMapIndex() const;
   float pingSpacing() const;
 
-  /// The rendered echogram raster (pings x depth bins, before on-screen
-  /// scaling). Exposed so tests can assert on actual sample rendering --
-  /// grabbing the whole widget picks up axis-label text, whose subpixel
-  /// antialiasing fringes defeat color-based checks.
-  QImage echogramImage() const {return echogram_;}
+  /// The on-screen echogram as a QImage, grabbed from the GL framebuffer. Exposed
+  /// so tests can assert on actual rendering. Non-const: it triggers a render.
+  QImage echogramImage();
 
 signals:
   void mouseMoved(QPointF position);
 
 public slots:
   void addPing(const marine_acoustic_msgs::msg::RawSonarImage & ping);
-  /// Ingest a burst of pings with a single image rebuild at the end. Prefer
-  /// this over per-ping addPing() when draining a queue (e.g. fast bag
-  /// replay): the rebuild is O(buffer), so per-ping rebuilds make a burst
-  /// of N pings O(N * buffer).
+  /// Ingest a burst of pings with a single redraw at the end. Cheap on the GPU
+  /// path (one texture upload), but still preferred over per-ping addPing() when
+  /// draining a queue.
   void addPings(const std::vector<marine_acoustic_msgs::msg::RawSonarImage> & pings);
   void setMinimumValue(float value);
   void setMaximumValue(float value);
@@ -88,20 +89,18 @@ public slots:
   void setContrast(float contrast);
   void setColorMapIndex(int index);
 
-  /// Set the horizontal spacing between pings for display.
+  /// Set the horizontal spacing between pings for display (>= 1 ping per column).
   void setPingSpacing(float spacing);
 
 protected:
-  void resizeEvent(QResizeEvent * event) override;
+  void initializeGL() override;
+  void resizeGL(int w, int h) override;
+  void paintGL() override;
+
   void wheelEvent(QWheelEvent * event) override;
   void mouseMoveEvent(QMouseEvent * event) override;
   void mousePressEvent(QMouseEvent * event) override;
   void mouseReleaseEvent(QMouseEvent * event) override;
-
-protected slots:
-  void updateEchogram();
-  void adjustPixmap();
-  void adjustAxis();
 
 private:
   /// One ping, decoded once on arrival: geometry + float samples (any dtype).
@@ -113,38 +112,64 @@ private:
     std::vector<float> samples;
   };
 
-  /// Decode and buffer one ping without rebuilding the image. Returns true if
-  /// the ping was accepted (displayable dtype, finite non-degenerate geometry).
+  /// Decode and buffer one ping without redrawing. Returns true if accepted
+  /// (displayable dtype, finite non-degenerate geometry).
   bool ingestPing(const marine_acoustic_msgs::msg::RawSonarImage & ping);
+
+  /// Recompute the shared depth geometry (min/max depth, bin size) across the
+  /// buffer. Returns false if the buffer holds no valid geometry. Populates
+  /// min_depth_/max_depth_/bin_size_ on success.
+  bool recomputeGeometry();
+
+  /// The visible depth window [min, max] in meters from the zoom/pan state,
+  /// clamped to the data extent. {0,0} when there is no data.
+  std::pair<float, float> visibleDepthWindow() const;
+
+  /// Pack the visible depth window x buffered pings into the R32F texture. Must
+  /// run with the GL context current (called from paintGL when data_dirty_).
+  void uploadTexture();
+
+  /// Current intensity range fed to the shader (the value window).
+  std::pair<float, float> valueWindow() const {return {value_min_, value_max_};}
 
   std::map<int64_t, DecodedPing> pings_;
   int maximum_ping_count_ = 2048;
 
-  // Display window: raw sample values mapped to [0, 1] before gain/contrast.
-  // Degenerate (max <= min) means "not yet configured" -- the plugin seeds a
+  // Display value window: raw sample values mapped to [0, 1] before gain/contrast.
+  // Degenerate (max <= min) means "not yet configured" — the plugin seeds a
   // dtype-aware default on the first ping.
-  float value_min_ = 0.0;
-  float value_max_ = 0.0;
-  float gain_ = 1.0;
-  float contrast_ = 1.0;
-  rqt_sonar_waterfall::ColorMap color_map_;
-  float ping_spacing_ = 1.0;
+  float value_min_ = 0.0f;
+  float value_max_ = 0.0f;
+  float gain_ = 1.0f;
+  float contrast_ = 1.0f;
+  rqt_sonar_waterfall::ColorMapType color_map_type_ =
+    rqt_sonar_waterfall::ColorMapType::Grayscale;
+  float ping_spacing_ = 1.0f;
 
-  float min_depth_ = 0.0;
-  float max_depth_ = 0.0;
-  float bin_size_ = 0.0;
+  // Shared depth geometry across the buffer (meters), from recomputeGeometry().
+  float min_depth_ = 0.0f;
+  float max_depth_ = 0.0f;
+  float bin_size_ = 0.0f;
 
-  float depth_zoom_ = 1.0;
-  float depth_offset_ = 0.0;
+  // Depth zoom/pan. depth_zoom_ >= 0.5; depth_offset_ shifts the window.
+  float depth_zoom_ = 1.0f;
+  float depth_offset_ = 0.0f;
 
   bool translating_depth_ = false;
-  float depth_translation_start_ = 0.0;
-  float depth_offset_start_ = 0.0;
+  float depth_translation_start_ = 0.0f;
+  float depth_offset_start_ = 0.0f;
 
-  QGraphicsPixmapItem * pixmap_item_ = nullptr;
-  QtCharts::QValueAxis * depth_axis_ = nullptr;
+  // GPU state.
+  rqt_sonar_waterfall::GpuColorMap gpu_;
+  unsigned int intensity_tex_ = 0;  ///< R32F, width x height = pings x depth-rows
+  bool gl_ready_ = false;           ///< initializeGL completed
+  bool has_data_ = false;           ///< texture holds at least one column
+  bool data_dirty_ = true;          ///< buffer/geometry/zoom changed -> re-upload
+  bool palette_dirty_ = true;       ///< palette changed -> re-bake LUT
 
-  QImage echogram_;
+  // Cached visible window of the most recent upload, for the axis overlay.
+  float vis_min_depth_ = 0.0f;
+  float vis_max_depth_ = 0.0f;
 };
 
 }  // namespace rqt_marine_sonar
