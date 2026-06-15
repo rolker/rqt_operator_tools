@@ -19,8 +19,8 @@
   <!-- The exported library links Qt5::OpenGL, so downstream builders need the
        Qt OpenGL dev package too (build_export), not just this package's own
        build. -->
-  <build_depend>libqt5opengl5-dev</build_depend>
-  <build_export_depend>libqt5opengl5-dev</build_export_depend>
+  <build_depend>libqt5-opengl-dev</build_depend>
+  <build_export_depend>libqt5-opengl-dev</build_export_depend>
 
   <depend>rclcpp</depend>
   <depend>rqt_gui</depend>
