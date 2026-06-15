@@ -175,7 +175,11 @@ bool EchogramWidget::ingestPing(const marine_acoustic_msgs::msg::RawSonarImage &
       any = true;
     }
   }
-  decoded.value_min = any ? vlo : 0.0f;
+  // No finite samples (e.g. an all-NaN dropout ping that still has valid
+  // geometry): store an inverted (empty) range so dataExtent()'s
+  // `value_max >= value_min` guard skips it rather than dragging the auto-range
+  // extent toward 0.
+  decoded.value_min = any ? vlo : 1.0f;
   decoded.value_max = any ? vhi : 0.0f;
 
   pings_[stampToNanoseconds(ping.header.stamp)] = std::move(decoded);
