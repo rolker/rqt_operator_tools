@@ -195,7 +195,9 @@ std::pair<float, float> EchogramWidget::visibleDepthWindow() const
     return {0.0f, 0.0f};
   }
   const float full = max_depth_ - min_depth_;
-  const float zoom = std::max(depth_zoom_, 0.5f);
+  // zoom >= 1: the full extent is the most zoomed-out view (showing more than
+  // the data has no meaning), so there is no dead sub-1.0 band.
+  const float zoom = std::max(depth_zoom_, 1.0f);
   float range = full / zoom;
   range = std::min(range, full);
   float vis_min = min_depth_ + depth_offset_;
@@ -217,9 +219,12 @@ void EchogramWidget::initializeGL()
   gl_ready_ = true;
 }
 
-void EchogramWidget::resizeGL(int w, int /*h*/)
+void EchogramWidget::resizeGL(int w, int h)
 {
-  glViewport(0, 0, w, height());
+  // w/h arrive in device pixels (already scaled by devicePixelRatio), which is
+  // what glViewport expects — use them directly. (Mixing in logical height()
+  // here would shrink the GL frame on HiDPI displays.)
+  glViewport(0, 0, w, h);
   data_dirty_ = true;  // visible-ping count depends on width
 }
 
@@ -249,6 +254,11 @@ void EchogramWidget::uploadTexture()
     has_data_ = false;
     return;
   }
+  // The texture covers exactly depth_rows bins; snap the cached window max to
+  // that grid so the depth-axis overlay (which maps span across the same
+  // viewport) lines up with the rendered rows rather than being off by up to a
+  // bin from the ceil().
+  vis_max_depth_ = vis_min_depth_ + depth_rows * bin_size_;
 
   // Visible ping columns: honor ping_spacing_ (wider spacing -> fewer, wider
   // columns) and the canvas width; newest pings on the right.
@@ -397,10 +407,10 @@ void EchogramWidget::wheelEvent(QWheelEvent * event)
   const double frac = std::clamp(event->position().y() / h, 0.0, 1.0);
   const double cursor_depth = vis_min_depth_ + frac * (vis_max_depth_ - vis_min_depth_);
 
-  depth_zoom_ = std::clamp(static_cast<float>(depth_zoom_ * scale), 0.5f, 5000.0f);
+  depth_zoom_ = std::clamp(static_cast<float>(depth_zoom_ * scale), 1.0f, 5000.0f);
 
   const float full = max_depth_ - min_depth_;
-  const float new_range = std::min(full / std::max(depth_zoom_, 0.5f), full);
+  const float new_range = std::min(full / std::max(depth_zoom_, 1.0f), full);
   const double new_vis_min = cursor_depth - frac * new_range;
   depth_offset_ = static_cast<float>(new_vis_min - min_depth_);
 
