@@ -36,13 +36,18 @@
 
 #include <mutex>
 
+#include <memory>
+#include <vector>
+
 #include <marine_control_interfaces/msg/control_set.hpp>
 #include <marine_control_interfaces/msg/control_value.hpp>
 #include <rclcpp/rclcpp.hpp>
 
+#include "marine_control_bridge_client/bridge_control_client.hpp"
 #include "marine_control_widgets/control_set_widget.hpp"
 
 class QComboBox;
+class QPushButton;
 class QWidget;
 
 namespace rqt_marine_control
@@ -80,10 +85,21 @@ protected slots:
   void onTopicChanged(int index);
   void applyLatest();   // GUI thread: render the most recent set
   void publishChange(const QString & name, const QString & value);
+  // Dynamic-bridge (D7-dyn) UI, all GUI thread:
+  void updateBridgeList();        // discover udp_bridge nodes -> bridge_combo_
+  void onBridgeChanged(int index);  // (re)build the client for the selected bridge
+  void refreshDevices();          // rebuild device_combo_ from discovered devices
+  void onDeviceChanged(int index);  // sync the connect button to the device's state
+  void onConnectClicked();        // explicit connect/disconnect of the selected device
 
 private:
   QWidget * widget_ = nullptr;
   QComboBox * topic_combo_ = nullptr;
+  QComboBox * bridge_combo_ = nullptr;
+  QComboBox * device_combo_ = nullptr;
+  QPushButton * connect_button_ = nullptr;
+  std::unique_ptr<marine_control_bridge_client::BridgeControlClient> bridge_client_;
+  std::vector<marine_control_bridge_client::ControlDevice> devices_;  // GUI thread
   /// QPointer auto-nulls on teardown so a queued applyLatest() can't touch a
   /// freed widget on the GUI thread.
   QPointer<marine_control_widgets::ControlSetWidget> control_widget_;

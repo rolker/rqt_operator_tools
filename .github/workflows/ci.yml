@@ -79,6 +79,20 @@ jobs:
           git clone --depth 1 -b jazzy \
             https://github.com/rolker/marine_control.git ../ws/src/marine_control
 
+      # udp_bridge_interfaces (the bridge-info / remote-subscribe messages that
+      # the in-repo marine_control_bridge_client depends on) is a source sibling,
+      # not a rosdep/binary package. Clone rolker/udp_bridge and prune it down to
+      # just that one message-only package — the heavier udp_bridge node package
+      # isn't needed to build the client.
+      - name: Clone udp_bridge_interfaces source dependency
+        run: |
+          git clone --depth 1 -b jazzy \
+            https://github.com/rolker/udp_bridge.git ../ws/src/udp_bridge
+          cd ../ws/src/udp_bridge
+          # Keep only udp_bridge_interfaces; drop the udp_bridge node package.
+          find . -maxdepth 1 -mindepth 1 -type d \
+            ! -name udp_bridge_interfaces ! -name '.git' -exec rm -rf {} +
+
       - name: Install ROS dependencies
         working-directory: ../ws
         run: >

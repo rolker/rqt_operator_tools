@@ -71,4 +71,22 @@ std::string derive_change_topic(const std::string & state_topic)
   return state_topic + "/" + kChange;
 }
 
+std::vector<std::string> bridge_nodes_from_services(
+  const std::map<std::string, std::vector<std::string>> & services)
+{
+  const std::string suffix = kRemoteSubscribeService;
+  std::vector<std::string> out;
+  for (const auto & [name, types] : services) {
+    (void)types;
+    if (name.size() > suffix.size() &&
+      name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0)
+    {
+      out.push_back(name.substr(0, name.size() - suffix.size()));
+    }
+  }
+  std::sort(out.begin(), out.end());
+  out.erase(std::unique(out.begin(), out.end()), out.end());
+  return out;
+}
+
 }  // namespace rqt_marine_control
