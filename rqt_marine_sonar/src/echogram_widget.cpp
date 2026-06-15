@@ -163,11 +163,53 @@ bool EchogramWidget::ingestPing(const marine_acoustic_msgs::msg::RawSonarImage &
       decoded.min_depth, decoded.max_depth, decoded.bin_size);
     return false;
   }
+  // Cache the finite-sample extremes once for the auto-range scan (two numbers
+  // per ping instead of re-scanning every sample on each frame).
+  float vlo = std::numeric_limits<float>::max();
+  float vhi = std::numeric_limits<float>::lowest();
+  bool any = false;
+  for (float v : decoded.samples) {
+    if (std::isfinite(v)) {
+      vlo = std::min(vlo, v);
+      vhi = std::max(vhi, v);
+      any = true;
+    }
+  }
+  decoded.value_min = any ? vlo : 0.0f;
+  decoded.value_max = any ? vhi : 0.0f;
+
   pings_[stampToNanoseconds(ping.header.stamp)] = std::move(decoded);
   while (static_cast<int>(pings_.size()) > maximum_ping_count_) {
     pings_.erase(pings_.begin()->first);
   }
   return true;
+}
+
+std::pair<float, float> EchogramWidget::dataExtent() const
+{
+  float lo = std::numeric_limits<float>::max();
+  float hi = std::numeric_limits<float>::lowest();
+  bool any = false;
+  for (const auto & entry : pings_) {
+    if (entry.second.value_max >= entry.second.value_min) {
+      lo = std::min(lo, entry.second.value_min);
+      hi = std::max(hi, entry.second.value_max);
+      any = true;
+    }
+  }
+  if (!any || !(hi > lo)) {
+    return {0.0f, 1.0f};
+  }
+  return {lo, hi};
+}
+
+std::pair<float, float> EchogramWidget::valueWindow() const
+{
+  if (auto_range_) {
+    return dataExtent();
+  }
+  const float span = frozen_max_ - frozen_min_;
+  return {frozen_min_ + black_ * span, frozen_min_ + white_ * span};
 }
 
 bool EchogramWidget::recomputeGeometry()
@@ -351,7 +393,8 @@ void EchogramWidget::paintGL()
   glClearColor(20.0f / 255.0f, 20.0f / 255.0f, 24.0f / 255.0f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT);
 
-  const bool window_set = value_max_ > value_min_;
+  const auto window = valueWindow();
+  const bool window_set = window.second > window.first;
   if (gl_ready_) {
     if (palette_dirty_) {
       gpu_.set_palette(color_map_type_);
@@ -362,9 +405,8 @@ void EchogramWidget::paintGL()
       data_dirty_ = false;
     }
     if (has_data_ && window_set) {
-      gpu_.set_range(value_min_, value_max_);
-      gpu_.set_gain(gain_);
-      gpu_.set_contrast(contrast_);
+      gpu_.set_range(window.first, window.second);
+      gpu_.set_contrast(contrast_);  // gain stays at the GpuColorMap default (1)
       gpu_.draw(intensity_tex_, /*flip_v=*/true);
     }
   }
@@ -467,26 +509,36 @@ QImage EchogramWidget::echogramImage()
   return grabFramebuffer();
 }
 
-void EchogramWidget::setMinimumValue(float value)
+void EchogramWidget::setAutoRange(bool enabled)
 {
-  if (value_min_ != value) {
-    value_min_ = value;
+  if (auto_range_ == enabled) {
+    return;
+  }
+  auto_range_ = enabled;
+  if (!auto_range_) {
+    // Freeze the current data extent so the black/white points trim a stable
+    // window rather than one that keeps moving with new pings.
+    const auto extent = dataExtent();
+    frozen_min_ = extent.first;
+    frozen_max_ = extent.second;
+  }
+  update();
+}
+
+void EchogramWidget::setBlackPoint(float value)
+{
+  value = std::clamp(value, 0.0f, 1.0f);
+  if (black_ != value) {
+    black_ = value;
     update();
   }
 }
 
-void EchogramWidget::setMaximumValue(float value)
+void EchogramWidget::setWhitePoint(float value)
 {
-  if (value_max_ != value) {
-    value_max_ = value;
-    update();
-  }
-}
-
-void EchogramWidget::setGain(float gain)
-{
-  if (gain_ != gain) {
-    gain_ = gain;
+  value = std::clamp(value, 0.0f, 1.0f);
+  if (white_ != value) {
+    white_ = value;
     update();
   }
 }
@@ -518,9 +570,9 @@ void EchogramWidget::setPingSpacing(float spacing)
   }
 }
 
-float EchogramWidget::minimumValue() const {return value_min_;}
-float EchogramWidget::maximumValue() const {return value_max_;}
-float EchogramWidget::gain() const {return gain_;}
+bool EchogramWidget::autoRange() const {return auto_range_;}
+float EchogramWidget::blackPoint() const {return black_;}
+float EchogramWidget::whitePoint() const {return white_;}
 float EchogramWidget::contrast() const {return contrast_;}
 int EchogramWidget::colorMapIndex() const
 {

@@ -74,9 +74,9 @@ protected slots:
   virtual void onTopicChanged(int index);
   void newPings();
 
-  void on_minValueDoubleSpinBox_valueChanged(double value);
-  void on_maxValueDoubleSpinBox_valueChanged(double value);
-  void on_gainDoubleSpinBox_valueChanged(double value);
+  void on_autoRangeCheckBox_toggled(bool checked);
+  void on_blackDoubleSpinBox_valueChanged(double value);
+  void on_whiteDoubleSpinBox_valueChanged(double value);
   void on_contrastDoubleSpinBox_valueChanged(double value);
   void on_paletteComboBox_currentIndexChanged(int index);
   void on_pingSpacingDoubleSpinBox_valueChanged(double value);
@@ -92,10 +92,6 @@ private:
 
   QString arg_topic_;
 
-  /// Set once restoreSettings() has run; maybeSeedValueWindow() waits for it
-  /// so a ping arriving first can't pre-empt a saved value window.
-  bool settings_restored_ = false;
-
   rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr
     data_subscriber_;
 
@@ -105,12 +101,6 @@ private:
   /// GUI-thread timer that drains new_pings_ at a fixed cadence, coalescing
   /// bursts into one redraw instead of one per incoming message.
   QTimer * redraw_timer_ = nullptr;
-
-  /// Seed the value window when it is unset (degenerate, max <= min) from the
-  /// dtype of the first displayable ping in the burst. Runs on the GUI thread
-  /// (newPings).
-  void maybeSeedValueWindow(
-    const std::vector<marine_acoustic_msgs::msg::RawSonarImage> & pings);
 };
 
 }  // namespace rqt_marine_sonar

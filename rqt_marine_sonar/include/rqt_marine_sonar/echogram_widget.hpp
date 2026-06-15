@@ -63,9 +63,9 @@ public:
   explicit EchogramWidget(QWidget * parent);
   ~EchogramWidget() override;
 
-  float minimumValue() const;
-  float maximumValue() const;
-  float gain() const;
+  bool autoRange() const;
+  float blackPoint() const;
+  float whitePoint() const;
   float contrast() const;
   int colorMapIndex() const;
   float pingSpacing() const;
@@ -83,9 +83,14 @@ public slots:
   /// path (one texture upload), but still preferred over per-ping addPing() when
   /// draining a queue.
   void addPings(const std::vector<marine_acoustic_msgs::msg::RawSonarImage> & pings);
-  void setMinimumValue(float value);
-  void setMaximumValue(float value);
-  void setGain(float gain);
+  /// Auto-range (default on): the palette spans the live buffered data extent.
+  /// Turning it off freezes the current extent so the black/white points trim a
+  /// stable window.
+  void setAutoRange(bool enabled);
+  /// Black/white points in [0, 1] (manual mode): normalized positions within the
+  /// frozen data extent that map to the bottom / top of the palette.
+  void setBlackPoint(float value);
+  void setWhitePoint(float value);
   void setContrast(float contrast);
   void setColorMapIndex(int index);
 
@@ -103,13 +108,16 @@ protected:
   void mouseReleaseEvent(QMouseEvent * event) override;
 
 private:
-  /// One ping, decoded once on arrival: geometry + float samples (any dtype).
+  /// One ping, decoded once on arrival: geometry + float samples (any dtype),
+  /// plus the cached finite-sample value extremes (for the auto-range scan).
   struct DecodedPing
   {
     float min_depth;
     float max_depth;
     float bin_size;
     std::vector<float> samples;
+    float value_min;  ///< min finite sample (== value_max when none)
+    float value_max;
   };
 
   /// Decode and buffer one ping without redrawing. Returns true if accepted
@@ -125,22 +133,29 @@ private:
   /// clamped to the data extent. {0,0} when there is no data.
   std::pair<float, float> visibleDepthWindow() const;
 
+  /// Live value extent [min, max] across all buffered pings' finite samples.
+  /// {0, 1} when the buffer is empty.
+  std::pair<float, float> dataExtent() const;
+
+  /// The intensity window [lo, hi] fed to the shader: the live data extent when
+  /// auto-range is on, else the frozen extent trimmed by the black/white points.
+  std::pair<float, float> valueWindow() const;
+
   /// Pack the visible depth window x buffered pings into the R32F texture. Must
   /// run with the GL context current (called from paintGL when data_dirty_).
   void uploadTexture();
 
-  /// Current intensity range fed to the shader (the value window).
-  std::pair<float, float> valueWindow() const {return {value_min_, value_max_};}
-
   std::map<int64_t, DecodedPing> pings_;
   int maximum_ping_count_ = 2048;
 
-  // Display value window: raw sample values mapped to [0, 1] before gain/contrast.
-  // Degenerate (max <= min) means "not yet configured" — the plugin seeds a
-  // dtype-aware default on the first ping.
-  float value_min_ = 0.0f;
-  float value_max_ = 0.0f;
-  float gain_ = 1.0f;
+  // Intensity scaling. Auto-range (default) spans the live data extent; when off
+  // the black/white points (normalized [0, 1]) trim the frozen extent. contrast
+  // is the gamma shaping inside the window.
+  bool auto_range_ = true;
+  float black_ = 0.0f;
+  float white_ = 1.0f;
+  float frozen_min_ = 0.0f;  ///< data extent captured when auto-range turned off
+  float frozen_max_ = 1.0f;
   float contrast_ = 1.0f;
   rqt_sonar_waterfall::ColorMapType color_map_type_ =
     rqt_sonar_waterfall::ColorMapType::Grayscale;
