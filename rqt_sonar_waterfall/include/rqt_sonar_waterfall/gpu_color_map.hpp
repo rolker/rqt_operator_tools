@@ -96,6 +96,16 @@ public:
   void set_gain(float gain) {gain_ = gain;}
   void set_contrast(float contrast) {contrast_ = contrast;}
 
+  /// Ring-buffer layout of the intensity texture: `filled` valid rows, oldest at
+  /// texture row `oldest`, in a `capacity`-tall texture (wraps). The shader maps
+  /// screen V across the valid rows in chronological order (oldest at bottom).
+  void set_ring(float oldest, float filled, float capacity)
+  {
+    ring_oldest_ = oldest;
+    ring_filled_ = filled;
+    ring_capacity_ = capacity;
+  }
+
   /// Draw a viewport-filling quad that samples `intensity_tex` (a `GL_R32F` 2-D
   /// texture) and writes colormapped RGBA to the bound framebuffer/viewport.
   /// `flip_v` flips the sampled V coordinate (texture-row vs screen-row order).
@@ -115,6 +125,9 @@ private:
   float max_ = 1.0f;
   float gain_ = 1.0f;
   float contrast_ = 1.0f;
+  float ring_oldest_ = 0.0f;
+  float ring_filled_ = 1.0f;
+  float ring_capacity_ = 1.0f;
 };
 
 }  // namespace rqt_sonar_waterfall
