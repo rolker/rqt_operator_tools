@@ -33,6 +33,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QRect>
+#include <QSizePolicy>
 #include <QString>
 #include <QSurfaceFormat>
 #include <QWheelEvent>
@@ -97,6 +98,10 @@ EchogramWidget::EchogramWidget(QWidget * parent)
   setFormat(fmt);
   setMinimumSize(256, 128);
   setMouseTracking(true);
+  // QGraphicsView (the former base) expanded to fill its layout cell;
+  // QOpenGLWidget defaults to Preferred, which would leave the echogram at its
+  // minimum and waste the panel. Restore expand-to-fill.
+  setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 }
 
 EchogramWidget::~EchogramWidget()
@@ -260,35 +265,42 @@ void EchogramWidget::uploadTexture()
   // bin from the ceil().
   vis_max_depth_ = vis_min_depth_ + depth_rows * bin_size_;
 
-  // Visible ping columns: honor ping_spacing_ (wider spacing -> fewer, wider
-  // columns) and the canvas width; newest pings on the right.
+  // Fixed-width display columns: ping_spacing_ sets pixels-per-ping, so the
+  // column count is the canvas capacity (NOT the buffer size). The newest pings
+  // are right-aligned into the rightmost columns; empty columns on the left are
+  // no-data (NaN). As pings arrive faster than they're evicted, the picture
+  // scrolls right-to-left at a constant ping width instead of rescaling.
   const int ping_count = static_cast<int>(pings_.size());
   const float spacing = std::max(ping_spacing_, 1.0f);
-  int visible_pings = std::max(1, static_cast<int>(std::ceil(width() / spacing)));
-  visible_pings = std::min(std::min(visible_pings, ping_count), max_dim);
-  const int startx = ping_count - visible_pings;
+  int cols = std::max(1, static_cast<int>(std::ceil(width() / spacing)));
+  cols = std::min(cols, max_dim);
+  const int n_shown = std::min(ping_count, cols);
+  const int startx = ping_count - n_shown;     // first buffered ping to show
+  const int col_offset = cols - n_shown;       // right-align the shown pings
 
   std::vector<float> data;
   try {
     data.assign(
-      static_cast<std::size_t>(visible_pings) * static_cast<std::size_t>(depth_rows),
+      static_cast<std::size_t>(cols) * static_cast<std::size_t>(depth_rows),
       std::numeric_limits<float>::quiet_NaN());
   } catch (const std::exception &) {
     has_data_ = false;
     return;
   }
 
-  // Walk the buffered pings (ordered oldest->newest); pack the newest
-  // `visible_pings` into columns [0, visible_pings) left->right.
   int idx = 0;
-  int col = 0;
-  for (auto it = pings_.begin(); it != pings_.end() && col < visible_pings; ++it, ++idx) {
+  int k = 0;
+  for (auto it = pings_.begin(); it != pings_.end(); ++it, ++idx) {
     if (idx < startx) {
       continue;
     }
+    if (k >= n_shown) {
+      break;
+    }
+    const int col = col_offset + k;
+    ++k;
     const DecodedPing & ping = it->second;
     if (!(ping.bin_size > 0.0f)) {
-      ++col;
       continue;
     }
     for (int r = 0; r < depth_rows; ++r) {
@@ -302,10 +314,9 @@ void EchogramWidget::uploadTexture()
       }
       // data row r (r=0 = shallowest) maps to texture v=0; drawn with flip_v so
       // screen-top shows the shallowest sample.
-      data[static_cast<std::size_t>(r) * visible_pings + col] =
+      data[static_cast<std::size_t>(r) * cols + col] =
         ping.samples[static_cast<std::size_t>(si)];
     }
-    ++col;
   }
 
   if (intensity_tex_ == 0) {
@@ -314,7 +325,7 @@ void EchogramWidget::uploadTexture()
   glBindTexture(GL_TEXTURE_2D, intensity_tex_);
   glGetError();
   glTexImage2D(
-    GL_TEXTURE_2D, 0, GL_R32F, visible_pings, depth_rows, 0, GL_RED, GL_FLOAT,
+    GL_TEXTURE_2D, 0, GL_R32F, cols, depth_rows, 0, GL_RED, GL_FLOAT,
     data.data());
   const GLenum err = glGetError();
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
