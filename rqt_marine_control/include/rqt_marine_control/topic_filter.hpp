@@ -52,6 +52,17 @@ std::vector<std::string> control_set_topics(
 /// An empty input yields an empty result.
 std::string derive_change_topic(const std::string & state_topic);
 
+/// The udp_bridge service every bridge node advertises to accept a
+/// pull-a-remote-topic request; its presence marks a usable bridge node.
+inline constexpr const char * kRemoteSubscribeService = "/remote_subscribe";
+
+/// From a node-graph service->types map, return the sorted, de-duplicated
+/// fully-qualified names of udp_bridge nodes (those advertising a
+/// "<node>/remote_subscribe" service). Used to populate the bridge selector for
+/// dynamic device control (ADR-0003 D7-dyn).
+std::vector<std::string> bridge_nodes_from_services(
+  const std::map<std::string, std::vector<std::string>> & services);
+
 }  // namespace rqt_marine_control
 
 #endif  // RQT_MARINE_CONTROL__TOPIC_FILTER_HPP_

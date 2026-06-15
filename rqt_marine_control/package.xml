@@ -21,6 +21,7 @@
   <depend>pluginlib</depend>
   <depend>marine_control_interfaces</depend>
   <depend>marine_control_widgets</depend>
+  <depend>marine_control_bridge_client</depend>
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
