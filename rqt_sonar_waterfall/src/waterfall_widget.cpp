@@ -475,8 +475,9 @@ void WaterfallWidget::upload_texture()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    tex_width_ = static_cast<int>(width);
-    tex_capacity_ = static_cast<int>(capacity);
+    // Note: tex_width_/tex_capacity_ are committed only after the upload below
+    // succeeds (see end of function), so a failed (re)allocation does not cache
+    // dims as resident and the next call re-attempts allocation.
   }
   glTexSubImage2D(
     GL_TEXTURE_2D, 0, 0, 0, static_cast<int>(width), static_cast<int>(height), GL_RED, GL_FLOAT,
@@ -495,9 +496,21 @@ void WaterfallWidget::upload_texture()
     has_data_ = false;
     range_max_ = 0.0;
     ring_filled_ = 0;
+    ring_write_ = 0;
+    // Drop the cached texture dims so the next call re-attempts (re)allocation
+    // rather than assuming this size is resident. Restores auto-recovery from a
+    // transient GPU allocation/upload failure (the prior unconditional
+    // glTexImage2D path recovered on its own).
+    tex_width_ = 0;
+    tex_capacity_ = 0;
     return;
   }
 
+  // Commit the texture dims only now that both the (re)allocation and the upload
+  // succeeded; a failure above leaves them cleared so the next call retries
+  // allocation instead of assuming this size is resident.
+  tex_width_ = static_cast<int>(width);
+  tex_capacity_ = static_cast<int>(capacity);
   // Valid rows were written contiguously into [0, height); the next row to write
   // is `height` (wrapping to 0 when the ring is exactly full). oldest row is 0,
   // which paintGL derives from (ring_write_ - ring_filled_).
