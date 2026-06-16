@@ -115,6 +115,11 @@ private:
   /// to the buffer's max width; rows are stored oldest-first so screen-top maps
   /// to the newest row without a V flip.
   void upload_texture();
+  /// Fast path: upload the `count` newest rows incrementally into the ring
+  /// texture via glTexSubImage2D (O(count * width)), avoiding a full re-projection
+  /// and re-upload. Falls back to upload_texture() when the texture geometry
+  /// (width / uniform scale / capacity) would change. GL context must be current.
+  void append_rows(std::size_t count);
   /// Min/max intensity of a single row (empty -> {0, 1}).
   static std::pair<float, float> row_min_max(const WaterfallRow & row);
   /// Intensity range fed to the shader: manual range, or the buffer auto-range.
@@ -129,11 +134,23 @@ private:
   WaterfallBuffer buffer_;
   GpuColorMap gpu_;
 
-  unsigned int intensity_tex_ = 0;  ///< R32F, width x height = max-samples x rows
+  unsigned int intensity_tex_ = 0;  ///< R32F ring, width x capacity (max-samples x rows)
   bool has_data_ = false;           ///< intensity_tex_ holds at least one row
   bool gl_ready_ = false;           ///< initializeGL completed
-  bool data_dirty_ = false;         ///< buffer changed -> re-upload in paintGL
+  bool data_dirty_ = false;         ///< structural change -> full re-upload in paintGL
   bool palette_dirty_ = false;      ///< color map changed -> re-bake LUT in paintGL
+
+  // --- ring-buffer texture state ---
+  // The intensity texture is a fixed `tex_capacity_`-tall ring of `tex_width_`
+  // columns. New rows are written at ring_write_ (wrapping); ring_filled_ valid
+  // rows trail behind it. add_row() only bumps pending_appends_ so a burst of
+  // pings between repaints is one incremental upload, not a full rebuild each.
+  std::size_t pending_appends_ = 0;   ///< rows appended since the last upload
+  int tex_capacity_ = 0;              ///< allocated texture height (ring length)
+  int tex_width_ = 0;                 ///< allocated texture width (columns)
+  std::size_t ring_write_ = 0;        ///< next ring row to write
+  std::size_t ring_filled_ = 0;       ///< valid rows currently in the ring
+  double last_uniform_half_ = -1.0;   ///< uniform half-width baked into the texture
 
   double range_max_ = 0.0;  ///< slant range of the newest row, meters (0 = unknown)
 

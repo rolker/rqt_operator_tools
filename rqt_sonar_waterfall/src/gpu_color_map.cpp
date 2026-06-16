@@ -119,13 +119,24 @@ QByteArray GpuColorMap::fragment_source()
     "uniform float u_gain;\n"
     "uniform float u_contrast;\n"
     "uniform float u_lut_size;\n"
+    // Ring-buffer mapping: the intensity texture is a fixed capacity-tall ring.
+    // The u_ring_filled valid rows start (oldest) at row u_ring_oldest and wrap.
+    // Screen V is mapped to an exact texel-center row so NEAREST sampling never
+    // interpolates across the wrap seam.
+    "uniform float u_ring_oldest;\n"
+    "uniform float u_ring_filled;\n"
+    "uniform float u_ring_capacity;\n"
     "in vec2 v_uv;\n"
     "out vec4 frag_color;\n";
   src += marine_colormap::colormap_glsl();
   src +=
     "\nvoid main()\n"
     "{\n"
-    "  float value = texture(u_intensity, v_uv).r;\n"
+    "  // Map screen V (oldest at bottom -> newest at top) to a ring texel row.\n"
+    "  float ridx = clamp(floor(v_uv.y * u_ring_filled), 0.0, u_ring_filled - 1.0);\n"
+    "  float trow = mod(u_ring_oldest + ridx, u_ring_capacity);\n"
+    "  float vy = (trow + 0.5) / u_ring_capacity;\n"
+    "  float value = texture(u_intensity, vec2(v_uv.x, vy)).r;\n"
     "  // Non-finite samples -> palette floor. Avoids GLSL-undefined clamp(NaN)\n"
     "  // and matches the CPU scale_intensity() path's clamping behavior.\n"
     "  if (isnan(value) || isinf(value)) { value = u_min; }\n"
@@ -221,6 +232,9 @@ void GpuColorMap::draw(unsigned int intensity_tex, bool flip_v)
   program_->setUniformValue("u_gain", gain_);
   program_->setUniformValue("u_contrast", contrast_);
   program_->setUniformValue("u_lut_size", lut_size_);
+  program_->setUniformValue("u_ring_oldest", ring_oldest_);
+  program_->setUniformValue("u_ring_filled", ring_filled_);
+  program_->setUniformValue("u_ring_capacity", ring_capacity_);
   program_->setUniformValue("u_flip_v", flip_v ? 1 : 0);
   program_->setUniformValue("u_intensity", 0);
   program_->setUniformValue("u_lut", 1);

@@ -91,7 +91,7 @@ void WaterfallWidget::add_row(const WaterfallRow & row)
     compute_row_tvg(stored);
   }
   buffer_.push(std::move(stored));
-  data_dirty_ = true;
+  ++pending_appends_;  // incremental ring upload in paintGL (not a full rebuild)
   update();
 }
 
@@ -365,6 +365,8 @@ void WaterfallWidget::upload_texture()
   if (rows.empty() || width == 0) {
     has_data_ = false;
     range_max_ = 0.0;
+    ring_filled_ = 0;
+    ring_write_ = 0;
     return;
   }
 
@@ -374,6 +376,10 @@ void WaterfallWidget::upload_texture()
   GLint max_tex = 0;
   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
   const std::size_t max_dim = (max_tex > 0) ? static_cast<std::size_t>(max_tex) : 2048;
+  // Ring height = the scrollback capacity (clamped to the GPU limit) so the
+  // texture is a fixed-size ring that new rows scroll into via glTexSubImage2D.
+  // `height` is the count of valid rows uploaded this rebuild (<= capacity).
+  std::size_t capacity = std::max<std::size_t>(1, buffer_.capacity());
   std::size_t height = rows.size();
   std::size_t first_row = 0;
   bool clamped = false;
@@ -381,10 +387,13 @@ void WaterfallWidget::upload_texture()
     width = max_dim;
     clamped = true;
   }
-  if (height > max_dim) {
-    first_row = height - max_dim;  // keep the newest max_dim rows
-    height = max_dim;
+  if (capacity > max_dim) {
+    capacity = max_dim;
     clamped = true;
+  }
+  if (height > capacity) {
+    first_row = height - capacity;  // keep the newest `capacity` rows
+    height = capacity;
   }
   if (clamped) {
     static bool warned = false;
@@ -414,6 +423,7 @@ void WaterfallWidget::upload_texture()
     }
     has_data_ = false;
     range_max_ = 0.0;
+    ring_filled_ = 0;
     return;
   }
   // Uniform scaling: fit every visible row to one half-width (the widest in the
@@ -454,14 +464,25 @@ void WaterfallWidget::upload_texture()
   }
   glBindTexture(GL_TEXTURE_2D, intensity_tex_);
   glGetError();  // clear any prior error so the check below is about this upload
-  glTexImage2D(
-    GL_TEXTURE_2D, 0, GL_R32F, static_cast<int>(width), static_cast<int>(height), 0, GL_RED,
-    GL_FLOAT, data.data());
+  // (Re)allocate the ring texture (width x capacity) only when the geometry
+  // changes; the valid rows go into texture rows [0, height). Unused rows are
+  // never sampled (the shader clamps to ring_filled_), so they need no clear.
+  if (tex_width_ != static_cast<int>(width) || tex_capacity_ != static_cast<int>(capacity)) {
+    glTexImage2D(
+      GL_TEXTURE_2D, 0, GL_R32F, static_cast<int>(width), static_cast<int>(capacity), 0, GL_RED,
+      GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    // Note: tex_width_/tex_capacity_ are committed only after the upload below
+    // succeeds (see end of function), so a failed (re)allocation does not cache
+    // dims as resident and the next call re-attempts allocation.
+  }
+  glTexSubImage2D(
+    GL_TEXTURE_2D, 0, 0, 0, static_cast<int>(width), static_cast<int>(height), GL_RED, GL_FLOAT,
+    data.data());
   const GLenum upload_err = glGetError();
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glBindTexture(GL_TEXTURE_2D, 0);
 
   if (upload_err != GL_NO_ERROR) {
@@ -474,11 +495,110 @@ void WaterfallWidget::upload_texture()
     }
     has_data_ = false;
     range_max_ = 0.0;
+    ring_filled_ = 0;
+    ring_write_ = 0;
+    // Drop the cached texture dims so the next call re-attempts (re)allocation
+    // rather than assuming this size is resident. Restores auto-recovery from a
+    // transient GPU allocation/upload failure (the prior unconditional
+    // glTexImage2D path recovered on its own).
+    tex_width_ = 0;
+    tex_capacity_ = 0;
     return;
   }
 
+  // Commit the texture dims only now that both the (re)allocation and the upload
+  // succeeded; a failure above leaves them cleared so the next call retries
+  // allocation instead of assuming this size is resident.
+  tex_width_ = static_cast<int>(width);
+  tex_capacity_ = static_cast<int>(capacity);
+  // Valid rows were written contiguously into [0, height); the next row to write
+  // is `height` (wrapping to 0 when the ring is exactly full). oldest row is 0,
+  // which paintGL derives from (ring_write_ - ring_filled_).
+  ring_write_ = height % capacity;
+  ring_filled_ = height;
+  last_uniform_half_ = uniform_scale_ ? uniform_half : -1.0;
   has_data_ = true;
   range_max_ = rows.back().range_max;  // newest row
+}
+
+void WaterfallWidget::append_rows(std::size_t count)
+{
+  const auto & rows = buffer_.rows();
+  // Not yet initialized, or nothing to do -> let the full path handle it.
+  if (rows.empty() || intensity_tex_ == 0 || tex_capacity_ <= 0 || tex_width_ <= 0) {
+    upload_texture();
+    return;
+  }
+  const std::size_t cap = static_cast<std::size_t>(tex_capacity_);
+  const std::size_t width = static_cast<std::size_t>(tex_width_);
+
+  // Re-derive max sample width and (when uniform) the uniform half-width over the
+  // current buffer. If either no longer matches what is baked into the ring, an
+  // incremental append would be inconsistent with the existing rows -> rebuild.
+  std::size_t max_w = 0;
+  double uniform_half = 0.0;
+  for (const auto & r : rows) {
+    max_w = std::max(max_w, r.intensities.size());
+    if (uniform_scale_) {
+      uniform_half = std::max(uniform_half, row_geom(r, ground_range_).half_width);
+    }
+  }
+  if (max_w > width || (uniform_scale_ && uniform_half != last_uniform_half_)) {
+    upload_texture();
+    return;
+  }
+  // A burst larger than the ring (or the whole buffer) is cheaper to rebuild.
+  count = std::min(count, rows.size());
+  if (count >= cap) {
+    upload_texture();
+    return;
+  }
+
+  std::vector<float> scratch;
+  try {
+    scratch.assign(width, 0.0f);
+  } catch (const std::exception &) {
+    upload_texture();
+    return;
+  }
+
+  glBindTexture(GL_TEXTURE_2D, intensity_tex_);
+  glGetError();  // clear any prior error so the check below is about these uploads
+  const std::size_t start = rows.size() - count;  // first not-yet-uploaded row
+  for (std::size_t i = 0; i < count; ++i) {
+    const WaterfallRow & row = rows[start + i];
+    const RowGeom g = row_geom(row, ground_range_);
+    const double half = uniform_scale_ ? uniform_half : g.half_width;
+    const std::vector<float> & src =
+      (tvg_ && row.has_tvg) ? row.intensities_tvg : row.intensities;
+    std::fill(scratch.begin(), scratch.end(), 0.0f);
+    project_row_into(
+      scratch.data(), src, row.nadir_index, g.range_port, g.range_stbd, g.altitude, g.ground,
+      half, width);
+    glTexSubImage2D(
+      GL_TEXTURE_2D, 0, 0, static_cast<int>(ring_write_), static_cast<int>(width), 1, GL_RED,
+      GL_FLOAT, scratch.data());
+    ring_write_ = (ring_write_ + 1) % cap;
+    ring_filled_ = std::min(ring_filled_ + 1, cap);
+  }
+  const GLenum upload_err = glGetError();
+  glBindTexture(GL_TEXTURE_2D, 0);
+  if (upload_err != GL_NO_ERROR) {
+    // A subimage upload failed; fall back to a clean full rebuild rather than
+    // leaving the ring half-written.
+    upload_texture();
+    return;
+  }
+
+  // Overlay / range state tracks the newest row (mirrors upload_texture's tail).
+  const WaterfallRow & newest = rows.back();
+  const RowGeom ng = row_geom(newest, ground_range_);
+  display_half_width_ = uniform_scale_ ? uniform_half : ng.half_width;
+  display_is_ground_ = ng.ground;
+  display_metric_ = ng.metric;
+  depth_missing_ = ground_range_ && newest.altitude <= 0.0;
+  range_max_ = newest.range_max;
+  has_data_ = true;
 }
 
 void WaterfallWidget::paintGL()
@@ -492,14 +612,24 @@ void WaterfallWidget::paintGL()
       palette_dirty_ = false;
     }
     if (data_dirty_) {
-      upload_texture();
+      upload_texture();  // full rebuild; resets ring state + pending_appends_
       data_dirty_ = false;
+      pending_appends_ = 0;
+    } else if (pending_appends_ > 0) {
+      append_rows(pending_appends_);  // may fall back to upload_texture()
+      pending_appends_ = 0;
     }
     if (has_data_) {
       const auto [lo, hi] = active_range();
       gpu_.set_range(lo, hi);
       gpu_.set_gain(gain_);
       gpu_.set_contrast(contrast_);
+      const std::size_t cap = static_cast<std::size_t>(tex_capacity_ > 0 ? tex_capacity_ : 1);
+      // ring_filled_ <= cap, so this stays non-negative without extra guarding.
+      const std::size_t oldest = (ring_write_ + cap - ring_filled_) % cap;
+      gpu_.set_ring(
+        static_cast<float>(oldest), static_cast<float>(ring_filled_),
+        static_cast<float>(cap));
       gpu_.draw(intensity_tex_, /*flip_v=*/false);
     }
   }
