@@ -39,16 +39,15 @@ computed as `canvas_px / history`.
    (default 200, preserving the existing default for backward-compat with saved
    layouts). Remove the old manual step-less spinbox setup code.
 
-3. **`rqt_sonar_waterfall` — remove `density_spin_`** — drop the member from
-   `sonar_waterfall_plugin.hpp:142`, remove construction in `build_controls_bar()`,
-   remove `connect()` and `apply_view_settings()` call to
-   `widget_->set_range_line_density()`. Remove save/restore of `range_line_density`
-   key in `saveSettings`/`restoreSettings` (old layouts that stored it are silently
-   ignored because `value("range_line_density", 1.0)` just doesn't get called
-   anymore). Keep `range_lines_check_` — the on/off toggle stays; only the
-   density multiplier goes away. The `WaterfallWidget::set_range_line_density()`
-   and `range_line_density_` field can stay in the widget (used internally to
-   draw lines at a fixed multiplier) but the UI knob is removed.
+3. **`rqt_sonar_waterfall` — KEEP `density_spin_` unchanged.**
+   **CORRECTION (2026-06-21, operator-confirmed):** `density_spin_` drives
+   `set_range_line_density()` — the spacing of the along-track range/distance
+   **gridline overlay** (tooltip "Range-line density (higher = more lines)"),
+   NOT a buffer/along-track-spacing duplicate. The waterfall already auto-fits
+   along-track via its history/ring texture; `density_spin_` is a separate,
+   useful measurement aid and **stays unchanged**. (The earlier "drop density"
+   decision conflated it with the echogram's `ping_spacing` view knob.) The
+   waterfall's only change is step 2 — the shared History control + step fix.
 
 4. **`rqt_marine_sonar` — echogram: add History, remove pingSpacing**
    a. `echogram_widget.hpp`: replace `ping_spacing_` with nothing. Rename
@@ -95,8 +94,7 @@ computed as `canvas_px / history`.
 |------|--------|
 | `rqt_sonar_waterfall/include/rqt_sonar_waterfall/history_spinbox.hpp` | **New** — shared `configure_history_spinbox()` factory |
 | `rqt_sonar_waterfall/CMakeLists.txt` | Add `history_spinbox.hpp` to `HEADERS` list |
-| `rqt_sonar_waterfall/include/rqt_sonar_waterfall/sonar_waterfall_plugin.hpp` | Remove `density_spin_` member |
-| `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp` | Replace history spinbox setup with `configure_history_spinbox()`; drop `density_spin_` construction, connect, apply, save, restore |
+| `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp` | Switch `history_spin_` to `configure_history_spinbox()` (range/step/tooltip). **`density_spin_` UNCHANGED** |
 | `rqt_marine_sonar/include/rqt_marine_sonar/echogram_widget.hpp` | Remove `ping_spacing_`; rename/default `maximum_ping_count_`→500; add `setHistory()`/`history()` |
 | `rqt_marine_sonar/src/echogram_widget.cpp` | `uploadTexture()`: replace spacing calc with `cols = history_`; remove `setPingSpacing()`/`pingSpacing()` |
 | `rqt_marine_sonar/src/marine_echogram_plugin.ui` | Replace spacing spinbox+label with history spinbox+label |
@@ -127,13 +125,20 @@ computed as `canvas_px / history`.
 | `echogram_widget.hpp` API (remove `setPingSpacing`) | `marine_echogram_plugin.cpp` + tests | Yes |
 | `echogram_widget.hpp` API (add `setHistory`) | `marine_echogram_plugin.cpp` + tests | Yes |
 | `ping_spacing` settings key dropped | `restoreSettings` must not crash on old layouts | Yes — old key simply not read |
-| `range_line_density` settings key dropped | `restoreSettings` must not crash on old layouts | Yes — old key simply not read |
-| `history_spinbox.hpp` added to `rqt_sonar_waterfall` | `CMakeLists.txt` HEADERS list | Yes |
-| `density_spin_` removed from waterfall plugin | `sonar_waterfall_plugin.hpp` member list | Yes |
+| `history_spinbox.hpp` added to `rqt_sonar_waterfall` | exported via `install(DIRECTORY include/)` + `ament_export_include_directories` (review-plan note — not a `HEADERS` list) | Yes |
 
 ## Open Questions
 
-- None — design is settled per issue #79 agreed decision.
+- None — design settled; range-line-density correction operator-confirmed 2026-06-21.
+
+## Review-plan follow-ups (folded in)
+
+- **Preserve the GL-texture clamp** when rewriting `uploadTexture()` (step 4b):
+  `cols = std::min(std::max(1, history_), max_dim)` — don't drop the `max_dim` cap.
+- **Sync the restore-settings UI**: `historySpinBox->setValue(history())`
+  (replacing the old `pingSpacingDoubleSpinBox->setValue`) — `marine_echogram_plugin.cpp:181`.
+- `history_spinbox.hpp` is exported via the existing `install(DIRECTORY include/)` +
+  `ament_export_include_directories`, not a `HEADERS` list.
 
 ## Estimated Scope
 
