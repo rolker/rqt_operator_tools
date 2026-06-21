@@ -35,6 +35,7 @@ set(${PROJECT_NAME}_HEADERS
   include/${PROJECT_NAME}/ping_pairer.hpp
   include/${PROJECT_NAME}/topic_filter.hpp
   include/${PROJECT_NAME}/control_panel.hpp
+  include/${PROJECT_NAME}/history_spinbox.hpp
 )
 
 set(${PROJECT_NAME}_SOURCES

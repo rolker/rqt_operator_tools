@@ -41,6 +41,7 @@
 
 #include <pluginlib/class_list_macros.hpp>
 #include <rqt_sonar_waterfall/color_map.hpp>
+#include <rqt_sonar_waterfall/history_spinbox.hpp>
 
 namespace rqt_marine_sonar
 {
@@ -88,9 +89,12 @@ void MarineEchogramPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   connect(
     ui_.paletteComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
     this, &MarineEchogramPlugin::on_paletteComboBox_currentIndexChanged);
+  // History: data-retention knob shared with the waterfall (range/step/tooltip
+  // from the common factory). Default 500 pings.
+  rqt_sonar_waterfall::configure_history_spinbox(ui_.historySpinBox, 500);
   connect(
-    ui_.pingSpacingDoubleSpinBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-    this, &MarineEchogramPlugin::on_pingSpacingDoubleSpinBox_valueChanged);
+    ui_.historySpinBox, QOverload<int>::of(&QSpinBox::valueChanged),
+    this, [this](int value) {echogram_->setHistory(value);});
 
   context.addWidget(widget_);
 
@@ -145,7 +149,7 @@ void MarineEchogramPlugin::saveSettings(
   instance_settings.setValue("white_point", ui_.echogramWidget->whitePoint());
   instance_settings.setValue("contrast", ui_.echogramWidget->contrast());
   instance_settings.setValue("palette", ui_.echogramWidget->colorMapIndex());
-  instance_settings.setValue("ping_spacing", ui_.echogramWidget->pingSpacing());
+  instance_settings.setValue("history", ui_.echogramWidget->history());
 }
 
 void MarineEchogramPlugin::restoreSettings(
@@ -169,7 +173,9 @@ void MarineEchogramPlugin::restoreSettings(
   ui_.echogramWidget->setWhitePoint(instance_settings.value("white_point", 1.0).toFloat());
   ui_.echogramWidget->setContrast(instance_settings.value("contrast", 1.0).toFloat());
   ui_.echogramWidget->setColorMapIndex(instance_settings.value("palette", 0).toInt());
-  ui_.echogramWidget->setPingSpacing(instance_settings.value("ping_spacing", 1.0).toFloat());
+  // "history" replaces the old "ping_spacing" key; old layouts missing it fall
+  // back to 500, and a stale "ping_spacing" key is simply not read.
+  ui_.echogramWidget->setHistory(instance_settings.value("history", 500).toInt());
 
   ui_.autoRangeCheckBox->setChecked(ui_.echogramWidget->autoRange());
   ui_.blackDoubleSpinBox->setValue(ui_.echogramWidget->blackPoint());
@@ -178,7 +184,7 @@ void MarineEchogramPlugin::restoreSettings(
   ui_.whiteDoubleSpinBox->setEnabled(!ui_.echogramWidget->autoRange());
   ui_.contrastDoubleSpinBox->setValue(ui_.echogramWidget->contrast());
   ui_.paletteComboBox->setCurrentIndex(ui_.echogramWidget->colorMapIndex());
-  ui_.pingSpacingDoubleSpinBox->setValue(ui_.echogramWidget->pingSpacing());
+  ui_.historySpinBox->setValue(ui_.echogramWidget->history());
 }
 
 void MarineEchogramPlugin::updateTopicList()
@@ -295,11 +301,6 @@ void MarineEchogramPlugin::on_contrastDoubleSpinBox_valueChanged(double value)
 void MarineEchogramPlugin::on_paletteComboBox_currentIndexChanged(int index)
 {
   ui_.echogramWidget->setColorMapIndex(index);
-}
-
-void MarineEchogramPlugin::on_pingSpacingDoubleSpinBox_valueChanged(double value)
-{
-  ui_.echogramWidget->setPingSpacing(value);
 }
 
 }  // namespace rqt_marine_sonar

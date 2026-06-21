@@ -183,7 +183,7 @@ bool EchogramWidget::ingestPing(const marine_acoustic_msgs::msg::RawSonarImage &
   decoded.value_max = any ? vhi : 0.0f;
 
   pings_[stampToNanoseconds(ping.header.stamp)] = std::move(decoded);
-  while (static_cast<int>(pings_.size()) > maximum_ping_count_) {
+  while (static_cast<int>(pings_.size()) > history_) {
     pings_.erase(pings_.begin()->first);
   }
   return true;
@@ -312,15 +312,13 @@ void EchogramWidget::uploadTexture()
   vis_max_depth_ = vis_min_depth_ + depth_rows * bin_size_;
   tex_rows_ = depth_rows;   // identity-ring height for the GPU draw (issue #63)
 
-  // Fixed-width display columns: ping_spacing_ sets pixels-per-ping, so the
-  // column count is the canvas capacity (NOT the buffer size). The newest pings
-  // are right-aligned into the rightmost columns; empty columns on the left are
-  // no-data (NaN). As pings arrive faster than they're evicted, the picture
-  // scrolls right-to-left at a constant ping width instead of rescaling.
+  // One column per retained ping: the texture width equals the buffer capacity
+  // (history_), and GL stretches it to auto-fit the canvas. The newest pings are
+  // right-aligned into the rightmost columns; empty columns on the left are
+  // no-data (NaN) until the buffer fills. The max_dim cap keeps a large history
+  // within the GL texture limit.
   const int ping_count = static_cast<int>(pings_.size());
-  const float spacing = std::max(ping_spacing_, 1.0f);
-  int cols = std::max(1, static_cast<int>(std::ceil(width() / spacing)));
-  cols = std::min(cols, max_dim);
+  int cols = std::min(std::max(1, history_), max_dim);
   const int n_shown = std::min(ping_count, cols);
   const int startx = ping_count - n_shown;     // first buffered ping to show
   const int col_offset = cols - n_shown;       // right-align the shown pings
@@ -574,10 +572,16 @@ void EchogramWidget::setColorMapIndex(int index)
   }
 }
 
-void EchogramWidget::setPingSpacing(float spacing)
+void EchogramWidget::setHistory(int count)
 {
-  if (ping_spacing_ != spacing) {
-    ping_spacing_ = spacing;
+  count = std::max(1, count);
+  if (history_ != count) {
+    history_ = count;
+    // Trim the buffer immediately if the new capacity is smaller, so eviction
+    // doesn't wait for the next incoming ping.
+    while (static_cast<int>(pings_.size()) > history_) {
+      pings_.erase(pings_.begin()->first);
+    }
     data_dirty_ = true;
     update();
   }
@@ -591,6 +595,6 @@ int EchogramWidget::colorMapIndex() const
 {
   return rqt_sonar_waterfall::color_map_index(color_map_type_);
 }
-float EchogramWidget::pingSpacing() const {return ping_spacing_;}
+int EchogramWidget::history() const {return history_;}
 
 }  // namespace rqt_marine_sonar

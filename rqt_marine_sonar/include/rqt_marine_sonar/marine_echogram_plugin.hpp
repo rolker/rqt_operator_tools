@@ -46,9 +46,9 @@ namespace rqt_marine_sonar
 {
 
 /// rqt plugin entry point for the water-column echogram viewer. Hosts a
-/// topic-selection toolbar (live RawSonarImage discovery) and the dB / ping-
-/// spacing controls over an EchogramWidget, subscribes to the selected topic,
-/// and marshals incoming pings from the executor thread onto the GUI thread.
+/// topic-selection toolbar (live RawSonarImage discovery) and the dB / history
+/// controls over an EchogramWidget, subscribes to the selected topic, and
+/// marshals incoming pings from the executor thread onto the GUI thread.
 class MarineEchogramPlugin : public rqt_gui_cpp::Plugin
 {
   Q_OBJECT
@@ -79,7 +79,6 @@ protected slots:
   void on_whiteDoubleSpinBox_valueChanged(double value);
   void on_contrastDoubleSpinBox_valueChanged(double value);
   void on_paletteComboBox_currentIndexChanged(int index);
-  void on_pingSpacingDoubleSpinBox_valueChanged(double value);
 
 private:
   Ui::MarineEchogramWidget ui_;
