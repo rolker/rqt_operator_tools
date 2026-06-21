@@ -26,16 +26,18 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-// Offscreen smoke/robustness tests for the EchogramWidget. The widget renders on
-// the CPU (QtCharts + QImage), so QT_QPA_PLATFORM=offscreen is enough — no GL
-// context required. Covers the hardening paths (malformed sample_rate,
-// non-finite samples, degenerate value window, bad ping spacing, extreme
-// resize) and the #54 regression: integer-dtype pings must actually render.
+// Offscreen smoke/robustness + render tests for the EchogramWidget. The widget
+// renders on the GPU (QOpenGLWidget + the shared GpuColorMap), so the
+// render-assertion tests need an offscreen GL context (QT_QPA_PLATFORM=offscreen
+// + software GL); they self-skip when no context can be created. Intensity
+// scaling is auto-range by default (palette spans the live data extent), with a
+// manual black/white window when auto-range is off.
 
 #include <gtest/gtest.h>
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QImage>
 
 #include <cmath>
 #include <cstdint>
@@ -70,10 +72,9 @@ marine_acoustic_msgs::msg::RawSonarImage makePing(
   return msg;
 }
 
-// Count "amber" pixels (r >> b, the Bronze palette's signature) in an image.
-// Run against EchogramWidget::echogramImage(), not a widget grab: axis-label
-// text in a grab carries subpixel-antialiasing color fringes that satisfy any
-// color heuristic and would make these checks pass without any rendering.
+// Count "amber" pixels (r >> b, the Bronze palette's signature). The depth-axis
+// overlay (gray gridlines, light labels) is not amber, so a positive count
+// proves colormapped samples actually rendered.
 int countAmber(const QImage & img)
 {
   int n = 0;
@@ -101,6 +102,16 @@ protected:
     }
   }
 
+  // Realize the widget's GL context offscreen, render, and grab the framebuffer.
+  // Returns a null/empty QImage when no GL context is available so callers can
+  // GTEST_SKIP rather than fail.
+  static QImage renderAndGrab(EchogramWidget & w)
+  {
+    w.show();
+    QCoreApplication::processEvents();
+    return w.echogramImage();
+  }
+
   std::unique_ptr<QApplication> app_;
 };
 
@@ -109,7 +120,7 @@ protected:
 TEST_F(EchogramWidgetTest, EmptyResizeNoCrash)
 {
   EchogramWidget w(nullptr);
-  w.resize(320, 240);  // exercises resizeEvent -> adjustPixmap before any ping
+  w.resize(320, 240);
   SUCCEED();
 }
 
@@ -141,12 +152,13 @@ TEST_F(EchogramWidgetTest, NonFiniteSamplesNoCrash)
   SUCCEED();
 }
 
-TEST_F(EchogramWidgetTest, DegenerateValueWindowNoCrash)
+TEST_F(EchogramWidgetTest, ManualZeroWidthWindowNoCrash)
 {
   EchogramWidget w(nullptr);
   w.resize(320, 240);
-  w.setMinimumValue(5.0f);
-  w.setMaximumValue(5.0f);  // zero-width window (= the "unset" state) must not draw
+  w.setAutoRange(false);
+  w.setBlackPoint(0.5f);
+  w.setWhitePoint(0.5f);  // zero-width window must not draw, must not crash
   w.addPing(makePing({1.0f, 2.0f, 3.0f}));
   SUCCEED();
 }
@@ -154,13 +166,10 @@ TEST_F(EchogramWidgetTest, DegenerateValueWindowNoCrash)
 TEST_F(EchogramWidgetTest, Uint16PingRendersColormapped)
 {
   // Regression for #54: a UINT16 (GCV) ping must produce visible, colormapped
-  // pixels. With the Bronze palette, rendered samples are amber (r >> b) —
-  // a color no chart chrome (white background, black image fill, gray text)
-  // produces, so finding one proves the sample pipeline ran end to end.
+  // pixels. Auto-range (default) scales the palette to the data, so no manual
+  // window is needed. Bronze palette -> rendered samples are amber (r >> b).
   EchogramWidget w(nullptr);
   w.resize(320, 240);
-  w.setMinimumValue(0.0f);
-  w.setMaximumValue(65535.0f);
   w.setColorMapIndex(1);  // Bronze
 
   marine_acoustic_msgs::msg::RawSonarImage msg;
@@ -178,22 +187,71 @@ TEST_F(EchogramWidgetTest, Uint16PingRendersColormapped)
     msg.header.stamp.nanosec = 1000u * static_cast<uint32_t>(i);
     w.addPing(msg);
   }
-  QCoreApplication::processEvents();
 
-  EXPECT_GT(countAmber(w.echogramImage()), 0) << "no colormapped sample pixels rendered";
+  const QImage img = renderAndGrab(w);
+  if (img.isNull() || img.width() == 0) {
+    GTEST_SKIP() << "offscreen GL context unavailable";
+  }
+  EXPECT_GT(countAmber(img), 0) << "no colormapped sample pixels rendered";
+}
+
+TEST_F(EchogramWidgetTest, RendersDepthGradientNotCollapsedRow)
+{
+  // Regression for #63: the merged ring-texture GpuColorMap always applies the
+  // ring V-mapping. Without an identity set_ring() matching the texture height,
+  // the defaults (capacity=1) collapse every screen row to texture-V 0.5 -- one
+  // depth bin smeared down the whole column, destroying the depth axis. A water
+  // column whose intensity ramps with depth must therefore render a vertical
+  // brightness gradient; a collapsed render makes every row identical.
+  EchogramWidget w(nullptr);
+  w.resize(320, 240);
+  w.setColorMapIndex(1);  // Bronze
+
+  std::vector<float> ramp;                 // shallow -> deep intensity ramp
+  for (int i = 0; i < 64; ++i) {
+    ramp.push_back(static_cast<float>(i));
+  }
+  for (int p = 0; p < 400; ++p) {          // fill the canvas width with the ramp
+    auto msg = makePing(ramp);
+    msg.header.stamp.nanosec = 1000u * static_cast<uint32_t>(p + 1);
+    w.addPing(msg);
+  }
+
+  const QImage img = renderAndGrab(w);
+  if (img.isNull() || img.width() == 0) {
+    GTEST_SKIP() << "offscreen GL context unavailable";
+  }
+  // Mean red over a horizontal band, sampled on the RIGHT half to avoid the
+  // left-side depth-axis labels.
+  auto bandRed = [&img](int y0, int y1) {
+      std::int64_t sum = 0;
+      std::int64_t n = 0;
+      for (int y = y0; y < y1; ++y) {
+        for (int x = img.width() / 2; x < img.width(); ++x) {
+          sum += qRed(img.pixel(x, y));
+          ++n;
+        }
+      }
+      return n ? static_cast<double>(sum) / static_cast<double>(n) : 0.0;
+    };
+  const int h = img.height();
+  const double top = bandRed(0, h / 8);
+  const double bottom = bandRed(h - h / 8, h);
+  // A real depth gradient: the shallow and deep bands differ substantially. The
+  // collapse bug renders one depth bin everywhere, so the two are ~equal.
+  EXPECT_GT(std::abs(bottom - top), 15.0)
+    << "no depth gradient (top red=" << top << " bottom red=" << bottom
+    << "); identity ring not set -> collapsed depth axis (#63)";
 }
 
 TEST_F(EchogramWidgetTest, NanGeometryPingDoesNotPoisonRender)
 {
-  // A ping whose geometry computes to NaN (here: NaN sound_speed) must be
-  // rejected at ingest — buffered alongside good pings it would otherwise
-  // pass NaN through the render loop's bounds checks into the sample-index
-  // cast (out-of-bounds read).
+  // A ping whose geometry computes to NaN (NaN sound_speed) must be rejected at
+  // ingest — buffered alongside good pings it would otherwise pass NaN through
+  // the render path.
   EchogramWidget w(nullptr);
   w.resize(320, 240);
-  w.setMinimumValue(0.0f);
-  w.setMaximumValue(10.0f);
-  w.setColorMapIndex(1);  // Bronze: rendered samples are amber (r >> b)
+  w.setColorMapIndex(1);  // Bronze
 
   auto good = makePing({5.0f, 6.0f, 7.0f, 8.0f});
   auto bad = makePing({5.0f, 6.0f, 7.0f, 8.0f});
@@ -205,44 +263,51 @@ TEST_F(EchogramWidgetTest, NanGeometryPingDoesNotPoisonRender)
   w.addPing(bad);
   good.header.stamp.nanosec = 3000u;
   w.addPing(good);
-  QCoreApplication::processEvents();
 
-  EXPECT_GT(countAmber(w.echogramImage()), 0)
+  const QImage img = renderAndGrab(w);
+  if (img.isNull() || img.width() == 0) {
+    GTEST_SKIP() << "offscreen GL context unavailable";
+  }
+  EXPECT_GT(countAmber(img), 0)
     << "good pings must still render after a NaN-geometry ping";
 }
 
-TEST_F(EchogramWidgetTest, ResetWindowClearsStaleImage)
+TEST_F(EchogramWidgetTest, ManualZeroWidthWindowClearsImage)
 {
-  // Setting a degenerate value window (the operator's "reseed" request) must
-  // clear the rendering, not leave the previous image on screen.
+  // Auto-range renders; switching to a manual zero-width window (black == white)
+  // collapses to the placeholder rather than leaving a stale rendering.
   EchogramWidget w(nullptr);
   w.resize(320, 240);
-  w.setMinimumValue(0.0f);
-  w.setMaximumValue(10.0f);
-  w.setColorMapIndex(1);  // Bronze: rendered samples are amber (r >> b)
+  w.setColorMapIndex(1);  // Bronze
   for (int i = 0; i < 8; ++i) {
     auto ping = makePing({5.0f, 6.0f, 7.0f, 8.0f});
     ping.header.stamp.nanosec = 1000u * static_cast<uint32_t>(i);
     w.addPing(ping);
   }
-  QCoreApplication::processEvents();
 
-  ASSERT_GT(countAmber(w.echogramImage()), 0) << "precondition: pings rendered";
+  const QImage before = renderAndGrab(w);
+  if (before.isNull() || before.width() == 0) {
+    GTEST_SKIP() << "offscreen GL context unavailable";
+  }
+  const int amber_before = countAmber(before);
+  ASSERT_GT(amber_before, 0) << "precondition: auto-range rendered";
 
-  w.setMaximumValue(0.0f);  // window now degenerate = "unset"
-  QCoreApplication::processEvents();
-  EXPECT_EQ(countAmber(w.echogramImage()), 0)
-    << "stale rendering survived a value-window reset";
+  w.setAutoRange(false);
+  w.setBlackPoint(0.0f);
+  w.setWhitePoint(0.0f);  // zero-width = nothing to draw
+  const QImage after = renderAndGrab(w);
+  // Collapse by ~an order of magnitude (a handful of offscreen-FBO grab edge
+  // pixels survive; the rendered curtain does not).
+  EXPECT_LT(countAmber(after), amber_before / 4)
+    << "zero-width window did not clear the rendering";
 }
 
 TEST_F(EchogramWidgetTest, AddPingsBatchMixedValidity)
 {
-  // The batch entry point (one rebuild per burst) must accept the good pings
-  // and drop the malformed ones, same as the per-ping path.
+  // The batch entry point must accept the good pings and drop the malformed
+  // ones, same as the per-ping path.
   EchogramWidget w(nullptr);
   w.resize(320, 240);
-  w.setMinimumValue(0.0f);
-  w.setMaximumValue(10.0f);
 
   std::vector<marine_acoustic_msgs::msg::RawSonarImage> batch;
   for (int i = 0; i < 4; ++i) {
@@ -260,7 +325,7 @@ TEST_F(EchogramWidgetTest, BadPingSpacingNoCrash)
   EchogramWidget w(nullptr);
   w.resize(320, 240);
   w.addPing(makePing({1.0f, 2.0f, 3.0f}));
-  w.setPingSpacing(0.0f);  // corrupted persisted value path; guarded in adjustPixmap
+  w.setPingSpacing(0.0f);  // corrupted persisted value path; clamped in uploadTexture
   EXPECT_FLOAT_EQ(w.pingSpacing(), 0.0f);
   SUCCEED();
 }
@@ -268,16 +333,25 @@ TEST_F(EchogramWidgetTest, BadPingSpacingNoCrash)
 TEST_F(EchogramWidgetTest, SettersRoundTrip)
 {
   EchogramWidget w(nullptr);
-  w.setMinimumValue(-80.0f);
-  w.setMaximumValue(-5.0f);
-  w.setGain(1.5f);
+  w.setAutoRange(false);
+  w.setBlackPoint(0.2f);
+  w.setWhitePoint(0.8f);
   w.setContrast(0.7f);
   w.setColorMapIndex(2);
   w.setPingSpacing(2.5f);
-  EXPECT_FLOAT_EQ(w.minimumValue(), -80.0f);
-  EXPECT_FLOAT_EQ(w.maximumValue(), -5.0f);
-  EXPECT_FLOAT_EQ(w.gain(), 1.5f);
+  EXPECT_FALSE(w.autoRange());
+  EXPECT_FLOAT_EQ(w.blackPoint(), 0.2f);
+  EXPECT_FLOAT_EQ(w.whitePoint(), 0.8f);
   EXPECT_FLOAT_EQ(w.contrast(), 0.7f);
   EXPECT_EQ(w.colorMapIndex(), 2);
   EXPECT_FLOAT_EQ(w.pingSpacing(), 2.5f);
+}
+
+TEST_F(EchogramWidgetTest, BlackWhitePointsClampToUnit)
+{
+  EchogramWidget w(nullptr);
+  w.setBlackPoint(-0.5f);
+  w.setWhitePoint(3.0f);
+  EXPECT_FLOAT_EQ(w.blackPoint(), 0.0f);
+  EXPECT_FLOAT_EQ(w.whitePoint(), 1.0f);
 }

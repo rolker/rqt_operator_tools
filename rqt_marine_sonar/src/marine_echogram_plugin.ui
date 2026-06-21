@@ -24,25 +24,41 @@
      </property>
      <layout class="QHBoxLayout" name="horizontalLayout">
       <item>
-       <widget class="QLabel" name="minValueLabel">
+       <widget class="QCheckBox" name="autoRangeCheckBox">
+        <property name="toolTip">
+         <string>Auto-range: span the palette across the live data extent. Turn off to set a fixed window with the Black/White points.</string>
+        </property>
         <property name="text">
-         <string>min</string>
+         <string>Auto range</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QDoubleSpinBox" name="minValueDoubleSpinBox">
+       <widget class="QLabel" name="blackLabel">
+        <property name="text">
+         <string>Black</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QDoubleSpinBox" name="blackDoubleSpinBox">
         <property name="toolTip">
-         <string>Display-window low value (raw sample units; dB for float sonars, counts for integer sonars). Seeded from the source dtype on the first ping when unset.</string>
+         <string>Black point: normalized [0,1] position within the (frozen) data extent that maps to the bottom of the palette. Active when Auto range is off.</string>
+        </property>
+        <property name="enabled">
+         <bool>false</bool>
         </property>
         <property name="minimum">
-         <double>-1000000000.000000000000000</double>
+         <double>0.000000000000000</double>
         </property>
         <property name="maximum">
-         <double>1000000000.000000000000000</double>
+         <double>1.000000000000000</double>
         </property>
         <property name="singleStep">
-         <double>1.000000000000000</double>
+         <double>0.020000000000000</double>
         </property>
         <property name="value">
          <double>0.000000000000000</double>
@@ -50,48 +66,28 @@
        </widget>
       </item>
       <item>
-       <widget class="QLabel" name="maxValueLabel">
+       <widget class="QLabel" name="whiteLabel">
         <property name="text">
-         <string>max</string>
+         <string>White</string>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QDoubleSpinBox" name="maxValueDoubleSpinBox">
+       <widget class="QDoubleSpinBox" name="whiteDoubleSpinBox">
         <property name="toolTip">
-         <string>Display-window high value (raw sample units). A window with max &lt;= min is treated as unset and reseeded from the next ping's dtype.</string>
+         <string>White point: normalized [0,1] position within the (frozen) data extent that maps to the top of the palette. Active when Auto range is off.</string>
+        </property>
+        <property name="enabled">
+         <bool>false</bool>
         </property>
         <property name="minimum">
-         <double>-1000000000.000000000000000</double>
-        </property>
-        <property name="maximum">
-         <double>1000000000.000000000000000</double>
-        </property>
-        <property name="singleStep">
-         <double>1.000000000000000</double>
-        </property>
-        <property name="value">
          <double>0.000000000000000</double>
         </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QLabel" name="gainLabel">
-        <property name="text">
-         <string>Gain</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QDoubleSpinBox" name="gainDoubleSpinBox">
-        <property name="minimum">
-         <double>0.100000000000000</double>
-        </property>
         <property name="maximum">
-         <double>10.000000000000000</double>
+         <double>1.000000000000000</double>
         </property>
         <property name="singleStep">
-         <double>0.100000000000000</double>
+         <double>0.020000000000000</double>
         </property>
         <property name="value">
          <double>1.000000000000000</double>
@@ -186,7 +182,7 @@
  <customwidgets>
   <customwidget>
    <class>rqt_marine_sonar::EchogramWidget</class>
-   <extends>QGraphicsView</extends>
+   <extends>QOpenGLWidget</extends>
    <header>rqt_marine_sonar/echogram_widget.hpp</header>
   </customwidget>
  </customwidgets>
