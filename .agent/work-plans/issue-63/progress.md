@@ -51,3 +51,19 @@ issue: 63
 ### Verified clean
 - No dangling refs to the removed min/max/gain API across widget/plugin/.ui/test.
 - valueWindow/dataExtent edge cases: empty buffer → {0,1}; black>=white / zero-span → not drawn (no NaN to shader); freeze-on-toggle captures the extent; old saved layouts default to auto-range on.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-20 20:00 -0400
+**By**: Claude Code Agent (Claude Opus 4.8 (1M context))
+**Verdict**: approved
+**Scope**: integrate current jazzy (incl. #59 ring-texture GpuColorMap, #77) + re-verify
+
+**Branch**: feature/issue-63 (merge `4cb55c9`)
+
+### Findings
+- None. Clean merge of origin/jazzy (17 commits, no conflicts). The echogram builds
+  against the merged ring-texture `GpuColorMap` (additive API) and all gtests pass
+  (rqt_marine_sonar: 61 checks, 0 failures; 8 uncrustify lint skips per the known
+  local 0.78.1 drift). The GPU port (QOpenGLWidget + GpuColorMap) + control rework
+  (auto-range/normalized window) carried in unchanged.
