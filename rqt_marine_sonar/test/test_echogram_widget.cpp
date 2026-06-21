@@ -224,16 +224,16 @@ TEST_F(EchogramWidgetTest, RendersDepthGradientNotCollapsedRow)
   // Mean red over a horizontal band, sampled on the RIGHT half to avoid the
   // left-side depth-axis labels.
   auto bandRed = [&img](int y0, int y1) {
-    std::int64_t sum = 0;
-    std::int64_t n = 0;
-    for (int y = y0; y < y1; ++y) {
-      for (int x = img.width() / 2; x < img.width(); ++x) {
-        sum += qRed(img.pixel(x, y));
-        ++n;
+      std::int64_t sum = 0;
+      std::int64_t n = 0;
+      for (int y = y0; y < y1; ++y) {
+        for (int x = img.width() / 2; x < img.width(); ++x) {
+          sum += qRed(img.pixel(x, y));
+          ++n;
+        }
       }
-    }
-    return n ? static_cast<double>(sum) / static_cast<double>(n) : 0.0;
-  };
+      return n ? static_cast<double>(sum) / static_cast<double>(n) : 0.0;
+    };
   const int h = img.height();
   const double top = bandRed(0, h / 8);
   const double bottom = bandRed(h - h / 8, h);
