@@ -55,6 +55,7 @@
 
 #include "rqt_sonar_waterfall/color_map.hpp"
 #include "rqt_sonar_waterfall/control_panel.hpp"
+#include "rqt_sonar_waterfall/history_spinbox.hpp"
 #include "rqt_sonar_waterfall/topic_filter.hpp"
 #include "rqt_sonar_waterfall/waterfall_model.hpp"
 #include "rqt_sonar_waterfall/waterfall_widget.hpp"
@@ -228,8 +229,7 @@ QWidget * SonarWaterfallPlugin::build_controls_bar(QWidget * parent)
 
   h->addWidget(new QLabel(tr("History:"), bar));
   history_spin_ = new QSpinBox(bar);
-  history_spin_->setRange(1, 5000);
-  history_spin_->setValue(200);
+  configure_history_spinbox(history_spin_, 200);
   h->addWidget(history_spin_);
 
   auto_range_check_ = new QCheckBox(tr("Auto range"), bar);

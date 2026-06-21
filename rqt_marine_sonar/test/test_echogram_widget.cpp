@@ -320,13 +320,30 @@ TEST_F(EchogramWidgetTest, AddPingsBatchMixedValidity)
   SUCCEED();
 }
 
-TEST_F(EchogramWidgetTest, BadPingSpacingNoCrash)
+TEST_F(EchogramWidgetTest, HistoryDefaultsTo500)
 {
+  EchogramWidget w(nullptr);
+  EXPECT_EQ(w.history(), 500);
+}
+
+TEST_F(EchogramWidgetTest, HistoryRoundTrip)
+{
+  EchogramWidget w(nullptr);
+  w.setHistory(500);
+  EXPECT_EQ(w.history(), 500);
+  w.setHistory(1234);
+  EXPECT_EQ(w.history(), 1234);
+}
+
+TEST_F(EchogramWidgetTest, HistoryClampLow)
+{
+  // A corrupted persisted value (e.g. 0) must clamp to a renderable >= 1 rather
+  // than yield an empty buffer; replaces the old BadPingSpacingNoCrash guard.
   EchogramWidget w(nullptr);
   w.resize(320, 240);
   w.addPing(makePing({1.0f, 2.0f, 3.0f}));
-  w.setPingSpacing(0.0f);  // corrupted persisted value path; clamped in uploadTexture
-  EXPECT_FLOAT_EQ(w.pingSpacing(), 0.0f);
+  w.setHistory(0);
+  EXPECT_GE(w.history(), 1);
   SUCCEED();
 }
 
@@ -338,13 +355,11 @@ TEST_F(EchogramWidgetTest, SettersRoundTrip)
   w.setWhitePoint(0.8f);
   w.setContrast(0.7f);
   w.setColorMapIndex(2);
-  w.setPingSpacing(2.5f);
   EXPECT_FALSE(w.autoRange());
   EXPECT_FLOAT_EQ(w.blackPoint(), 0.2f);
   EXPECT_FLOAT_EQ(w.whitePoint(), 0.8f);
   EXPECT_FLOAT_EQ(w.contrast(), 0.7f);
   EXPECT_EQ(w.colorMapIndex(), 2);
-  EXPECT_FLOAT_EQ(w.pingSpacing(), 2.5f);
 }
 
 TEST_F(EchogramWidgetTest, BlackWhitePointsClampToUnit)

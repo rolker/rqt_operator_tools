@@ -68,7 +68,7 @@ public:
   float whitePoint() const;
   float contrast() const;
   int colorMapIndex() const;
-  float pingSpacing() const;
+  int history() const;
 
   /// The on-screen echogram as a QImage, grabbed from the GL framebuffer. Exposed
   /// so tests can assert on actual rendering. Non-const: it triggers a render.
@@ -94,8 +94,9 @@ public slots:
   void setContrast(float contrast);
   void setColorMapIndex(int index);
 
-  /// Set the horizontal spacing between pings for display (>= 1 ping per column).
-  void setPingSpacing(float spacing);
+  /// Number of recent pings to retain and auto-fit across the canvas width (the
+  /// data-retention / "how much you see" knob). Clamped to >= 1.
+  void setHistory(int count);
 
 protected:
   void initializeGL() override;
@@ -146,7 +147,7 @@ private:
   void uploadTexture();
 
   std::map<int64_t, DecodedPing> pings_;
-  int maximum_ping_count_ = 2048;
+  int history_ = 500;
 
   // Intensity scaling. Auto-range (default) spans the live data extent; when off
   // the black/white points (normalized [0, 1]) trim the frozen extent. contrast
@@ -159,7 +160,6 @@ private:
   float contrast_ = 1.0f;
   rqt_sonar_waterfall::ColorMapType color_map_type_ =
     rqt_sonar_waterfall::ColorMapType::Grayscale;
-  float ping_spacing_ = 1.0f;
 
   // Shared depth geometry across the buffer (meters), from recomputeGeometry().
   float min_depth_ = 0.0f;
