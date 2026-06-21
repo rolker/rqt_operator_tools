@@ -89,3 +89,28 @@ the UI packages would configure — not a code issue.
   headers.
 - Also fixed one stale doc comment ("ping-spacing controls" → "history
   controls") in `marine_echogram_plugin.hpp`.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-21 03:49 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-79 at `a18421d`
+**Mode**: pre-push
+**Depth**: Standard (reason: medium C++ change across 9 files, cross-package header sharing, GL/threading-adjacent)
+**Must-fix**: 0 | **Suggestions**: 3
+**Round**: 1 | **Ship**: recommended — no must-fix; static analysis + both adversarial lenses clean
+
+### Findings
+- [ ] (suggestion) Texture/staging-vector width now scales with `history_` (≤5000 cols) independent of canvas size; guarded by try/catch + glGetError, no crash — `rqt_marine_sonar/src/echogram_widget.cpp:321`
+- [ ] (suggestion) `setHistory()` clamps only lower bound; 5000 ceiling lives in the spinbox, widget relies on UI gate (self-corrects via restoreSettings setValue) — `rqt_marine_sonar/src/echogram_widget.cpp:575`
+- [ ] (suggestion) Partial-buffer auto-fit (right-align + stretch until buffer fills) differs from waterfall fill feel; documented in-comment — `rqt_marine_sonar/src/echogram_widget.cpp:315`
+
+Notes: ament_cpplint + ament_uncrustify clean on all 7 changed C++ files. Plan
+adherence verified — both review-plan follow-ups folded in (max_dim GL clamp
+preserved; restoreSettings UI-sync to `historySpinBox`). No leftover
+`ping_spacing`/`maximum_ping_count` code refs (comments only). Settings
+migration backward-compatible; configure-before-connect ordering correct in both
+plugins; `setHistory`/`ingestPing` both GUI-thread (no executor-thread race);
+header-only `inline` factory ODR-safe. gh offline — issue body unverifiable.
