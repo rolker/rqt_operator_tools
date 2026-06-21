@@ -177,6 +177,7 @@ private:
   // GPU state.
   rqt_sonar_waterfall::GpuColorMap gpu_;
   unsigned int intensity_tex_ = 0;  ///< R32F, width x height = pings x depth-rows
+  int tex_rows_ = 0;                ///< intensity-texture height (depth bins) for the ring
   bool gl_ready_ = false;           ///< initializeGL completed
   bool has_data_ = false;           ///< texture holds at least one column
   bool data_dirty_ = true;          ///< buffer/geometry/zoom changed -> re-upload

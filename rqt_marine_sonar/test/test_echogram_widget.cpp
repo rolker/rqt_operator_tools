@@ -195,6 +195,55 @@ TEST_F(EchogramWidgetTest, Uint16PingRendersColormapped)
   EXPECT_GT(countAmber(img), 0) << "no colormapped sample pixels rendered";
 }
 
+TEST_F(EchogramWidgetTest, RendersDepthGradientNotCollapsedRow)
+{
+  // Regression for #63: the merged ring-texture GpuColorMap always applies the
+  // ring V-mapping. Without an identity set_ring() matching the texture height,
+  // the defaults (capacity=1) collapse every screen row to texture-V 0.5 -- one
+  // depth bin smeared down the whole column, destroying the depth axis. A water
+  // column whose intensity ramps with depth must therefore render a vertical
+  // brightness gradient; a collapsed render makes every row identical.
+  EchogramWidget w(nullptr);
+  w.resize(320, 240);
+  w.setColorMapIndex(1);  // Bronze
+
+  std::vector<float> ramp;                 // shallow -> deep intensity ramp
+  for (int i = 0; i < 64; ++i) {
+    ramp.push_back(static_cast<float>(i));
+  }
+  for (int p = 0; p < 400; ++p) {          // fill the canvas width with the ramp
+    auto msg = makePing(ramp);
+    msg.header.stamp.nanosec = 1000u * static_cast<uint32_t>(p + 1);
+    w.addPing(msg);
+  }
+
+  const QImage img = renderAndGrab(w);
+  if (img.isNull() || img.width() == 0) {
+    GTEST_SKIP() << "offscreen GL context unavailable";
+  }
+  // Mean red over a horizontal band, sampled on the RIGHT half to avoid the
+  // left-side depth-axis labels.
+  auto bandRed = [&img](int y0, int y1) {
+    std::int64_t sum = 0;
+    std::int64_t n = 0;
+    for (int y = y0; y < y1; ++y) {
+      for (int x = img.width() / 2; x < img.width(); ++x) {
+        sum += qRed(img.pixel(x, y));
+        ++n;
+      }
+    }
+    return n ? static_cast<double>(sum) / static_cast<double>(n) : 0.0;
+  };
+  const int h = img.height();
+  const double top = bandRed(0, h / 8);
+  const double bottom = bandRed(h - h / 8, h);
+  // A real depth gradient: the shallow and deep bands differ substantially. The
+  // collapse bug renders one depth bin everywhere, so the two are ~equal.
+  EXPECT_GT(std::abs(bottom - top), 15.0)
+    << "no depth gradient (top red=" << top << " bottom red=" << bottom
+    << "); identity ring not set -> collapsed depth axis (#63)";
+}
+
 TEST_F(EchogramWidgetTest, NanGeometryPingDoesNotPoisonRender)
 {
   // A ping whose geometry computes to NaN (NaN sound_speed) must be rejected at

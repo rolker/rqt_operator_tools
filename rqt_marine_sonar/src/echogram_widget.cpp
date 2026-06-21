@@ -310,6 +310,7 @@ void EchogramWidget::uploadTexture()
   // viewport) lines up with the rendered rows rather than being off by up to a
   // bin from the ceil().
   vis_max_depth_ = vis_min_depth_ + depth_rows * bin_size_;
+  tex_rows_ = depth_rows;   // identity-ring height for the GPU draw (issue #63)
 
   // Fixed-width display columns: ping_spacing_ sets pixels-per-ping, so the
   // column count is the canvas capacity (NOT the buffer size). The newest pings
@@ -411,6 +412,14 @@ void EchogramWidget::paintGL()
     if (has_data_ && window_set) {
       gpu_.set_range(window.first, window.second);
       gpu_.set_contrast(contrast_);  // gain stays at the GpuColorMap default (1)
+      // The merged ring-texture GpuColorMap (waterfall #59) ALWAYS applies the
+      // ring V-mapping. The echogram's texture is a plain depth_rows-tall image
+      // (V = depth, not a scrolling ring), so set an identity ring matching the
+      // texture height. Without this the defaults (capacity=1) collapse every
+      // screen row to texture-V 0.5 -- one depth bin smeared down the whole
+      // column, destroying the depth axis (issue #63).
+      gpu_.set_ring(
+        0.0f, static_cast<float>(tex_rows_), static_cast<float>(tex_rows_));
       gpu_.draw(intensity_tex_, /*flip_v=*/true);
     }
   }
