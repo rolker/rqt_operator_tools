@@ -36,6 +36,7 @@
 
 namespace
 {
+using rqt_marine_control::bridge_nodes_from_services;
 using rqt_marine_control::control_set_topics;
 using rqt_marine_control::derive_change_topic;
 }  // namespace
@@ -61,6 +62,29 @@ TEST(TopicFilter, IgnoresNonControlTopics)
     {"/img", {"marine_acoustic_msgs/msg/RawSonarImage"}},
   };
   EXPECT_TRUE(control_set_topics(topics).empty());
+}
+
+TEST(TopicFilter, BridgeNodesFromServicesStripsSuffixSortedUnique)
+{
+  std::map<std::string, std::vector<std::string>> services = {
+    {"/operator/udp_bridge/remote_subscribe", {"udp_bridge_interfaces/srv/Subscribe"}},
+    {"/operator/udp_bridge/remote_advertise", {"udp_bridge_interfaces/srv/Subscribe"}},
+    {"/operator/udp_bridge/list_remotes", {"udp_bridge_interfaces/srv/ListRemotes"}},
+    {"/aaa/udp_bridge/remote_subscribe", {"udp_bridge_interfaces/srv/Subscribe"}},
+    {"/some/other_service", {"std_srvs/srv/Trigger"}},
+  };
+  const auto out = bridge_nodes_from_services(services);
+  ASSERT_EQ(out.size(), 2u);
+  EXPECT_EQ(out[0], "/aaa/udp_bridge");        // sorted
+  EXPECT_EQ(out[1], "/operator/udp_bridge");   // only the remote_subscribe service marks a bridge
+}
+
+TEST(TopicFilter, BridgeNodesFromServicesEmptyWhenNone)
+{
+  std::map<std::string, std::vector<std::string>> services = {
+    {"/some/other_service", {"std_srvs/srv/Trigger"}},
+  };
+  EXPECT_TRUE(bridge_nodes_from_services(services).empty());
 }
 
 TEST(TopicFilter, DeriveChangeReplacesTrailingState)

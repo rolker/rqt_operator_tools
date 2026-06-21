@@ -36,9 +36,11 @@
 #include <QMetaObject>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -71,6 +73,27 @@ void MarineControlPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   toolbar->addWidget(refresh);
   layout->addLayout(toolbar);
 
+  // Dynamic-bridge row (ADR-0003 D7-dyn): pick a local udp_bridge, see the
+  // devices discovered on its remotes, and connect/disconnect them explicitly.
+  auto * bridge_bar = new QHBoxLayout();
+  bridge_bar->addWidget(new QLabel(tr("Bridge:")));
+  bridge_combo_ = new QComboBox();
+  bridge_combo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+  bridge_bar->addWidget(bridge_combo_, 1);
+  auto * bridge_refresh = new QPushButton();
+  bridge_refresh->setIcon(QIcon::fromTheme("view-refresh"));
+  bridge_refresh->setToolTip(tr("Refresh the list of udp_bridge nodes"));
+  bridge_bar->addWidget(bridge_refresh);
+  bridge_bar->addWidget(new QLabel(tr("Device:")));
+  device_combo_ = new QComboBox();
+  device_combo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+  bridge_bar->addWidget(device_combo_, 1);
+  connect_button_ = new QPushButton(tr("Connect"));
+  connect_button_->setCheckable(true);
+  connect_button_->setToolTip(tr("Connect/disconnect the selected device over the bridge"));
+  bridge_bar->addWidget(connect_button_);
+  layout->addLayout(bridge_bar);
+
   // The dynamic control panel lives in a scroll area so a device with many
   // controls stays usable in a small dock.
   auto * scroll = new QScrollArea();
@@ -94,6 +117,18 @@ void MarineControlPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
     topic_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
     this, &MarineControlPlugin::onTopicChanged);
 
+  // Populate the bridge list before wiring its signal, so the initial populate
+  // doesn't spuriously build a client (mirrors the topic_combo_ pattern above).
+  connect(bridge_refresh, &QPushButton::clicked, this, &MarineControlPlugin::updateBridgeList);
+  connect(connect_button_, &QPushButton::clicked, this, &MarineControlPlugin::onConnectClicked);
+  updateBridgeList();
+  connect(
+    bridge_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+    this, &MarineControlPlugin::onBridgeChanged);
+  connect(
+    device_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+    this, &MarineControlPlugin::onDeviceChanged);
+
   const QList<QString> & argv = context.argv();
   if (!argv.empty()) {
     arg_topic_ = argv[0];
@@ -103,6 +138,7 @@ void MarineControlPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
 
 void MarineControlPlugin::shutdownPlugin()
 {
+  bridge_client_.reset();
   state_sub_.reset();
   change_pub_.reset();
 }
@@ -220,6 +256,110 @@ void MarineControlPlugin::publishChange(const QString & name, const QString & va
   command.name = name.toStdString();
   command.value = value.toStdString();
   change_pub_->publish(command);
+}
+
+void MarineControlPlugin::updateBridgeList()
+{
+  const QString selected = bridge_combo_->currentText();
+
+  QList<QString> bridges;
+  bridges.append("");   // the "no bridge" entry
+  if (node_) {
+    for (const auto & name : bridge_nodes_from_services(node_->get_service_names_and_types())) {
+      bridges.append(QString::fromStdString(name));
+    }
+  }
+
+  // Block signals so repopulating doesn't tear down an active client when the
+  // selection is unchanged (a plain refresh shouldn't disconnect devices).
+  const QSignalBlocker blocker(bridge_combo_);
+  bridge_combo_->clear();
+  for (const auto & bridge : bridges) {
+    bridge_combo_->addItem(bridge);
+  }
+  const int index = bridge_combo_->findText(selected);
+  bridge_combo_->setCurrentIndex(index >= 0 ? index : 0);
+}
+
+void MarineControlPlugin::onBridgeChanged(int index)
+{
+  (void)index;
+  bridge_client_.reset();
+  devices_.clear();
+  {
+    const QSignalBlocker blocker(device_combo_);
+    device_combo_->clear();
+  }
+  onDeviceChanged(-1);
+
+  const QString bridge = bridge_combo_->currentText();
+  if (bridge.isEmpty() || !node_) {
+    return;
+  }
+  bridge_client_ = std::make_unique<marine_control_bridge_client::BridgeControlClient>(
+    node_.get(), bridge.toStdString());
+  // The client's changed-callback fires on the executor thread; marshal the
+  // device-list refresh onto the GUI thread.
+  bridge_client_->setDevicesChangedCallback(
+    [this]() {QMetaObject::invokeMethod(this, "refreshDevices", Qt::QueuedConnection);});
+  refreshDevices();
+}
+
+void MarineControlPlugin::refreshDevices()
+{
+  if (!bridge_client_) {
+    return;
+  }
+  const QString selected = device_combo_->currentText();
+  devices_ = bridge_client_->availableDevices();
+  {
+    const QSignalBlocker blocker(device_combo_);
+    device_combo_->clear();
+    for (const auto & device : devices_) {
+      device_combo_->addItem(
+        QString::fromStdString(device.remote) + ": " +
+        QString::fromStdString(device.state_topic));
+    }
+    const int index = device_combo_->findText(selected);
+    device_combo_->setCurrentIndex(index >= 0 ? index : (devices_.empty() ? -1 : 0));
+  }
+  onDeviceChanged(device_combo_->currentIndex());
+}
+
+void MarineControlPlugin::onDeviceChanged(int index)
+{
+  const bool valid = bridge_client_ && index >= 0 &&
+    index < static_cast<int>(devices_.size());
+  connect_button_->setEnabled(valid);
+
+  bool connected = false;
+  if (valid) {
+    const auto & device = devices_[index];
+    connected = bridge_client_->isConnected(device.remote, device.state_topic);
+  }
+  const QSignalBlocker blocker(connect_button_);
+  connect_button_->setChecked(connected);
+  connect_button_->setText(connected ? tr("Disconnect") : tr("Connect"));
+}
+
+void MarineControlPlugin::onConnectClicked()
+{
+  const int index = device_combo_->currentIndex();
+  if (!bridge_client_ || index < 0 || index >= static_cast<int>(devices_.size())) {
+    return;
+  }
+  const auto device = devices_[index];
+  if (connect_button_->isChecked()) {
+    bridge_client_->connect(device);
+    connect_button_->setText(tr("Disconnect"));
+    // Render the device; its state topic appears locally once the bridge wires
+    // it (subscribing before it exists is fine — it waits for the publisher).
+    selectTopic(QString::fromStdString(device.state_topic));
+  } else {
+    bridge_client_->disconnect(device);
+    connect_button_->setText(tr("Connect"));
+    selectTopic("");   // clear the panel
+  }
 }
 
 }  // namespace rqt_marine_control
