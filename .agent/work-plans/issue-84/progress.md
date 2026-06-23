@@ -61,3 +61,68 @@ addressed by the plan. `gh` was unauthenticated, so the issue body was taken fro
 Lifecycle: **Plan Review** → **implement** → **review-code**. Verdict is
 approve-with-suggestions: address finding 1 (environment panel scope) and amend the
 plan inline before/at the start of implementation; remaining items are suggestions.
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-23 00:00 +00:00
+**By**: Claude Opus
+
+**Branch**: feature/issue-84 (implementation tip `2a5bd73`)
+**Build**: `./ui_ws/build.sh rqt_boat_state` → finished, 1 package, no errors.
+**Test**: `./ui_ws/test.sh rqt_boat_state` → **68 tests, 0 errors, 0 failures, 0 skipped**.
+
+### What landed
+New `rqt_boat_state` ament_python rqt plugin package, built in six incremental
+commits (skeleton → Qt-free core+tests → gauges → UI integration):
+
+- **Package skeleton** — `package.xml` (format 3, `BSD-3-Clause`, exec_depends per
+  plan, `ament_copyright`+`python3-pytest` test_depends), `setup.py`/`setup.cfg`/
+  `plugin.xml` ("Robot Tools" group)/`resource/` marker, all mirroring
+  `rqt_annunciator`. Zero SPDX/per-file headers (matches repo convention, ADR-0008 §5).
+- **Qt-free data model** (`config_model.py`) — locally duplicated 4-value
+  `IndicatorLevel`; `AuthoritySource` enum + `resolve_authority(fcu_mode,
+  piloting_mode)` table (DISARMED/RC/HOLD/AUTONOMY/JOYSTICK/STANDBY with label +
+  color token); `BoatStateConfig` dataclass (odom default `/bizzy/odom`, ENU
+  default, ArduRover channel map `{throttle:[0,1], steering:[2,3]}`, gauge ranges,
+  per-source staleness) with full YAML round-trip; PWM µs→−1..1 clamp,
+  ENU-yaw→compass `(90−yaw)mod360`, quaternion→yaw, knots, and
+  staleness/RC-freshness/NaN helpers.
+- **`trend_buffer.py`** — Qt-free ring buffer, default **720 slots = 2 h at
+  1/10 s**, per-slot min/max, NaN-rejecting.
+- **`trend_plot.py`** + **4 gauges** (`heading`, `speed`, `center_zero` shared by
+  steering+throttle, `battery`) — all QPainter, no new deps.
+- **`authority_banner.py`**, **`environment_panel.py`** (SoundSpeed→"—" on NaN +
+  Temperature, both trended/stale-gated), **`boat_state_widget.py`** (all 10
+  subscriptions, queued-signal hand-off, 1 Hz stale sweep), **`boat_state_plugin.py`**
+  (YAML save/restore + `trigger_configuration`), **`config_dialog.py`** (all fields
+  incl. environment topics, ENU/NED + ArduRover channel-map inline help).
+- **Tests** (`test/`, 3 files, 68 tests) — authority table, channel-map clamp,
+  conversions, config round-trip, ring-buffer wraparound/min-max/2 h sizing,
+  staleness gating, RC-in freshness, SoundSpeed-NaN. All pure-Python (no Qt/display).
+
+### Verification
+- Build + tests pass (above). No uncrustify/lint failures surfaced.
+- Every Qt widget smoke-imported and `.grab()`-painted headless (offscreen).
+- Message field paths confirmed against real defs: `mavros_msgs/State.mode/.armed`,
+  `RCOut.channels`/`RCIn.channels`, `sensor_msgs/BatteryState.voltage/.percentage/
+  .current`, `Temperature.temperature`, and (from source) `marine_interfaces/
+  Helm.throttle/.rudder` + `SoundSpeed.sound_speed`. `geometry_msgs/TwistStamped`
+  confirmed for cmd_vel.
+
+### Deviations from plan (all noted in plan.md Files table)
+- **+`trend_buffer.py`** — factored the ring buffer into a Qt-free module so
+  `test_trend_plot.py` runs without importing Qt (honors the "tests Qt-free"
+  hard requirement); `trend_plot.py` is the thin QPainter shell over it.
+- **+`boat_state_standalone.py`** — console entry point, mirroring
+  `rqt_annunciator`'s `annunciator_standalone` (referenced from `setup.py`
+  `console_scripts`).
+- **Gauge file count** corrected to 5 in the plan (step 4's review note about the
+  4-vs-5 mismatch): the 5th is the package `__init__.py` holding the shared palette.
+- `marine_interfaces` is not built in this worktree (its owning `core_ws` is
+  unbuilt here), so the live subscription path could not be exercised end-to-end;
+  field names were verified directly against the `.msg` sources instead. The
+  widget degrades gracefully (logs and creates no subs) if the message import
+  fails. Qt-free tests are unaffected and all pass.
+
+### Next step
+Lifecycle: **implement** → **review-code**.

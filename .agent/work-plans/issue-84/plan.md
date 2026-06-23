@@ -112,14 +112,16 @@ carries FCU mode; `std_msgs/String` on `piloting_mode` carries helm-manager mode
 | `rqt_boat_state/resource/rqt_boat_state` | New — ament marker |
 | `rqt_boat_state/rqt_boat_state/__init__.py` | New |
 | `rqt_boat_state/rqt_boat_state/config_model.py` | New |
-| `rqt_boat_state/rqt_boat_state/trend_plot.py` | New |
-| `rqt_boat_state/rqt_boat_state/gauges/` (4 files: `__init__`, `heading_gauge`, `speed_gauge`, `center_zero_gauge`, `battery_gauge`) | New |
+| `rqt_boat_state/rqt_boat_state/trend_buffer.py` | New — Qt-free ring buffer (added: keeps test_trend_plot Qt-free) |
+| `rqt_boat_state/rqt_boat_state/trend_plot.py` | New — QPainter sparkline over trend_buffer |
+| `rqt_boat_state/rqt_boat_state/gauges/` (5 files: `__init__`, `heading_gauge`, `speed_gauge`, `center_zero_gauge`, `battery_gauge`) | New |
 | `rqt_boat_state/rqt_boat_state/environment_panel.py` | New — sound-speed + water-temp readouts + trends |
 | `rqt_boat_state/rqt_boat_state/authority_banner.py` | New |
 | `rqt_boat_state/rqt_boat_state/boat_state_widget.py` | New |
 | `rqt_boat_state/rqt_boat_state/boat_state_plugin.py` | New |
+| `rqt_boat_state/rqt_boat_state/boat_state_standalone.py` | New — console entry point (added: mirrors rqt_annunciator) |
 | `rqt_boat_state/rqt_boat_state/config_dialog.py` | New |
-| `rqt_boat_state/test/` (3 files) | New — Qt-free unit tests |
+| `rqt_boat_state/test/` (3 files) | New — Qt-free unit tests (68 tests) |
 
 `package.xml` `<exec_depend>` list: `python_qt_binding`, `rclpy`, `rqt_gui`,
 `rqt_gui_py`, `nav_msgs`, `geometry_msgs`, `mavros_msgs`, `sensor_msgs`,
