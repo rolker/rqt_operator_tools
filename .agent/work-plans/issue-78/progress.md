@@ -120,3 +120,22 @@ field-condition repro test.
 ### Findings
 - [ ] (suggestion, optional) `shutdownPlugin()` doesn't cancel pending `QTimer::singleShot(0)` populates — safe as written (Qt receiver-context overload auto-cancels on destroy; late populate only repopulates signal-blocked combos with node_ alive). Defensive hardening only — `rqt_marine_control/src/marine_control_plugin.cpp:152`
 - [ ] (governance/watch) Carry the `QTimer::singleShot(0)` vs QThread/lazy rationale into the PR description (ADR-0001 capture-decisions) — PR body
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-23 15:49 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-78 at `26efde5`
+**Mode**: pre-push
+**Depth**: Standard (reason: project work-plans/issue-*/plan.md override-trigger + GUI-thread lifecycle change; no security/cross-layer/ADR surface)
+**Must-fix**: 0 | **Suggestions**: 3
+**Round**: 2 | **Ship**: recommended — no must-fix; Round-1 teardown finding resolved in `26efde5`, ament_cpplint clean, both adversarial lenses clear, full plan adherence
+<!-- Offline: git fetch origin/jazzy failed (host-key); reviewed against local origin/jazzy ref. -->
+
+### Findings
+- [ ] (suggestion, optional) `setCurrentIndex(findText(""))` now runs on an empty combo (initial populate deferred) so it selects index -1, not the "" entry it reads as — harmless but misleading; drop or fold into the deferred populate — `rqt_marine_control/src/marine_control_plugin.cpp:127`
+- [ ] (suggestion) `onConnectClicked` comment overclaims: `BridgeControlClient::connect()` sets `connected_` synchronously before the fire-and-forget service call, so `isConnected()` is operator-intent (= button checked state), not bridge-confirmed — a failed bridge connect still shows "Connected". Reword the comment, or drive the label from `established_` if confirmed-state is wanted (larger, out of scope) — `rqt_marine_control/src/marine_control_plugin.cpp:398`
+- [ ] (suggestion, defensive) Deferred slots deref raw `topic_combo_`/`bridge_combo_` guarded only by `shutting_down_`, not a `QPointer` like `control_widget_`; safe in the documented rqt teardown order, latent only — `rqt_marine_control/src/marine_control_plugin.cpp:185`
+- [ ] (governance/watch) Carry the `QTimer::singleShot(0)` vs QThread/lazy rationale into the PR description (ADR-0001 capture-decisions) — PR body
