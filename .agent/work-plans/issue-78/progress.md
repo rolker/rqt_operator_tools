@@ -86,3 +86,21 @@ field-condition repro test.
 
 ### Open questions
 - [ ] No open questions — plan is review-plan-ready.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-06-23 11:21 +00:00
+**By**: Claude Code Agent (Claude Opus)
+<!-- Independent: fresh-context sub-agent, model Claude Opus (author was Claude Sonnet). The
+     skill's name-based self-review heuristic matches only because every workspace agent shares
+     the name "Claude Code Agent"; model + dispatch differ, so no self-review annotation. -->
+
+**Plan**: `.agent/work-plans/issue-78/plan.md` at `4b7536f`
+**PR**: PR-less (`/review-plan` via worktree)
+**Verdict**: approve-with-suggestions
+
+### Findings
+- [ ] (suggestion) Deferring `updateTopicList` via `QTimer::singleShot(0)` moves its populate past the `onTopicChanged` connect (cpp:114 before :116 today); unlike `updateBridgeList` it has no `QSignalBlocker` (cpp:275), so the deferred `clear()`/`addItem` emits `onTopicChanged` → transient sub teardown/rebuild. Guard with a `QSignalBlocker` or document as acceptable — `plan.md:22-26`
+- [ ] (suggestion) Connect is fire-and-forget (`async_send_request`); setting `status_label_` to "Connected" on click reflects *requested* not *confirmed* — a failed connect won't update it, so it doesn't surface failure. Use "Connecting…" or drive from `bridge_client_->isConnected()` — `plan.md:27-33`
+- [ ] (suggestion) `status_label_` updated only in `onConnectClicked`; button state is also synced in `onDeviceChanged` (cpp:329-343). Update the label there too or it goes stale on device/bridge switch — `plan.md:27-33`
+- [ ] (suggestion) `QTimer::singleShot` needs `#include <QTimer>`, not currently included and not in the change list — `plan.md:48-54`
