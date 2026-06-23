@@ -47,6 +47,7 @@
 #include "marine_control_widgets/control_set_widget.hpp"
 
 class QComboBox;
+class QLabel;
 class QPushButton;
 class QWidget;
 
@@ -98,12 +99,16 @@ private:
   QComboBox * bridge_combo_ = nullptr;
   QComboBox * device_combo_ = nullptr;
   QPushButton * connect_button_ = nullptr;
+  QLabel * status_label_ = nullptr;
   std::unique_ptr<marine_control_bridge_client::BridgeControlClient> bridge_client_;
   std::vector<marine_control_bridge_client::ControlDevice> devices_;  // GUI thread
   /// QPointer auto-nulls on teardown so a queued applyLatest() can't touch a
   /// freed widget on the GUI thread.
   QPointer<marine_control_widgets::ControlSetWidget> control_widget_;
   QString arg_topic_;
+  /// Set in shutdownPlugin() so a deferred populate queued in initPlugin
+  /// (QTimer::singleShot) becomes a no-op if it fires during teardown.
+  bool shutting_down_ = false;
 
   rclcpp::Subscription<marine_control_interfaces::msg::ControlSet>::SharedPtr state_sub_;
   rclcpp::Publisher<marine_control_interfaces::msg::ControlValue>::SharedPtr change_pub_;
