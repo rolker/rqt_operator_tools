@@ -124,7 +124,6 @@ void MarineControlPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   // them on the GUI thread once the event loop starts, so initPlugin returns
   // immediately and the GUI comes up responsive (showing "Disconnected").
   QTimer::singleShot(0, this, &MarineControlPlugin::updateTopicList);
-  topic_combo_->setCurrentIndex(topic_combo_->findText(""));
   connect(
     topic_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
     this, &MarineControlPlugin::onTopicChanged);
@@ -395,8 +394,11 @@ void MarineControlPlugin::onConnectClicked()
     bridge_client_->disconnect(device);
     selectTopic("");   // clear the panel
   }
-  // Re-sync the button text and status label from the client's actual state
-  // rather than assuming the request succeeded.
+  // Re-sync the button text and status label through the single source of
+  // truth. Note isConnected() reflects operator intent (the connection was
+  // requested) — connect()/disconnect() set the client's connected_ set
+  // synchronously, ahead of the fire-and-forget bridge service call — not
+  // bridge-confirmed delivery; confirmed state would require established_.
   onDeviceChanged(index);
 }
 
