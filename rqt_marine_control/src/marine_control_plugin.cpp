@@ -37,6 +37,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -92,6 +93,11 @@ void MarineControlPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   connect_button_->setCheckable(true);
   connect_button_->setToolTip(tr("Connect/disconnect the selected device over the bridge"));
   bridge_bar->addWidget(connect_button_);
+  // Connection-status indicator: starts "Disconnected" and is driven from the
+  // client's actual connection state in onDeviceChanged (#78 acceptance: surface
+  // state as an indicator, never a frozen GUI).
+  status_label_ = new QLabel(tr("Disconnected"));
+  bridge_bar->addWidget(status_label_);
   layout->addLayout(bridge_bar);
 
   // The dynamic control panel lives in a scroll area so a device with many
@@ -111,17 +117,24 @@ void MarineControlPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
     control_widget_.data(), &marine_control_widgets::ControlSetWidget::controlChanged,
     this, &MarineControlPlugin::publishChange);
 
-  updateTopicList();
+  // Defer the initial DDS-graph queries off the plugin-load path. Both
+  // updateTopicList() and updateBridgeList() call get_*_names_and_types(), which
+  // can stall under a degraded/mid-discovery link; running them synchronously in
+  // initPlugin froze the whole rqt instance (#78). QTimer::singleShot(0) runs
+  // them on the GUI thread once the event loop starts, so initPlugin returns
+  // immediately and the GUI comes up responsive (showing "Disconnected").
+  QTimer::singleShot(0, this, &MarineControlPlugin::updateTopicList);
   topic_combo_->setCurrentIndex(topic_combo_->findText(""));
   connect(
     topic_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
     this, &MarineControlPlugin::onTopicChanged);
 
-  // Populate the bridge list before wiring its signal, so the initial populate
-  // doesn't spuriously build a client (mirrors the topic_combo_ pattern above).
+  // The bridge-list populate is likewise deferred. updateBridgeList() already
+  // blocks bridge_combo_'s signals while repopulating, so it won't spuriously
+  // build a client when it runs after onBridgeChanged is connected below.
   connect(bridge_refresh, &QPushButton::clicked, this, &MarineControlPlugin::updateBridgeList);
   connect(connect_button_, &QPushButton::clicked, this, &MarineControlPlugin::onConnectClicked);
-  updateBridgeList();
+  QTimer::singleShot(0, this, &MarineControlPlugin::updateBridgeList);
   connect(
     bridge_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
     this, &MarineControlPlugin::onBridgeChanged);
@@ -176,6 +189,13 @@ void MarineControlPlugin::updateTopicList()
     }
   }
 
+  // Block signals while repopulating so the clear()/addItem churn doesn't emit
+  // currentIndexChanged -> onTopicChanged, which would tear down and rebuild the
+  // active subscription on every refresh. selectTopic() preserves the prior
+  // selection, so an unchanged topic keeps its subscription. (Mirrors the
+  // QSignalBlocker pattern in updateBridgeList(); load-bearing now that the
+  // initial populate is deferred to run after onTopicChanged is connected, #78.)
+  const QSignalBlocker blocker(topic_combo_);
   topic_combo_->clear();
   for (const auto & topic : topics) {
     topic_combo_->addItem(topic);
@@ -340,6 +360,12 @@ void MarineControlPlugin::onDeviceChanged(int index)
   const QSignalBlocker blocker(connect_button_);
   connect_button_->setChecked(connected);
   connect_button_->setText(connected ? tr("Disconnect") : tr("Connect"));
+  // Single source of truth for the status indicator: driven from the client's
+  // actual connection state, and refreshed here on every device/bridge switch
+  // and after connect/disconnect, so it never goes stale (#78).
+  if (status_label_) {
+    status_label_->setText(connected ? tr("Connected") : tr("Disconnected"));
+  }
 }
 
 void MarineControlPlugin::onConnectClicked()
@@ -351,15 +377,16 @@ void MarineControlPlugin::onConnectClicked()
   const auto device = devices_[index];
   if (connect_button_->isChecked()) {
     bridge_client_->connect(device);
-    connect_button_->setText(tr("Disconnect"));
     // Render the device; its state topic appears locally once the bridge wires
     // it (subscribing before it exists is fine — it waits for the publisher).
     selectTopic(QString::fromStdString(device.state_topic));
   } else {
     bridge_client_->disconnect(device);
-    connect_button_->setText(tr("Connect"));
     selectTopic("");   // clear the panel
   }
+  // Re-sync the button text and status label from the client's actual state
+  // rather than assuming the request succeeded.
+  onDeviceChanged(index);
 }
 
 }  // namespace rqt_marine_control

@@ -24,20 +24,35 @@ to those two call sites.
    `QTimer::singleShot(0, this, &MarineControlPlugin::updateTopicList)` and
    `QTimer::singleShot(0, this, &MarineControlPlugin::updateBridgeList)`.
    `initPlugin` then returns immediately; the lists populate once the Qt event
-   loop starts (after rqt finishes loading all plugins).
+   loop starts (after rqt finishes loading all plugins). Requires
+   `#include <QTimer>` (review-plan suggestion #4).
+
+   **`updateTopicList()` must block `topic_combo_`'s signals while repopulating**
+   (review-plan suggestion #1): once the populate is deferred it runs *after*
+   `onTopicChanged` is connected, so the `clear()`/`addItem` churn would emit
+   `currentIndexChanged` → `onTopicChanged` and tear down/rebuild the active
+   subscription. A `const QSignalBlocker blocker(topic_combo_)` around the
+   repopulate mirrors the existing `updateBridgeList()` pattern and also removes
+   the same latent transient on the refresh button.
 
 2. **Add connection-status label** — add a `QLabel * status_label_ = nullptr`
-   to the bridge toolbar row showing "Disconnected" at startup. Set it to
-   "Connected" on `onConnectClicked` (connect path) and back to "Disconnected"
-   on disconnect. Satisfies the acceptance criterion: "surface failure as a
-   status indicator, never a frozen GUI."
+   to the bridge toolbar row showing "Disconnected" at startup. **Drive its text
+   from `onDeviceChanged`** off the client's actual `isConnected()` state — not a
+   hardcoded "Connected" in `onConnectClicked` (review-plan suggestions #2/#3):
+   `onConnectClicked` issues the (fire-and-forget) connect/disconnect and then
+   calls `onDeviceChanged(index)`, which becomes the single source of truth for
+   both the connect-button text and the status label. Because `onDeviceChanged`
+   also runs on every device/bridge switch, the label never goes stale. Satisfies
+   the acceptance criterion: "surface failure as a status indicator, never a
+   frozen GUI."
 
 3. **Verify `restoreSettings` ordering** — `restoreSettings` fires after
    `initPlugin` and before the deferred timer. `selectTopic()` already handles
    this: if the topic is not yet in the combo it is added (lines 188-193 in
-   `marine_control_plugin.cpp`). When `updateTopicList()` later fires it
-   preserves `topic_combo_->currentText()` (line 168), so the restored topic
-   survives the populate. No change needed; confirm in code review.
+   `marine_control_plugin.cpp`), firing `onTopicChanged` → establishing the
+   subscription. When the deferred `updateTopicList()` later fires it preserves
+   `topic_combo_->currentText()` and (now signal-blocked) does not tear that
+   subscription down. No additional change needed beyond the blocker in §1.
 
 4. **Manual verification** — no automated test exists for GUI-thread blocking in
    an rqt plugin. PR description will document the repro procedure: launch rqt
@@ -49,8 +64,8 @@ to those two call sites.
 
 | File | Change |
 |------|--------|
-| `rqt_marine_control/src/marine_control_plugin.cpp` | Replace two direct calls in `initPlugin` with `QTimer::singleShot(0, ...)` deferred calls; update `onConnectClicked` and `onBridgeChanged` to set `status_label_` text |
-| `rqt_marine_control/include/rqt_marine_control/marine_control_plugin.hpp` | Add `QLabel * status_label_ = nullptr;` member declaration |
+| `rqt_marine_control/src/marine_control_plugin.cpp` | Add `#include <QTimer>`; defer the two `initPlugin` populate calls via `QTimer::singleShot(0, ...)`; wrap `updateTopicList()`'s repopulate in a `QSignalBlocker`; add the `status_label_` widget to the bridge bar; drive its text (and the connect-button text) from `onDeviceChanged`; have `onConnectClicked` re-sync via `onDeviceChanged` |
+| `rqt_marine_control/include/rqt_marine_control/marine_control_plugin.hpp` | Forward-declare `class QLabel;`; add `QLabel * status_label_ = nullptr;` member declaration |
 
 ## Principles Self-Check
 
