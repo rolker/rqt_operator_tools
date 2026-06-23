@@ -104,3 +104,19 @@ field-condition repro test.
 - [ ] (suggestion) Connect is fire-and-forget (`async_send_request`); setting `status_label_` to "Connected" on click reflects *requested* not *confirmed* — a failed connect won't update it, so it doesn't surface failure. Use "Connecting…" or drive from `bridge_client_->isConnected()` — `plan.md:27-33`
 - [ ] (suggestion) `status_label_` updated only in `onConnectClicked`; button state is also synced in `onDeviceChanged` (cpp:329-343). Update the label there too or it goes stale on device/bridge switch — `plan.md:27-33`
 - [ ] (suggestion) `QTimer::singleShot` needs `#include <QTimer>`, not currently included and not in the change list — `plan.md:48-54`
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-23 14:09 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-78 at `9378b96`
+**Mode**: pre-push
+**Depth**: Standard (reason: project work-plans/issue-*/plan.md override-trigger + GUI-thread lifecycle change; line count inflated by committed planning docs, no security/cross-layer/ADR surface)
+**Must-fix**: 0 | **Suggestions**: 1
+**Round**: 1 | **Ship**: recommended — no must-fix; ament_cpplint clean, both adversarial lenses clear, full plan adherence
+
+### Findings
+- [ ] (suggestion, optional) `shutdownPlugin()` doesn't cancel pending `QTimer::singleShot(0)` populates — safe as written (Qt receiver-context overload auto-cancels on destroy; late populate only repopulates signal-blocked combos with node_ alive). Defensive hardening only — `rqt_marine_control/src/marine_control_plugin.cpp:152`
+- [ ] (governance/watch) Carry the `QTimer::singleShot(0)` vs QThread/lazy rationale into the PR description (ADR-0001 capture-decisions) — PR body
