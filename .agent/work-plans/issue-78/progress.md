@@ -74,3 +74,15 @@ field-condition repro test.
 - [ ] Review `restoreSettings()` ordering after any async init refactor
 - [ ] Verify: launch rqt with `rqt_marine_control` while bridge target is unreachable — GUI comes up responsive, shows disconnected state
 - [ ] Verify: other plugins in the same rqt instance stay interactive throughout
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-06-23 12:00 -04:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-78/plan.md` at `4b7536f`
+**Branch**: feature/issue-78 at `4b7536f`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
