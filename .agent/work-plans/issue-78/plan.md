@@ -54,6 +54,13 @@ to those two call sites.
    `topic_combo_->currentText()` and (now signal-blocked) does not tear that
    subscription down. No additional change needed beyond the blocker in §1.
 
+   **Teardown guard** (pre-push review-code optional finding, operator-elected):
+   `shutdownPlugin()` sets a `shutting_down_` flag, and `updateTopicList()` /
+   `updateBridgeList()` early-return when it is set. The receiver-context
+   `QTimer::singleShot` auto-cancels on object destruction, but rqt calls
+   `shutdownPlugin()` *before* destruction; this flag closes that window so a
+   late-firing deferred populate is a no-op during teardown.
+
 4. **Manual verification** — no automated test exists for GUI-thread blocking in
    an rqt plugin. PR description will document the repro procedure: launch rqt
    with `rqt_marine_control` loaded while the bridge target is unreachable;

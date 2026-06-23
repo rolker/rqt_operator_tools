@@ -151,6 +151,11 @@ void MarineControlPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
 
 void MarineControlPlugin::shutdownPlugin()
 {
+  // Suppress any deferred populate still queued from initPlugin. The receiver-
+  // context QTimer::singleShot auto-cancels when `this` is destroyed, but rqt
+  // calls shutdownPlugin() before destruction — this flag closes that window so
+  // a late updateTopicList()/updateBridgeList() can't run mid-teardown (#78).
+  shutting_down_ = true;
   bridge_client_.reset();
   state_sub_.reset();
   change_pub_.reset();
@@ -179,6 +184,9 @@ void MarineControlPlugin::restoreSettings(
 
 void MarineControlPlugin::updateTopicList()
 {
+  if (shutting_down_) {
+    return;
+  }
   const QString selected = topic_combo_->currentText();
 
   QList<QString> topics;
@@ -280,6 +288,9 @@ void MarineControlPlugin::publishChange(const QString & name, const QString & va
 
 void MarineControlPlugin::updateBridgeList()
 {
+  if (shutting_down_) {
+    return;
+  }
   const QString selected = bridge_combo_->currentText();
 
   QList<QString> bridges;

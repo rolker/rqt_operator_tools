@@ -106,6 +106,9 @@ private:
   /// freed widget on the GUI thread.
   QPointer<marine_control_widgets::ControlSetWidget> control_widget_;
   QString arg_topic_;
+  /// Set in shutdownPlugin() so a deferred populate queued in initPlugin
+  /// (QTimer::singleShot) becomes a no-op if it fires during teardown.
+  bool shutting_down_ = false;
 
   rclcpp::Subscription<marine_control_interfaces::msg::ControlSet>::SharedPtr state_sub_;
   rclcpp::Publisher<marine_control_interfaces::msg::ControlValue>::SharedPtr change_pub_;
