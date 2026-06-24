@@ -285,6 +285,10 @@ class BoatStateConfig:
     rc_channel_map: dict = field(default_factory=_default_channel_map)
     pwm_center: float = 1500.0
     pwm_half_range: float = 500.0
+    # BizzyBoat's steering servo drives a PORT turn at HIGH PWM, so the raw
+    # PWM→unit (high = +stbd) reads mirrored vs. the actual turn; flip it so the
+    # steering bar matches the boat's response (verified against rc/out + odom).
+    steering_reversed: bool = True
 
     # (No velocity-frame selector: nav_msgs/Odometry twist is always in
     # child_frame_id (base_link) per REP-103, so COG is always computed by
@@ -341,6 +345,7 @@ class BoatStateConfig:
             'rc_channel_map': {k: list(v) for k, v in self.rc_channel_map.items()},
             'pwm_center': self.pwm_center,
             'pwm_half_range': self.pwm_half_range,
+            'steering_reversed': self.steering_reversed,
             'cog_min_speed': self.cog_min_speed,
             'speed_arc_max': self.speed_arc_max,
             'cmd_rotation_max': self.cmd_rotation_max,
@@ -379,6 +384,7 @@ class BoatStateConfig:
             rc_channel_map=channel_map,
             pwm_center=d.get('pwm_center', defaults.pwm_center),
             pwm_half_range=d.get('pwm_half_range', defaults.pwm_half_range),
+            steering_reversed=d.get('steering_reversed', defaults.steering_reversed),
             cog_min_speed=d.get('cog_min_speed', defaults.cog_min_speed),
             speed_arc_max=d.get('speed_arc_max', defaults.speed_arc_max),
             cmd_rotation_max=d.get('cmd_rotation_max', defaults.cmd_rotation_max),

@@ -300,6 +300,10 @@ class BoatStateWidget(QWidget):
         if throttle is not None:
             self._throttle.set_value(throttle)
         if steering is not None:
+            # This boat's steering servo drives a port turn at high PWM; flip so
+            # the bar matches the actual turn (port left / stbd right).
+            if self._config.steering_reversed:
+                steering = -steering
             self._steering.set_value(steering)
 
     def _on_rc_in(self, msg):

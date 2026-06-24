@@ -8,6 +8,7 @@ channel map (SERVO1→idx 0, SERVO3→idx 2) with inline help text.
 import json
 
 from python_qt_binding.QtWidgets import (
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -78,6 +79,9 @@ class ConfigDialog(QDialog):
         rc_form.addRow('PWM center:', self._pwm_center_spin)
         self._pwm_half_spin = self._spin(50.0, 1000.0, config.pwm_half_range, ' µs')
         rc_form.addRow('PWM half-range:', self._pwm_half_spin)
+        self._steer_rev_check = QCheckBox('Reverse steering (high PWM = port)')
+        self._steer_rev_check.setChecked(config.steering_reversed)
+        rc_form.addRow('', self._steer_rev_check)
         main_layout.addWidget(rc_group)
 
         # -- Gauge ranges -----------------------------------------------------
@@ -152,6 +156,7 @@ class ConfigDialog(QDialog):
             rc_channel_map=channel_map,
             pwm_center=self._pwm_center_spin.value(),
             pwm_half_range=self._pwm_half_spin.value(),
+            steering_reversed=self._steer_rev_check.isChecked(),
             cog_min_speed=self._cog_min_spin.value(),
             speed_arc_max=self._speed_max_spin.value(),
             cmd_rotation_max=self._rot_max_spin.value(),
