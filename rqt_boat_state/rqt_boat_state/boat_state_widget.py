@@ -172,7 +172,6 @@ class BoatStateWidget(QWidget):
 
     def _setup_subscriptions(self):
         specs = self._topic_specs()
-        now = time.monotonic()
         for name, msg_class, topic, qos in specs:
             if not topic:
                 continue
@@ -181,7 +180,10 @@ class BoatStateWidget(QWidget):
                 lambda msg, n=name: self._msg_received.emit(n, msg),
                 qos)
             self._subscriptions[name] = sub
-            self._last_update[name] = now
+            # Seed "never received" (not ``now``) so a source that never
+            # publishes reads stale immediately rather than fresh for one
+            # stale_timeout after startup / config reload.
+            self._last_update[name] = None
 
     def _teardown_subscriptions(self):
         for sub in self._subscriptions.values():
