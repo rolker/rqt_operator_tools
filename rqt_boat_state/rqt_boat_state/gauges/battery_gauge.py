@@ -33,10 +33,15 @@ class BatteryGauge(QWidget):
     _SCALE_MIN = 21.0
     _SCALE_MAX = 29.0
 
+    # EMA smoothing for the zone-split marker so it does not jump with the
+    # instantaneous voltage sag under load.
+    _MARKER_EMA_ALPHA = 0.08
+
     def __init__(self, warn_v=23.5, critical_v=22.0, parent=None):
         super().__init__(parent)
         self._warn_v = warn_v
         self._critical_v = critical_v
+        self._marker_ema = None
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         layout = QVBoxLayout(self)
@@ -110,13 +115,18 @@ class BatteryGauge(QWidget):
         if stale or not is_valid_measurement(voltage):
             self._volt_label.setText('-- V')
             self._trend.set_marker(None)
+            self._marker_ema = None
             self._set_level(IndicatorLevel.STALE)
         else:
             self._volt_label.setText(f'{voltage:.1f} V')
             self._trend.add_sample(voltage)
             # The current voltage splits the trend's zone brightness (bright
-            # below, dim above) so the live level reads at a glance.
-            self._trend.set_marker(voltage)
+            # below, dim above).  Smooth it with an EMA so the split line does
+            # not jump with the instantaneous load sag.
+            a = self._MARKER_EMA_ALPHA
+            self._marker_ema = (voltage if self._marker_ema is None
+                                else a * voltage + (1.0 - a) * self._marker_ema)
+            self._trend.set_marker(self._marker_ema)
             self._set_level(self._level_for(voltage))
 
     def _set_level(self, level):

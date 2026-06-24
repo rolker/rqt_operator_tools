@@ -294,6 +294,7 @@ class BoatStateConfig:
     # Gauge ranges / gates.
     cog_min_speed: float = 0.5     # m/s below which COG is not shown
     speed_arc_max: float = 5.0     # KNOTS at the end of the speed arc
+    cmd_rotation_max: float = 1.0  # rad/s full-scale for the commanded-rotation bar
     battery_warn_v: float = 23.5
     battery_critical_v: float = 22.0
 
@@ -342,6 +343,7 @@ class BoatStateConfig:
             'pwm_half_range': self.pwm_half_range,
             'cog_min_speed': self.cog_min_speed,
             'speed_arc_max': self.speed_arc_max,
+            'cmd_rotation_max': self.cmd_rotation_max,
             'battery_warn_v': self.battery_warn_v,
             'battery_critical_v': self.battery_critical_v,
             'stale_timeout': self.stale_timeout,
@@ -379,6 +381,7 @@ class BoatStateConfig:
             pwm_half_range=d.get('pwm_half_range', defaults.pwm_half_range),
             cog_min_speed=d.get('cog_min_speed', defaults.cog_min_speed),
             speed_arc_max=d.get('speed_arc_max', defaults.speed_arc_max),
+            cmd_rotation_max=d.get('cmd_rotation_max', defaults.cmd_rotation_max),
             battery_warn_v=d.get('battery_warn_v', defaults.battery_warn_v),
             battery_critical_v=d.get(
                 'battery_critical_v', defaults.battery_critical_v),

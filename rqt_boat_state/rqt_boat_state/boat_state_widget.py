@@ -98,7 +98,8 @@ class BoatStateWidget(QWidget):
         self._heading = HeadingGauge()
         self._speed = SpeedGauge(arc_max=self._config.speed_arc_max)
         self._steering = CenterZeroGauge(
-            label='Steering', neg_caption='port', pos_caption='stbd')
+            label='Steering', neg_caption='port', pos_caption='stbd',
+            secondary_label='cmd rot')
         self._throttle = CenterZeroGauge(
             label='Throttle', neg_caption='reverse', pos_caption='ahead',
             orientation='vertical')
@@ -259,9 +260,19 @@ class BoatStateWidget(QWidget):
             self._heading.set_cog(None)
 
     def _on_cmd_vel(self, msg):
+        grey = self._commanded_greyed()
         lin = msg.twist.linear
-        self._speed.set_commanded(math.hypot(lin.x, lin.y),
-                                  stale=self._commanded_greyed())
+        self._speed.set_commanded(math.hypot(lin.x, lin.y), stale=grey)
+        # Commanded yaw rate (autonomy) under the rudder bar.  +angular.z is
+        # CCW (port) per REP-103, so negate to put a port turn on the port
+        # (left) side; text shows magnitude with a P/S direction letter.
+        rot = msg.twist.angular.z
+        if is_valid_measurement(rot):
+            norm = max(-1.0, min(1.0, -rot / self._config.cmd_rotation_max))
+            deg = math.degrees(rot)
+            side = 'P' if rot > 0 else ('S' if rot < 0 else '')
+            self._steering.set_secondary(
+                norm, f'{abs(deg):.0f}°/s {side}'.strip(), stale=grey)
 
     def _on_helm(self, msg):
         grey = self._commanded_greyed()
@@ -348,6 +359,7 @@ class BoatStateWidget(QWidget):
             self._throttle.mark_commanded_stale()
         if self._is_source_stale('cmd_vel'):
             self._speed.mark_commanded_stale()
+            self._steering.mark_secondary_stale()
         if self._is_source_stale('battery'):
             self._battery.set_battery(stale=True)
         if self._is_source_stale('sound_speed'):

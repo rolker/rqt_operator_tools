@@ -89,9 +89,10 @@ class TrendBuffer:
         elif bin_start > self._cur['t0']:
             self._finalize()
             self._cur = self._new_bin(bin_start, v)
+        elif bin_start < self._cur['t0']:
+            return  # backward-timestamped sample: drop it (don't rewrite history)
         else:
-            # Same bin (or a slightly out-of-order sample for the open bin):
-            # fold it in.
+            # Same bin: fold it in.
             c = self._cur
             if v < c['min']:
                 c['min'] = v

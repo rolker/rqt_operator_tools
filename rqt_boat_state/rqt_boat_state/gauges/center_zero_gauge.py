@@ -33,9 +33,12 @@ class CenterZeroGauge(QWidget):
     _SIZE_HINT_H = QSize(200, 64)
     _MIN_HINT_V = QSize(72, 120)
     _SIZE_HINT_V = QSize(96, 200)
+    # Shared bar thickness so the horizontal track's height matches the
+    # vertical track's width (steering bar height == throttle bar width).
+    _BAR_THICKNESS = 24
 
     def __init__(self, label='', neg_caption='', pos_caption='',
-                 orientation='horizontal', parent=None):
+                 secondary_label='', orientation='horizontal', parent=None):
         super().__init__(parent)
         self._label = label
         self._neg_caption = neg_caption
@@ -45,6 +48,12 @@ class CenterZeroGauge(QWidget):
         self._value_stale = False  # True greys a frozen actual reading
         self._commanded = None   # −1..1 commanded, or None when absent
         self._commanded_stale = False
+        # Optional secondary commanded indicator (horizontal only) — e.g. the
+        # autonomy's commanded yaw rate under the rudder bar.
+        self._secondary_label = secondary_label
+        self._secondary = None       # −1..1 normalized, or None when absent
+        self._secondary_text = ''    # human-readable value (e.g. "12°/s")
+        self._secondary_stale = False
         if self._vertical:
             self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         else:
@@ -68,6 +77,17 @@ class CenterZeroGauge(QWidget):
     def set_commanded(self, value, stale=False):
         self._commanded = value
         self._commanded_stale = stale
+        self.update()
+
+    def set_secondary(self, value, text='', stale=False):
+        """Set the secondary commanded indicator (normalized −1..1) + label."""
+        self._secondary = value
+        self._secondary_text = text
+        self._secondary_stale = stale
+        self.update()
+
+    def mark_secondary_stale(self):
+        self._secondary_stale = True
         self.update()
 
     def mark_stale(self):
@@ -120,7 +140,7 @@ class CenterZeroGauge(QWidget):
         # Anchor the track just below the label row rather than at the widget's
         # vertical middle, so it doesn't float when sharing a tall row with the
         # vertical throttle.
-        track_h = max(10, min(26, int(h * 0.30)))
+        track_h = self._BAR_THICKNESS
         track_y = 26.0
         track = QRectF(6, track_y, w - 12, track_h)
         painter.setPen(QPen(TICK_COLOR, 1))
@@ -162,6 +182,35 @@ class CenterZeroGauge(QWidget):
             painter.drawText(QRectF(center_x, cap_y, half_w, cap_h),
                              Qt.AlignRight, self._pos_caption)
 
+        # Secondary commanded indicator (e.g. autonomy yaw-rate) in the space
+        # below the rudder bar.  Center-zero thin track + amber marker.
+        if self._secondary_label and track_y + track_h + 56 <= h:
+            font.setPixelSize(max(9, min(12, int(w * 0.055))))
+            painter.setFont(font)
+            lbl_y = track_y + track_h + 22
+            txt = self._secondary_label
+            if self._secondary_text:
+                txt = f'{self._secondary_label}: {self._secondary_text}'
+            painter.setPen(COMMAND_STALE_COLOR if self._secondary_stale
+                           else COMMAND_COLOR)
+            painter.drawText(QRectF(6, lbl_y, w - 12, 14), Qt.AlignLeft, txt)
+
+            st_y = lbl_y + 16
+            st_h = max(6, int(h * 0.08))
+            st = QRectF(6, st_y, w - 12, st_h)
+            painter.setPen(QPen(TICK_COLOR, 1))
+            painter.setBrush(FACE_COLOR)
+            painter.drawRect(st)
+            sc_x = st.center().x()
+            painter.drawLine(QRectF(sc_x, st_y, 0, st_h).topLeft(),
+                             QRectF(sc_x, st_y, 0, st_h).bottomLeft())
+            if self._secondary is not None:
+                sval = max(-1.0, min(1.0, self._secondary))
+                smx = sc_x + (st.width() / 2.0) * sval
+                painter.setPen(self._cmd_pen(self._secondary_stale))
+                painter.drawLine(QRectF(smx, st_y - 2, 0, st_h + 4).topLeft(),
+                                 QRectF(smx, st_y - 2, 0, st_h + 4).bottomLeft())
+
     def _paint_vertical(self, painter, w, h, font):
         # Track runs vertically; positive (ahead) fills UP from the center,
         # negative (reverse) fills DOWN.  Reserve distinct bands so the label,
@@ -171,7 +220,7 @@ class CenterZeroGauge(QWidget):
         cap_px = max(9, min(13, int(w * 0.11)))
         top = 36.0
         bottom = h - 32.0
-        track_w = max(8, int(w * 0.30))
+        track_w = self._BAR_THICKNESS
         track_x = (w - track_w) / 2.0
         track = QRectF(track_x, top, track_w, max(1.0, bottom - top))
         painter.setPen(QPen(TICK_COLOR, 1))

@@ -94,6 +94,8 @@ class ConfigDialog(QDialog):
         conv_form.addRow('COG min speed:', self._cog_min_spin)
         self._speed_max_spin = self._spin(0.5, 50.0, config.speed_arc_max, ' kn')
         conv_form.addRow('Speed arc max:', self._speed_max_spin)
+        self._rot_max_spin = self._spin(0.1, 5.0, config.cmd_rotation_max, ' rad/s')
+        conv_form.addRow('Cmd rotation max:', self._rot_max_spin)
         self._batt_warn_spin = self._spin(0.0, 60.0, config.battery_warn_v, ' V')
         conv_form.addRow('Battery warn:', self._batt_warn_spin)
         self._batt_crit_spin = self._spin(0.0, 60.0, config.battery_critical_v, ' V')
@@ -152,6 +154,7 @@ class ConfigDialog(QDialog):
             pwm_half_range=self._pwm_half_spin.value(),
             cog_min_speed=self._cog_min_spin.value(),
             speed_arc_max=self._speed_max_spin.value(),
+            cmd_rotation_max=self._rot_max_spin.value(),
             battery_warn_v=self._batt_warn_spin.value(),
             battery_critical_v=self._batt_crit_spin.value(),
             stale_timeout=self._stale_spin.value(),
