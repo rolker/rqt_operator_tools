@@ -201,3 +201,28 @@ Round-1 findings (2 must-fix, 5 suggestions) all verified genuinely addressed in
 
 ### Next step
 Lifecycle: **Local Review** → **address-findings** (verdict is changes-requested) → re-run **review-code** → push / open PR → **triage-reviews**. The diff is not pushed until a pre-push review returns approved.
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-24 00:46 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-84 at `474dd4d`
+**Addressed**: `## Local Review (Pre-Push)` round 2 (2026-06-24 00:16 +00:00, branch `feature/issue-84` at `3552874`) — all 7 open findings (3 must-fix, 4 suggestions).
+**Commits**: `a7c7181`, `5bdb443`, `0001f94`, `3338d8f`, `7534958`, `aa9fc00`, `474dd4d`
+
+### Actions
+- [x] (must-fix) Subscribe the BEST_EFFORT telemetry sources (odom + all mavros/* + sensor_msgs/*) with `qos_profile_sensor_data` so a RELIABLE/BEST_EFFORT mismatch no longer silently no-matches and deadens the panel; per-source QoS lives in the `_topic_specs` table, command/string sources (cmd_vel, helm, piloting_mode) keep depth-10 RELIABLE (precedent: `rqt_sonar_waterfall`) — `boat_state_widget.py` (`a7c7181`)
+- [x] (must-fix) `CenterZeroGauge.mark_stale()`/`mark_commanded_stale()` and `SpeedGauge.mark_commanded_stale()` added; the 1 Hz sweep now greys the steering/throttle actuals on stale `rc_out`, their commanded ghosts on stale `helm`, and the speed ghost on stale `cmd_vel`, so a frozen control value can no longer read as live — `gauges/center_zero_gauge.py`, `gauges/speed_gauge.py`, `boat_state_widget.py` (`5bdb443`)
+- [x] (must-fix) Finiteness-gate the heading in `_on_odom` (and the COG arrow) via `is_valid_measurement`, so a NaN/inf orientation blanks the compass to "---" instead of rendering "nan°" — `boat_state_widget.py` (`0001f94`)
+- [x] (suggestion) Removed the dead `velocity_frame` ENU/NED selector (dataclass field, YAML round-trip, and dialog combo) — the mru_transform odom is always ENU and SOG is frame-invariant, so the toggle silently did nothing; `velocity_reference` (ground/body, which *is* applied) stays — `config_model.py`, `config_dialog.py`, `test/test_config_model.py` (`3338d8f`)
+- [x] (suggestion) `_setup_subscriptions` now seeds `_last_update[name] = None` (never-received) instead of `now`, so a source that never publishes reads stale immediately rather than fresh for one `stale_timeout` after startup/reload — `boat_state_widget.py` (`7534958`)
+- [x] (suggestion) `_handle_message` drops messages whose source is no longer in `_subscriptions`, so a callback queued before a `load_config` teardown can't resurrect a torn-down source in `_last_update` — `boat_state_widget.py` (`aa9fc00`)
+- [x] (suggestion) Retired the `test_default_capacity_is_two_hours` tautology (which codified the contradicted "2 h" claim) in favour of `test_default_capacity_is_720_samples`, asserting the real sample-count contract — `test/test_trend_plot.py` (`474dd4d`)
+
+**Sanity checks**: `python3 -m pytest test/` → **68 passed**; pyflakes clean on all changed modules; every changed module `py_compile` clean. No findings deferred — all 7 were actionable on inspection. Live QoS validation against running topics was not possible in this worktree (no live stack / `marine_interfaces` unbuilt); the BEST_EFFORT-vs-RELIABLE split follows the documented mavros/sensor convention and the `rqt_sonar_waterfall` precedent.
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 84 --skill review-code
