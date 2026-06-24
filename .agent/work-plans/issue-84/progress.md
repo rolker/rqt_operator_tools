@@ -142,7 +142,7 @@ Lifecycle: **implement** → **review-code**.
 ### Findings
 - [x] (must-fix) Gauges render non-finite (NaN) data as live: NaN battery voltage → green OK lamp + "nan V"; NaN speed → full-deflection arc + "nan kn". Gate via `is_valid_measurement` (already used in environment_panel). — `gauges/battery_gauge.py:71` / `gauges/speed_gauge.py:67`
 - [x] (must-fix) One missing message package disables ALL subscriptions: `_topic_specs` imports all msg pkgs together; the `except` aborts the whole loop. Import per-spec. (cross-pass A+B confirmed) — `boat_state_widget.py:123`
-- [ ] (suggestion) Stale sweep accesses child widget private attr `self._heading._heading`; add `mark_stale()`. (cross-pass A+B) — `boat_state_widget.py:270`
+- [x] (suggestion) Stale sweep accesses child widget private attr `self._heading._heading`; add `mark_stale()`. (cross-pass A+B) — `boat_state_widget.py:270`
 - [ ] (suggestion) "2-hour window" is nominal only — `add_sample` runs per-message, no 10 s decimation; reconcile docstrings/plan or decimate. — `trend_buffer.py:11`
 - [ ] (suggestion) Corrupt/hand-edited config with non-int channel indices raises TypeError in `_on_rc_out`; validate element types on load. — `config_model.py:270`
 - [ ] (suggestion) Invalid channel-map JSON silently discarded in the dialog with no user feedback. — `config_dialog.py:136`

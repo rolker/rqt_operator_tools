@@ -53,6 +53,11 @@ class HeadingGauge(QWidget):
         self._stale = stale
         self.update()
 
+    def mark_stale(self):
+        """Grey the gauge (keeps the last heading value but hides the needle)."""
+        self._stale = True
+        self.update()
+
     def set_cog(self, cog_deg):
         """Set the course-over-ground arrow (compass deg) or None to hide it."""
         self._cog = cog_deg

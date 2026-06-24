@@ -274,7 +274,7 @@ class BoatStateWidget(QWidget):
     def _check_stale(self):
         """1 Hz sweep: grey gauges whose source has gone stale."""
         if self._is_source_stale('odom'):
-            self._heading.set_heading(self._heading._heading, stale=True)
+            self._heading.mark_stale()
             self._speed.set_speed(None)
             self._heading.set_cog(None)
         if self._is_source_stale('battery'):
