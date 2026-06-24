@@ -150,3 +150,28 @@ Lifecycle: **implement** → **review-code**.
 
 ### Next step
 Lifecycle: **Local Review** → **address-findings** (verdict is changes-requested) → re-run **review-code** → push / open PR → **triage-reviews**. The diff is not pushed until a pre-push review returns approved.
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-24 00:07 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-84 at `8704f7c`
+**Addressed**: `## Local Review (Pre-Push)` (2026-06-23 23:51 +00:00, branch `feature/issue-84` at `3aea92f`) — all 7 open findings (2 must-fix, 5 suggestions).
+**Commits**: `20399b8`, `8e43fc8`, `6feb530`, `b2a9f20`, `ebbfaa4`, `26b236e`, `8704f7c`
+
+### Actions
+- [x] (must-fix) Gate non-finite (NaN/inf) measurements in the battery and speed gauges via `is_valid_measurement` so NaN no longer renders as a live green-lamp "nan V" / full-deflection "nan kn" — `gauges/battery_gauge.py`, `gauges/speed_gauge.py` (`20399b8`)
+- [x] (must-fix) Import each source's message type independently in `_topic_specs` (importlib per-spec, log-and-skip on failure) so one missing package — e.g. `marine_interfaces` unbuilt — disables only its own sources, not every subscription — `boat_state_widget.py` (`8e43fc8`)
+- [x] (suggestion) Added `HeadingGauge.mark_stale()`; the 1 Hz stale sweep now calls it instead of poking the private `self._heading._heading` — `gauges/heading_gauge.py`, `boat_state_widget.py` (`6feb530`)
+- [x] (suggestion) Reconciled the trend docstrings: the buffer is sized in samples, and the "≈2 h" figure is nominal (1 sample / 10 s) only — the panel pushes once per message, so the window tracks arrival rate — `trend_buffer.py`, `trend_plot.py` (`b2a9f20`)
+- [x] (suggestion) `BoatStateConfig.from_dict` now coerces channel-map indices to int (dropping non-coercible ones) via `_coerce_channel_map`, so a corrupt/hand-edited config can't raise `TypeError` in `_on_rc_out` — `config_model.py` (`ebbfaa4`)
+- [x] (suggestion) The config dialog warns the operator (`QMessageBox`) when the channel-map JSON is invalid and reuses the same `_coerce_channel_map` sanitizer instead of silently discarding the entry — `config_dialog.py` (`26b236e`)
+- [x] (suggestion) Static: dropped the unused `IndicatorLevel` import (F401) and renamed `TrendBuffer.range` → `value_range` (A003 builtin shadow), updating both callers. The other ~25 ament_flake8 D/I nits are left as-is per the review (repo convention; CI doesn't run flake8) — `test/test_config_model.py`, `trend_buffer.py`, `trend_plot.py`, `test/test_trend_plot.py` (`8704f7c`)
+
+**Sanity checks**: `python3 -m pytest test/` → **68 passed**; all changed modules `py_compile` clean; NaN-gating and channel-map coercion spot-checked directly. No findings deferred — every item was actionable on inspection.
+
+### Next step
+Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a fresh-context sub-agent:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 84 --skill review-code
