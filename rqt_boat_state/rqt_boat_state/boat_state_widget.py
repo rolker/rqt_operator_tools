@@ -10,6 +10,8 @@ import importlib
 import math
 import time
 
+from rclpy.qos import qos_profile_sensor_data
+
 from python_qt_binding.QtCore import QTimer, Signal
 from python_qt_binding.QtGui import QColor
 from python_qt_binding.QtWidgets import (
@@ -39,6 +41,15 @@ class BoatStateWidget(QWidget):
 
     # Thread-safe hand-off: (source-name, message) from ROS thread to Qt thread.
     _msg_received = Signal(str, object)
+
+    # Sensor/telemetry sources (mavros, sensor_msgs, the ENU odom) publish
+    # BEST_EFFORT; a default RELIABLE subscription silently fails to match them
+    # and the panel sits dead.  Subscribe to those with sensor-data QoS — the
+    # same fix rqt_sonar_waterfall applies to its BEST_EFFORT publishers.
+    # Command/string sources (cmd_vel, helm, piloting_mode) are RELIABLE, so
+    # they keep a plain depth-10 queue.
+    _SENSOR_QOS = qos_profile_sensor_data
+    _RELIABLE_DEPTH = 10
 
     def __init__(self, node, parent=None):
         super().__init__(parent)
@@ -129,40 +140,45 @@ class BoatStateWidget(QWidget):
         logged and skipped.
         """
         cfg = self._config
+        sensor, reliable = self._SENSOR_QOS, self._RELIABLE_DEPTH
         wanted = [
-            ('odom', 'nav_msgs.msg', 'Odometry', cfg.odom_topic),
-            ('cmd_vel', 'geometry_msgs.msg', 'TwistStamped', cfg.cmd_vel_topic),
-            ('helm', 'marine_interfaces.msg', 'Helm', cfg.helm_topic),
-            ('fcu_state', 'mavros_msgs.msg', 'State', cfg.fcu_state_topic),
-            ('piloting_mode', 'std_msgs.msg', 'String', cfg.piloting_mode_topic),
-            ('rc_out', 'mavros_msgs.msg', 'RCOut', cfg.rc_out_topic),
-            ('rc_in', 'mavros_msgs.msg', 'RCIn', cfg.rc_in_topic),
-            ('battery', 'sensor_msgs.msg', 'BatteryState', cfg.battery_topic),
+            ('odom', 'nav_msgs.msg', 'Odometry', cfg.odom_topic, sensor),
+            ('cmd_vel', 'geometry_msgs.msg', 'TwistStamped', cfg.cmd_vel_topic,
+             reliable),
+            ('helm', 'marine_interfaces.msg', 'Helm', cfg.helm_topic, reliable),
+            ('fcu_state', 'mavros_msgs.msg', 'State', cfg.fcu_state_topic, sensor),
+            ('piloting_mode', 'std_msgs.msg', 'String', cfg.piloting_mode_topic,
+             reliable),
+            ('rc_out', 'mavros_msgs.msg', 'RCOut', cfg.rc_out_topic, sensor),
+            ('rc_in', 'mavros_msgs.msg', 'RCIn', cfg.rc_in_topic, sensor),
+            ('battery', 'sensor_msgs.msg', 'BatteryState', cfg.battery_topic,
+             sensor),
             ('sound_speed', 'marine_interfaces.msg', 'SoundSpeed',
-             cfg.sound_speed_topic),
-            ('water_temp', 'sensor_msgs.msg', 'Temperature', cfg.water_temp_topic),
+             cfg.sound_speed_topic, sensor),
+            ('water_temp', 'sensor_msgs.msg', 'Temperature', cfg.water_temp_topic,
+             sensor),
         ]
         specs = []
-        for name, module, attr, topic in wanted:
+        for name, module, attr, topic, qos in wanted:
             try:
                 msg_class = getattr(importlib.import_module(module), attr)
             except (ImportError, AttributeError) as exc:
                 self._node.get_logger().warning(
                     f'Skipping {name}: cannot import {module}.{attr} ({exc})')
                 continue
-            specs.append((name, msg_class, topic))
+            specs.append((name, msg_class, topic, qos))
         return specs
 
     def _setup_subscriptions(self):
         specs = self._topic_specs()
         now = time.monotonic()
-        for name, msg_class, topic in specs:
+        for name, msg_class, topic, qos in specs:
             if not topic:
                 continue
             sub = self._node.create_subscription(
                 msg_class, topic,
                 lambda msg, n=name: self._msg_received.emit(n, msg),
-                10)
+                qos)
             self._subscriptions[name] = sub
             self._last_update[name] = now
 
