@@ -53,16 +53,13 @@ class BatteryGauge(QWidget):
         header.setColumnStretch(2, 1)
         layout.addLayout(header)
 
-        readouts = QGridLayout()
+        # Voltage only — percentage and current carry no useful data on this
+        # platform's BMS, so they are intentionally omitted.
         self._volt_label = QLabel('-- V')
-        self._pct_label = QLabel('-- %')
-        self._amp_label = QLabel('-- A')
-        for lab in (self._volt_label, self._pct_label, self._amp_label):
-            lab.setStyleSheet('color: #f0f0f0; font-size: 16px;')
-        readouts.addWidget(self._volt_label, 0, 0)
-        readouts.addWidget(self._pct_label, 0, 1)
-        readouts.addWidget(self._amp_label, 0, 2)
-        layout.addLayout(readouts)
+        self._volt_label.setStyleSheet(
+            'color: #f0f0f0; font-size: 20px; font-weight: bold;')
+        self._volt_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        header.addWidget(self._volt_label, 0, 2, Qt.AlignRight)
 
         # Battery voltage sags under load and recovers at rest; bin to 30 s and
         # plot the per-bin MAX (resting voltage) so the line tracks pack health,
@@ -105,27 +102,22 @@ class BatteryGauge(QWidget):
 
     def set_battery(self, voltage=None, percentage=None, current=None,
                     stale=False):
-        """Update the readouts and push voltage onto the trend.
+        """Update the voltage readout and trend.
 
-        *percentage* is the mavros 0..1 fraction; *current* is amps.
+        *percentage* and *current* are accepted for call-site compatibility but
+        not displayed (no useful data from this platform's BMS).
         """
         if stale or not is_valid_measurement(voltage):
             self._volt_label.setText('-- V')
+            self._trend.set_marker(None)
             self._set_level(IndicatorLevel.STALE)
         else:
             self._volt_label.setText(f'{voltage:.1f} V')
             self._trend.add_sample(voltage)
+            # The current voltage splits the trend's zone brightness (bright
+            # below, dim above) so the live level reads at a glance.
+            self._trend.set_marker(voltage)
             self._set_level(self._level_for(voltage))
-
-        if not is_valid_measurement(percentage):
-            self._pct_label.setText('-- %')
-        else:
-            self._pct_label.setText(f'{percentage * 100.0:.0f} %')
-
-        if not is_valid_measurement(current):
-            self._amp_label.setText('-- A')
-        else:
-            self._amp_label.setText(f'{current:.1f} A')
 
     def _set_level(self, level):
         color = _LAMP_COLORS[level]

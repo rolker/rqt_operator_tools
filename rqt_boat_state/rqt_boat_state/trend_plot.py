@@ -47,6 +47,9 @@ class TrendPlot(QWidget):
         # Optional colored value bands [(low, high, QColor), ...] drawn faintly
         # behind the trace — e.g. battery red/yellow/green health zones.
         self._zones = zones or []
+        # Optional current value: zones below it render bright, above it dim, so
+        # the live level reads as a fill line through the health bands.
+        self._marker = None
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.setAutoFillBackground(True)
         palette = self.palette()
@@ -75,6 +78,22 @@ class TrendPlot(QWidget):
         self._zones = zones or []
         self.update()
 
+    def set_marker(self, value):
+        """Set the current value that splits zone brightness (None to clear)."""
+        self._marker = value
+        self.update()
+
+    @staticmethod
+    def _fill_band(painter, color, alpha, y_top, y_bot, w):
+        """Fill a full-width horizontal band [y_top, y_bot] in *color* at *alpha*."""
+        if y_bot <= y_top:
+            return
+        from python_qt_binding.QtCore import QRectF
+        c = QColor(color)
+        c.setAlpha(alpha)
+        painter.setBrush(c)
+        painter.drawRect(QRectF(0, y_top, w, y_bot - y_top))
+
     def clear(self):
         self._buffer.clear()
         self.update()
@@ -85,7 +104,7 @@ class TrendPlot(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
 
-        from python_qt_binding.QtCore import QPointF, QRectF
+        from python_qt_binding.QtCore import QPointF
         from python_qt_binding.QtGui import QPolygonF
 
         w = self.width()
@@ -116,14 +135,21 @@ class TrendPlot(QWidget):
 
         # Colored value zones (e.g. battery red/yellow/green), drawn first so
         # the band and line sit on top.  Shown even before the trace has data.
+        # When a marker (current value) is set, the portion of each band BELOW
+        # the marker renders bright and the portion ABOVE it dim, so the live
+        # level reads as a fill line through the health bands.
+        _DIM, _BRIGHT, _FLAT = 26, 100, 55
+        y_marker = y_of(self._marker) if self._marker is not None else None
+        painter.setPen(Qt.NoPen)
         for zlo, zhi, zcolor in self._zones:
-            y_top = y_of(min(hi, zhi))
-            y_bot = y_of(max(lo, zlo))
-            c = QColor(zcolor)
-            c.setAlpha(55)
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(c)
-            painter.drawRect(QRectF(0, y_top, w, y_bot - y_top))
+            y_top = y_of(min(hi, zhi))     # higher voltage → smaller y
+            y_bot = y_of(max(lo, zlo))     # lower voltage  → larger y
+            if y_marker is None:
+                self._fill_band(painter, zcolor, _FLAT, y_top, y_bot, w)
+            else:
+                split = max(y_top, min(y_bot, y_marker))
+                self._fill_band(painter, zcolor, _DIM, y_top, split, w)     # above marker
+                self._fill_band(painter, zcolor, _BRIGHT, split, y_bot, w)  # below marker
 
         if len(pairs) < 2:
             return  # zones are drawn; the trace needs >= 2 bins
