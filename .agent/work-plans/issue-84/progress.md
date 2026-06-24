@@ -266,3 +266,46 @@ Round-3 re-review of the new `rqt_boat_state` safety panel. All round-1/round-2 
 Lifecycle: **Local Review** (approved) → push / open PR → **triage-reviews**. Verdict is **approved** with 0 must-fix, so the diff is ready to push. Hand off to a fresh-context sub-agent after pushing:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 84 --skill triage-reviews
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-24 10:39 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-84 at `d44e1f6`
+**Mode**: pre-push
+**Depth**: Deep (reason: new safety-relevant operator display; 4 new feature commits since the round-3 approval reworked authority resolution, the trend buffer, and gauge rendering)
+**Must-fix**: 0 | **Suggestions**: 2
+**Round**: 4 | **Ship**: recommended — round-3 approved the base; the 4 follow-on feature commits add zero genuine must-fixes (the two adversarial passes' shared "must-fix" is unreachable from the live path). Converged.
+
+Re-review of the 4 feature commits landed after the round-3 approval (`b351eb3` time-binned trends + battery health zones, `9cbc997` vertical throttle + knots scale, `c9b4f45` COG body-frame + heartbeat-sourced mode + UNKNOWN authority, `d44e1f6` voltage-only battery readout + zone-brightness marker). The branch advanced from `c9b4f45` to `d44e1f6` mid-review; review pinned at `d44e1f6`. Two fresh Deep adversarial passes (Lens A logic + Lens B systemic/safety) both converged on one candidate must-fix (trend out-of-order folding); verified unreachable from the live feed and downgraded. pytest **74/74**, pyflakes clean.
+
+### Findings
+- [ ] (suggestion) `TrendBuffer.add` folds a backward-timestamp sample (`bin_start < cur['t0']`) into the open bin rather than dropping it. Unreachable from the live path: `add_sample` reads `time.monotonic()` in the GUI thread, and `_handle_message` is serialized via the `_msg_received` Qt signal, so `t` is non-decreasing and no caller passes an explicit `t`. Defensive-consistency only (same class as round-3's `pwm_to_unit` finding); optional one-line guard `elif bin_start < self._cur['t0']: return`. — `trend_buffer.py:90`
+- [ ] (suggestion) Vertical `CenterZeroGauge` hardcodes `top=36`/`bottom=h-32`; if a layout forced the widget below ~68 px the track/captions would clip. Mitigated by the 120 px minimum size hint (`_MIN_HINT_V`); cosmetic, not safety-relevant. — `gauges/center_zero_gauge.py:172`
+
+**Dismissed (recorded so they don't resurface in triage):**
+- Both adversarial passes flagged the trend out-of-order fold as **must-fix**. **Downgraded to suggestion** — unreachable from the live path (monotonic clock + single-GUI-thread serialized dispatch ⇒ non-decreasing `t`; production callers pass value only). Even if reached it perturbs a min/max excursion band, not a fail-unsafe live readout.
+- `speed_arc_max` default keeps the value `5.0` but its unit changed m/s→knots, so a *saved* config would be reinterpreted. Not a finding: this is a brand-new, never-pushed package — there are no field configs to migrate, and 5 kn is a sensible USV default.
+
+### Governance
+- **Human-control transparency** — Pass (strengthened): the new `UNKNOWN` authority state reports the FCU regime (e.g. `GUIDED — ROS mode ?`) instead of mislabeling an empty/never-received piloting mode as `STANDBY`, removing a fail-unsafe "ROS is idle" claim while an armed boat moves under GUIDED. COG arrow recoloured teal so it no longer reads as a commanded heading.
+- **Fail-safe display** — Pass: NaN/stale gating preserved across the reworked gauges; voltage-only battery readout is intentional (BMS percentage/current carry no useful data on this platform) and blanks to `-- V` + clears the trend marker when stale/invalid.
+- **Message-contract correctness** — Pass: the `piloting_mode` migration from `std_msgs/String` to `marine_interfaces/Heartbeat` was verified against the live `Heartbeat.msg` (`std_msgs/Header header` + `KeyValue[] values`); the `for kv in msg.values: kv.key/kv.value` field path is correct and `marine_interfaces` is already an `exec_depend`.
+- **ADR-0008 (ROS 2 package conventions)** — Compliant; `package.xml` unchanged by these commits.
+
+### Plan Adherence
+The follow-on commits are post-approval UI/behaviour refinements (binning, knots, vertical throttle, authority UNKNOWN, voltage-only battery) consistent with the plan's intent; no undisclosed scope creep. COG body-frame fix and the trend rework correct issues the earlier rounds' code carried.
+
+### Summary
+Round-4 re-review of the `rqt_boat_state` safety panel covering the 4 feature commits added after the round-3 approval. Two fresh Deep adversarial passes found one shared candidate must-fix (trend out-of-order folding), verified unreachable from the live ROS path and downgraded to a defensive suggestion. The `UNKNOWN`-vs-`STANDBY` authority change is a genuine fail-safe improvement; the Heartbeat field path is verified. Tests 74/74, pyflakes clean. The diff is shippable.
+
+### Recommended Actions
+- [ ] (optional) Guard `TrendBuffer.add` against backward-timestamp samples (`elif bin_start < self._cur['t0']: return`) for defensive parity — not required before push.
+- [ ] (optional) Clamp the vertical `CenterZeroGauge` band math so a sub-min-hint height degrades gracefully rather than clipping.
+
+### Next step
+Lifecycle: **Local Review** (approved) → push / open PR → **triage-reviews**. Verdict is **approved** with 0 must-fix, so the diff is ready to push. Hand off to a fresh-context sub-agent after pushing:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 84 --skill triage-reviews
