@@ -47,7 +47,7 @@ class BoatStateWidget(QWidget):
     # BEST_EFFORT; a default RELIABLE subscription silently fails to match them
     # and the panel sits dead.  Subscribe to those with sensor-data QoS — the
     # same fix rqt_sonar_waterfall applies to its BEST_EFFORT publishers.
-    # Command/string sources (cmd_vel, helm, piloting_mode) are RELIABLE, so
+    # Command/string sources (cmd_vel, helm, heartbeat) are RELIABLE, so
     # they keep a plain depth-10 queue.
     _SENSOR_QOS = qos_profile_sensor_data
     _RELIABLE_DEPTH = 10
@@ -89,6 +89,10 @@ class BoatStateWidget(QWidget):
         self._banner = AuthorityBanner()
         layout.addWidget(self._banner)
 
+        # Legend: make the measured-vs-commanded colour convention explicit so
+        # a glance distinguishes the live value from the command everywhere.
+        layout.addLayout(self._build_legend())
+
         grid = QGridLayout()
         grid.setSpacing(6)
         self._heading = HeadingGauge()
@@ -96,7 +100,8 @@ class BoatStateWidget(QWidget):
         self._steering = CenterZeroGauge(
             label='Steering', neg_caption='port', pos_caption='stbd')
         self._throttle = CenterZeroGauge(
-            label='Throttle', neg_caption='reverse', pos_caption='ahead')
+            label='Throttle', neg_caption='reverse', pos_caption='ahead',
+            orientation='vertical')
         self._battery = BatteryGauge(
             warn_v=self._config.battery_warn_v,
             critical_v=self._config.battery_critical_v)
@@ -111,6 +116,26 @@ class BoatStateWidget(QWidget):
 
         self._environment = EnvironmentPanel()
         layout.addWidget(self._environment)
+
+    def _build_legend(self):
+        """A one-line key: blue = measured/actual, amber = commanded."""
+        from python_qt_binding.QtWidgets import QHBoxLayout, QLabel
+        from .gauges import ACTUAL_COLOR, COMMAND_COLOR, COURSE_COLOR
+
+        row = QHBoxLayout()
+        row.setContentsMargins(6, 0, 6, 0)
+        row.setSpacing(12)
+
+        def chip(color, text):
+            lab = QLabel(f'⬤ {text}')
+            lab.setStyleSheet(f'color: {color.name()}; font-size: 11px;')
+            return lab
+
+        row.addWidget(chip(ACTUAL_COLOR, 'measured / actual'))
+        row.addWidget(chip(COMMAND_COLOR, 'commanded'))
+        row.addWidget(chip(COURSE_COLOR, 'course (COG)'))
+        row.addStretch(1)
+        return row
 
     # -- Config ----------------------------------------------------------------
 
@@ -148,8 +173,8 @@ class BoatStateWidget(QWidget):
              reliable),
             ('helm', 'marine_interfaces.msg', 'Helm', cfg.helm_topic, reliable),
             ('fcu_state', 'mavros_msgs.msg', 'State', cfg.fcu_state_topic, sensor),
-            ('piloting_mode', 'std_msgs.msg', 'String', cfg.piloting_mode_topic,
-             reliable),
+            ('heartbeat', 'marine_interfaces.msg', 'Heartbeat',
+             cfg.heartbeat_topic, reliable),
             ('rc_out', 'mavros_msgs.msg', 'RCOut', cfg.rc_out_topic, sensor),
             ('rc_in', 'mavros_msgs.msg', 'RCIn', cfg.rc_in_topic, sensor),
             ('battery', 'sensor_msgs.msg', 'BatteryState', cfg.battery_topic,
@@ -221,12 +246,13 @@ class BoatStateWidget(QWidget):
         # a NaN yaw or speed yields no COG arrow rather than a garbage bearing).
         if is_valid_measurement(sog) and is_valid_measurement(yaw) \
                 and sog >= self._config.cog_min_speed:
-            if self._config.velocity_reference == 'body':
-                # Rotate body velocity into the ENU world frame.
-                vx_e = vx * math.cos(yaw) - vy * math.sin(yaw)
-                vy_e = vx * math.sin(yaw) + vy * math.cos(yaw)
-            else:
-                vx_e, vy_e = vx, vy
+            # nav_msgs/Odometry twist is in child_frame_id (base_link) per
+            # REP-103, so rotate the body-frame velocity into ENU to get the
+            # ground course. (Verified against /bizzy/odom: forward vx with a
+            # body rotation yields COG == heading; treating it as ground-frame
+            # gave a spurious due-East COG.)
+            vx_e = vx * math.cos(yaw) - vy * math.sin(yaw)
+            vy_e = vx * math.sin(yaw) + vy * math.cos(yaw)
             cog = enu_yaw_to_compass(math.atan2(vy_e, vx_e))
             self._heading.set_cog(cog)
         else:
@@ -247,8 +273,13 @@ class BoatStateWidget(QWidget):
         self._armed = msg.armed
         self._refresh_banner()
 
-    def _on_piloting_mode(self, msg):
-        self._piloting_mode = msg.data
+    def _on_heartbeat(self, msg):
+        # The helm manager stamps the piloting mode into the Heartbeat's
+        # KeyValue list (key 'piloting_mode'); pull it out for the banner.
+        for kv in msg.values:
+            if kv.key == 'piloting_mode':
+                self._piloting_mode = kv.value
+                break
         self._refresh_banner()
 
     def _on_rc_out(self, msg):

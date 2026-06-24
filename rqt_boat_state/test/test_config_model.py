@@ -42,8 +42,17 @@ class TestResolveAuthority:
             == AuthoritySource.JOYSTICK
 
     def test_guided_standby(self):
+        # STANDBY only on an EXPLICIT standby piloting_mode.
         assert resolve_authority('GUIDED', 'standby').source \
             == AuthoritySource.STANDBY
+
+    def test_guided_unknown_piloting_is_not_standby(self):
+        # Empty piloting_mode (never received) under an offboard FCU mode must
+        # NOT read as STANDBY — that would be a fail-unsafe display while an
+        # armed boat moves under GUIDED.  Report the FCU mode as UNKNOWN.
+        state = resolve_authority('GUIDED', '')
+        assert state.source == AuthoritySource.UNKNOWN
+        assert 'GUIDED' in state.label
 
     def test_case_insensitive(self):
         assert resolve_authority('guided', 'AUTONOMOUS').source \
@@ -55,9 +64,11 @@ class TestResolveAuthority:
         assert resolve_authority('SMARTRTL', 'joystick').source \
             == AuthoritySource.JOYSTICK
 
-    def test_unknown_piloting_defaults_standby(self):
-        assert resolve_authority('GUIDED', 'whatever').source \
-            == AuthoritySource.STANDBY
+    def test_unrecognized_piloting_is_unknown_not_standby(self):
+        # An unrecognized (non-empty) piloting_mode surfaces as UNKNOWN with the
+        # raw mode shown, rather than being silently mislabeled STANDBY.
+        state = resolve_authority('GUIDED', 'whatever')
+        assert state.source == AuthoritySource.UNKNOWN
 
 
 class TestPwmToUnit:
@@ -139,7 +150,7 @@ class TestConfigRoundTrip:
         cfg = BoatStateConfig()
         assert cfg.odom_topic == '/bizzy/odom'
         assert cfg.rc_channel_map == {'throttle': [0, 1], 'steering': [2, 3]}
-        assert cfg.velocity_reference == 'ground'
+        assert cfg.battery_warn_v == 23.5
 
     def test_yaml_roundtrip(self):
         cfg = BoatStateConfig(

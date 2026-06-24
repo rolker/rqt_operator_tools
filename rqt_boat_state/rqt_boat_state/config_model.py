@@ -33,6 +33,7 @@ class AuthoritySource(Enum):
     RC = 'rc'
     HOLD = 'hold'
     DISARMED = 'disarmed'
+    UNKNOWN = 'unknown'   # FCU regime known, ROS arbitration layer not (yet) seen
 
 
 # Mathematical / unit conversions -------------------------------------------
@@ -105,7 +106,8 @@ _OFFBOARD_FCU_MODES = frozenset({
 # helm-manager ``piloting_mode`` strings grouped by who they hand control to.
 _AUTONOMY_PILOTING = frozenset({'autonomous', 'auto', 'autonomy', 'survey'})
 _JOYSTICK_PILOTING = frozenset({'joystick', 'manual', 'teleop', 'gamepad'})
-_STANDBY_PILOTING = frozenset({'standby', 'idle', 'hold', ''})
+# NB: '' (never received) is deliberately NOT standby — see resolve_authority.
+_STANDBY_PILOTING = frozenset({'standby', 'idle', 'hold'})
 
 
 def resolve_authority(fcu_mode: str, piloting_mode: str) -> AuthorityState:
@@ -122,6 +124,13 @@ def resolve_authority(fcu_mode: str, piloting_mode: str) -> AuthorityState:
     An unknown FCU mode falls through to the piloting-mode arm so a new FCU
     mode string still resolves to *who* the helm manager says is driving
     rather than to a hard error.
+
+    When ``piloting_mode`` is empty (never received / stale) under an
+    offboard-accepting FCU mode, the result is :class:`AuthoritySource.UNKNOWN`
+    reporting the FCU mode — NOT STANDBY. STANDBY means "ROS is deliberately
+    idle"; claiming it while an armed boat moves under GUIDED would be a
+    fail-unsafe display, so we only assert STANDBY on an explicit standby
+    ``piloting_mode``.
     """
     fcu = (fcu_mode or '').strip().upper()
     pilot = (piloting_mode or '').strip().lower()
@@ -141,7 +150,13 @@ def resolve_authority(fcu_mode: str, piloting_mode: str) -> AuthorityState:
         return AuthorityState(AuthoritySource.JOYSTICK, 'JOYSTICK', 'joystick')
     if pilot in _STANDBY_PILOTING:
         return AuthorityState(AuthoritySource.STANDBY, 'STANDBY', 'standby')
-    return AuthorityState(AuthoritySource.STANDBY, 'STANDBY', 'standby')
+    # piloting_mode empty (never received) or unrecognized: report the FCU
+    # regime and flag the ROS layer unknown rather than mislabeling it STANDBY.
+    if pilot == '':
+        return AuthorityState(AuthoritySource.UNKNOWN,
+                              f'{fcu} — ROS mode ?', 'unknown')
+    return AuthorityState(AuthoritySource.UNKNOWN,
+                          f'{fcu} / {pilot.upper()}?', 'unknown')
 
 
 # Staleness helpers ----------------------------------------------------------
@@ -257,7 +272,9 @@ class BoatStateConfig:
     cmd_vel_topic: str = 'cmd_vel'
     helm_topic: str = 'helm'
     fcu_state_topic: str = 'mavros/state'
-    piloting_mode_topic: str = 'piloting_mode'
+    # The piloting mode is read from the helm-manager Heartbeat's KeyValue list
+    # (key 'piloting_mode'), not a standalone String topic.
+    heartbeat_topic: str = 'marine/heartbeat'
     rc_out_topic: str = 'mavros/rc/out'
     rc_in_topic: str = 'mavros/rc/in'
     battery_topic: str = 'mavros/battery'
@@ -269,17 +286,16 @@ class BoatStateConfig:
     pwm_center: float = 1500.0
     pwm_half_range: float = 500.0
 
-    # Velocity convention.  The odom from mru_transform is always ENU (REP-103),
-    # so there is no frame selector to get wrong; ``velocity_reference`` only
-    # chooses whether the COG arrow reads ``twist.linear`` as ground- or
-    # body-frame (SOG itself is frame-invariant).
-    velocity_reference: str = 'ground'  # 'ground' or 'body'
+    # (No velocity-frame selector: nav_msgs/Odometry twist is always in
+    # child_frame_id (base_link) per REP-103, so COG is always computed by
+    # rotating the body-frame velocity into ENU.  A 'ground' option was a
+    # footgun that rendered a straight-ahead boat's COG due East.)
 
     # Gauge ranges / gates.
-    cog_min_speed: float = 0.5  # m/s below which COG is not shown
-    speed_arc_max: float = 5.0  # m/s at the end of the speed arc
-    battery_warn_v: float = 12.5
-    battery_critical_v: float = 11.5
+    cog_min_speed: float = 0.5     # m/s below which COG is not shown
+    speed_arc_max: float = 5.0     # KNOTS at the end of the speed arc
+    battery_warn_v: float = 23.5
+    battery_critical_v: float = 22.0
 
     # Staleness.
     stale_timeout: float = 2.0  # default per-source warn timeout (s)
@@ -314,7 +330,7 @@ class BoatStateConfig:
                 'cmd_vel': self.cmd_vel_topic,
                 'helm': self.helm_topic,
                 'fcu_state': self.fcu_state_topic,
-                'piloting_mode': self.piloting_mode_topic,
+                'heartbeat': self.heartbeat_topic,
                 'rc_out': self.rc_out_topic,
                 'rc_in': self.rc_in_topic,
                 'battery': self.battery_topic,
@@ -324,7 +340,6 @@ class BoatStateConfig:
             'rc_channel_map': {k: list(v) for k, v in self.rc_channel_map.items()},
             'pwm_center': self.pwm_center,
             'pwm_half_range': self.pwm_half_range,
-            'velocity_reference': self.velocity_reference,
             'cog_min_speed': self.cog_min_speed,
             'speed_arc_max': self.speed_arc_max,
             'battery_warn_v': self.battery_warn_v,
@@ -352,8 +367,8 @@ class BoatStateConfig:
             cmd_vel_topic=topics.get('cmd_vel', defaults.cmd_vel_topic),
             helm_topic=topics.get('helm', defaults.helm_topic),
             fcu_state_topic=topics.get('fcu_state', defaults.fcu_state_topic),
-            piloting_mode_topic=topics.get(
-                'piloting_mode', defaults.piloting_mode_topic),
+            heartbeat_topic=topics.get(
+                'heartbeat', defaults.heartbeat_topic),
             rc_out_topic=topics.get('rc_out', defaults.rc_out_topic),
             rc_in_topic=topics.get('rc_in', defaults.rc_in_topic),
             battery_topic=topics.get('battery', defaults.battery_topic),
@@ -362,8 +377,6 @@ class BoatStateConfig:
             rc_channel_map=channel_map,
             pwm_center=d.get('pwm_center', defaults.pwm_center),
             pwm_half_range=d.get('pwm_half_range', defaults.pwm_half_range),
-            velocity_reference=d.get(
-                'velocity_reference', defaults.velocity_reference),
             cog_min_speed=d.get('cog_min_speed', defaults.cog_min_speed),
             speed_arc_max=d.get('speed_arc_max', defaults.speed_arc_max),
             battery_warn_v=d.get('battery_warn_v', defaults.battery_warn_v),

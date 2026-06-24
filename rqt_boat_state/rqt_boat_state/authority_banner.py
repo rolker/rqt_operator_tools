@@ -20,6 +20,7 @@ _TOKEN_COLORS = {
     'rc': QColor(200, 130, 0),          # amber — direct RC/transmitter
     'hold': QColor(150, 110, 0),        # dark amber — hold
     'disarmed': QColor(120, 40, 40),    # red — disarmed
+    'unknown': QColor(90, 90, 110),     # blue-grey — FCU known, ROS layer unseen
 }
 _DEFAULT_COLOR = QColor(70, 70, 70)
 

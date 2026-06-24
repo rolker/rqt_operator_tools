@@ -8,7 +8,6 @@ channel map (SERVO1→idx 0, SERVO3→idx 2) with inline help text.
 import json
 
 from python_qt_binding.QtWidgets import (
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -43,8 +42,8 @@ class ConfigDialog(QDialog):
              config.cmd_vel_topic),
             ('helm', 'Helm (marine_interfaces/Helm):', config.helm_topic),
             ('fcu_state', 'FCU state (mavros_msgs/State):', config.fcu_state_topic),
-            ('piloting_mode', 'Piloting mode (std_msgs/String):',
-             config.piloting_mode_topic),
+            ('heartbeat', 'Heartbeat (marine_interfaces/Heartbeat):',
+             config.heartbeat_topic),
             ('rc_out', 'RC out (mavros_msgs/RCOut):', config.rc_out_topic),
             ('rc_in', 'RC in (mavros_msgs/RCIn):', config.rc_in_topic),
             ('battery', 'Battery (sensor_msgs/BatteryState):', config.battery_topic),
@@ -81,24 +80,19 @@ class ConfigDialog(QDialog):
         rc_form.addRow('PWM half-range:', self._pwm_half_spin)
         main_layout.addWidget(rc_group)
 
-        # -- Conventions & ranges ---------------------------------------------
-        conv_group = QGroupBox('Velocity convention & gauge ranges')
+        # -- Gauge ranges -----------------------------------------------------
+        conv_group = QGroupBox('Gauge ranges')
         conv_form = QFormLayout(conv_group)
         conv_help = QLabel(
-            'Odom from mru_transform is ENU (REP-103). Speed-over-ground is '
-            'frame-invariant; the body/ground choice only affects the COG arrow.')
+            'Odom from mru_transform is ENU (REP-103) with body-frame twist; '
+            'COG is always computed by rotating into ENU (no frame selector).')
         conv_help.setWordWrap(True)
         conv_help.setStyleSheet('color: #888; font-size: 10px;')
         conv_form.addRow(conv_help)
 
-        self._reference_combo = QComboBox()
-        self._reference_combo.addItems(['ground', 'body'])
-        self._reference_combo.setCurrentText(config.velocity_reference)
-        conv_form.addRow('Velocity reference:', self._reference_combo)
-
         self._cog_min_spin = self._spin(0.0, 10.0, config.cog_min_speed, ' m/s')
         conv_form.addRow('COG min speed:', self._cog_min_spin)
-        self._speed_max_spin = self._spin(0.5, 50.0, config.speed_arc_max, ' m/s')
+        self._speed_max_spin = self._spin(0.5, 50.0, config.speed_arc_max, ' kn')
         conv_form.addRow('Speed arc max:', self._speed_max_spin)
         self._batt_warn_spin = self._spin(0.0, 60.0, config.battery_warn_v, ' V')
         conv_form.addRow('Battery warn:', self._batt_warn_spin)
@@ -147,7 +141,7 @@ class ConfigDialog(QDialog):
             cmd_vel_topic=self._topic_edits['cmd_vel'].text(),
             helm_topic=self._topic_edits['helm'].text(),
             fcu_state_topic=self._topic_edits['fcu_state'].text(),
-            piloting_mode_topic=self._topic_edits['piloting_mode'].text(),
+            heartbeat_topic=self._topic_edits['heartbeat'].text(),
             rc_out_topic=self._topic_edits['rc_out'].text(),
             rc_in_topic=self._topic_edits['rc_in'].text(),
             battery_topic=self._topic_edits['battery'].text(),
@@ -156,7 +150,6 @@ class ConfigDialog(QDialog):
             rc_channel_map=channel_map,
             pwm_center=self._pwm_center_spin.value(),
             pwm_half_range=self._pwm_half_spin.value(),
-            velocity_reference=self._reference_combo.currentText(),
             cog_min_speed=self._cog_min_spin.value(),
             speed_arc_max=self._speed_max_spin.value(),
             battery_warn_v=self._batt_warn_spin.value(),

@@ -15,7 +15,7 @@ from python_qt_binding.QtWidgets import QSizePolicy, QWidget
 from . import (
     ACTUAL_COLOR,
     BG_COLOR,
-    COMMAND_COLOR,
+    COURSE_COLOR,
     FACE_COLOR,
     LABEL_COLOR,
     TICK_COLOR,
@@ -102,10 +102,11 @@ class HeadingGauge(QWidget):
                     Qt.AlignCenter, label)
                 painter.setPen(QPen(TICK_COLOR, 1))
 
-        # COG arrow (drawn under the heading needle).
+        # COG arrow (course over ground) — its own teal colour, distinct from
+        # the amber commanded marker, so it doesn't read as a commanded heading.
         if self._cog is not None:
             self._draw_needle(painter, cx, cy, radius * 0.78,
-                              self._cog, COMMAND_COLOR, width=3, arrow=True)
+                              self._cog, COURSE_COLOR, width=3, arrow=True)
 
         # Actual heading needle.
         if self._heading is not None and not self._stale:
