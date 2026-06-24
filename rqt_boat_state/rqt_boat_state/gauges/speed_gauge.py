@@ -35,6 +35,8 @@ class SpeedGauge(QWidget):
 
     def __init__(self, arc_max=5.0, parent=None):
         super().__init__(parent)
+        # arc_max is in KNOTS (the primary unit); speeds arrive in m/s and are
+        # converted for the fraction so the arc tops out at arc_max knots.
         self._max = max(0.1, arc_max)
         self._speed = None       # m/s actual, or None when stale
         self._commanded = None   # m/s commanded, or None when absent
@@ -71,8 +73,9 @@ class SpeedGauge(QWidget):
         self._commanded_stale = True
         self.update()
 
-    def _frac(self, value):
-        return max(0.0, min(1.0, value / self._max))
+    def _frac(self, value_mps):
+        # value arrives in m/s; the scale is in knots.
+        return max(0.0, min(1.0, mps_to_knots(value_mps) / self._max))
 
     def paintEvent(self, event):  # noqa: N802 (Qt API)
         from python_qt_binding.QtGui import QPainter
@@ -106,16 +109,23 @@ class SpeedGauge(QWidget):
             self._draw_needle(painter, cx, cy, radius * 0.95,
                               self._frac(self._commanded), color, width=2)
 
-        # Ticks.
-        painter.setPen(QPen(TICK_COLOR, 1))
+        # Ticks with knot labels (0 .. arc_max).
+        tick_font = QFont(painter.font())
+        tick_font.setPixelSize(max(7, int(radius * 0.12)))
         for i in range(0, 6):
             frac = i / 5.0
             ang = math.radians(_START_DEG - _SWEEP_DEG * frac)
+            painter.setPen(QPen(TICK_COLOR, 1))
             x1 = cx + radius * 0.72 * math.cos(ang)
             y1 = cy - radius * 0.72 * math.sin(ang)
             x2 = cx + radius * 0.86 * math.cos(ang)
             y2 = cy - radius * 0.86 * math.sin(ang)
             painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+            painter.setFont(tick_font)
+            lx = cx + radius * 0.58 * math.cos(ang)
+            ly = cy - radius * 0.58 * math.sin(ang)
+            painter.drawText(QRectF(lx - 10, ly - 7, 20, 14), Qt.AlignCenter,
+                             f'{self._max * frac:.0f}')
 
         # Digital readout: knots primary, m/s secondary.
         font = QFont(painter.font())
@@ -136,6 +146,16 @@ class SpeedGauge(QWidget):
         painter.drawText(QRectF(cx - radius, cy + radius * 0.3,
                                 2 * radius, radius * 0.3),
                          Qt.AlignCenter, mps_text)
+
+        # Commanded value in the command colour, so "measured 2.4 / cmd 3.0" is
+        # legible without decoding which needle is which.
+        if self._commanded is not None:
+            cmd_color = COMMAND_STALE_COLOR if self._commanded_stale else COMMAND_COLOR
+            painter.setPen(cmd_color)
+            painter.drawText(QRectF(cx - radius, cy + radius * 0.55,
+                                    2 * radius, radius * 0.3),
+                             Qt.AlignCenter,
+                             f'cmd {mps_to_knots(self._commanded):.1f} kn')
 
     def _draw_needle(self, painter, cx, cy, length, frac, color, width=2):
         ang = math.radians(_START_DEG - _SWEEP_DEG * frac)
