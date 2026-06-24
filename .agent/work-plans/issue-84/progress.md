@@ -175,3 +175,29 @@ Lifecycle: **Local Review** → **address-findings** (verdict is changes-request
 Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 84 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-24 00:16 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-84 at `3552874`
+**Mode**: pre-push
+**Depth**: Deep (reason: new safety-relevant operator display, 2618 lines / 25 files, FCU/RC authority logic)
+**Must-fix**: 3 | **Suggestions**: 4
+**Round**: 2 | **Ship**: continue — round-1 findings all verified fixed, but Deep passes surfaced 3 new must-fixes incl. a "does it receive data at all" QoS concern; not converged.
+
+Round-1 findings (2 must-fix, 5 suggestions) all verified genuinely addressed in code. pyflakes clean; pytest 68/68. New must-fixes are correctness/safety-display issues the prior round did not reach.
+
+### Findings
+- [ ] (must-fix) All subscriptions use bare depth `10` (RELIABLE); mavros/sensor/odom publishers are typically BEST_EFFORT → silent no-match, dead panel. Use `qos_profile_sensor_data` for those sources (precedent: `rqt_sonar_waterfall`); validate against live topics — `boat_state_widget.py:162`
+- [ ] (must-fix) Steering/throttle + commanded markers never greyed when `rc_out`/`helm`/`cmd_vel` go stale; `CenterZeroGauge` has no `mark_stale()` and `_check_stale` skips it — frozen control values shown as live — `boat_state_widget.py:274` / `gauges/center_zero_gauge.py`
+- [ ] (must-fix) Heading not finiteness-gated in `_on_odom` (unlike round-1 battery/speed fix); NaN orientation renders "nan°" instead of "---" — `boat_state_widget.py:184`
+- [ ] (suggestion) `velocity_frame` ENU/NED selectable but never applied in code; selecting NED silently yields ENU math — wire or remove — `config_dialog.py:94` / `config_model.py:275`
+- [ ] (suggestion) `_setup_subscriptions` seeds `_last_update=now`, so not-yet-received sources read fresh for `stale_timeout` after startup/reload; seed to "never received" — `boat_state_widget.py:167`
+- [ ] (suggestion) `_handle_message` can write `_last_update` for a source torn down by a concurrent `load_config`; gate on `source in self._subscriptions` — `boat_state_widget.py:177`
+- [ ] (suggestion) `test_default_capacity_is_two_hours` is a tautology codifying a "2 h" claim the corrected docstring contradicts — retire or test real decimation — `test/test_trend_plot.py:11`
+
+### Next step
+Lifecycle: **Local Review** → **address-findings** (verdict is changes-requested) → re-run **review-code** → push / open PR → **triage-reviews**. The diff is not pushed until a pre-push review returns approved.
