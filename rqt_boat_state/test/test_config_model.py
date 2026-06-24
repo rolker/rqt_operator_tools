@@ -156,6 +156,9 @@ class TestConfigRoundTrip:
         cfg = BoatStateConfig(
             odom_topic='/foo/odom',
             speed_arc_max=8.0,
+            cmd_rotation_max=2.0,
+            steering_reversed=False,
+            heartbeat_topic='/foo/hb',
             battery_warn_v=23.0,
             rc_channel_map={'throttle': [4], 'steering': [5, 6]},
             stale_timeouts={'odom': 1.0},
@@ -163,9 +166,18 @@ class TestConfigRoundTrip:
         restored = BoatStateConfig.from_yaml(cfg.to_yaml())
         assert restored.odom_topic == '/foo/odom'
         assert restored.speed_arc_max == 8.0
+        assert restored.cmd_rotation_max == 2.0
+        assert restored.steering_reversed is False
+        assert restored.heartbeat_topic == '/foo/hb'
         assert restored.battery_warn_v == 23.0
         assert restored.rc_channel_map == {'throttle': [4], 'steering': [5, 6]}
         assert restored.stale_timeouts == {'odom': 1.0}
+
+    def test_new_field_defaults(self):
+        cfg = BoatStateConfig()
+        assert cfg.steering_reversed is True       # BizzyBoat servo convention
+        assert cfg.cmd_rotation_max == 1.0
+        assert cfg.heartbeat_topic == 'marine/heartbeat'
 
     def test_from_empty_yaml_keeps_defaults(self):
         cfg = BoatStateConfig.from_yaml('')

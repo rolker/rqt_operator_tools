@@ -51,6 +51,13 @@ class TestBinning:
         buf.add(5.0, float('nan'))
         assert len(buf) == 0
 
+    def test_backward_timestamp_dropped(self):
+        # A sample timestamped before the open bin must not rewrite history.
+        buf = TrendBuffer(capacity=5, bin_seconds=10.0, agg='last')
+        buf.add(1.0, 25.0)   # bin 2
+        buf.add(9.0, 5.0)    # bin 0 (backward) — dropped
+        assert buf.values() == [1.0]
+
 
 class TestAggregation:
     def _bin(self, agg):

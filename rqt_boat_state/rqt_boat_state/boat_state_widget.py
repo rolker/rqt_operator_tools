@@ -267,12 +267,17 @@ class BoatStateWidget(QWidget):
         # CCW (port) per REP-103, so negate to put a port turn on the port
         # (left) side; text shows magnitude with a P/S direction letter.
         rot = msg.twist.angular.z
-        if is_valid_measurement(rot):
-            norm = max(-1.0, min(1.0, -rot / self._config.cmd_rotation_max))
+        rot_max = self._config.cmd_rotation_max
+        if is_valid_measurement(rot) and rot_max > 0:
+            norm = max(-1.0, min(1.0, -rot / rot_max))
             deg = math.degrees(rot)
             side = 'P' if rot > 0 else ('S' if rot < 0 else '')
             self._steering.set_secondary(
                 norm, f'{abs(deg):.0f}°/s {side}'.strip(), stale=grey)
+        else:
+            # Non-finite yaw rate (or unusable scale): clear rather than freeze
+            # the marker at a stale-but-non-greyed value.
+            self._steering.set_secondary(None, '', stale=grey)
 
     def _on_helm(self, msg):
         grey = self._commanded_greyed()
