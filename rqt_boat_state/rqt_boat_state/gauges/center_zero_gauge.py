@@ -33,6 +33,7 @@ class CenterZeroGauge(QWidget):
         self._neg_caption = neg_caption
         self._pos_caption = pos_caption
         self._value = None       # −1..1 actual, or None when stale
+        self._value_stale = False  # True greys a frozen actual reading
         self._commanded = None   # −1..1 commanded, or None when absent
         self._commanded_stale = False
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -49,11 +50,22 @@ class CenterZeroGauge(QWidget):
 
     def set_value(self, value):
         self._value = value
+        self._value_stale = False
         self.update()
 
     def set_commanded(self, value, stale=False):
         self._commanded = value
         self._commanded_stale = stale
+        self.update()
+
+    def mark_stale(self):
+        """Grey a frozen actual reading once its source (rc_out) goes stale."""
+        self._value_stale = True
+        self.update()
+
+    def mark_commanded_stale(self):
+        """Grey a frozen commanded marker once its source (helm) goes stale."""
+        self._commanded_stale = True
         self.update()
 
     def paintEvent(self, event):  # noqa: N802 (Qt API)
@@ -68,10 +80,12 @@ class CenterZeroGauge(QWidget):
         font.setPixelSize(max(9, int(h * 0.22)))
         painter.setFont(font)
 
-        # Label row.
+        # Label row.  A stale actual reading is dimmed so a frozen value is
+        # not mistaken for a live one.
         painter.setPen(LABEL_COLOR)
         painter.drawText(QRectF(4, 2, w - 8, h * 0.3), Qt.AlignLeft, self._label)
         if self._value is not None:
+            painter.setPen(TICK_COLOR if self._value_stale else LABEL_COLOR)
             painter.drawText(QRectF(4, 2, w - 8, h * 0.3),
                              Qt.AlignRight, f'{self._value:+.2f}')
 
@@ -91,12 +105,13 @@ class CenterZeroGauge(QWidget):
 
         half_w = track.width() / 2.0
 
-        # Actual fill from center.
+        # Actual fill from center (greyed when the reading is stale).
         if self._value is not None:
             val = max(-1.0, min(1.0, self._value))
             fill_w = half_w * abs(val)
             painter.setPen(Qt.NoPen)
-            painter.setBrush(ACTUAL_COLOR)
+            painter.setBrush(COMMAND_STALE_COLOR if self._value_stale
+                             else ACTUAL_COLOR)
             if val >= 0:
                 painter.drawRect(QRectF(center_x, track_y + 2, fill_w, track_h - 4))
             else:

@@ -192,7 +192,7 @@ Round-1 findings (2 must-fix, 5 suggestions) all verified genuinely addressed in
 
 ### Findings
 - [x] (must-fix) All subscriptions use bare depth `10` (RELIABLE); mavros/sensor/odom publishers are typically BEST_EFFORT → silent no-match, dead panel. Use `qos_profile_sensor_data` for those sources (precedent: `rqt_sonar_waterfall`); validate against live topics — `boat_state_widget.py:162`
-- [ ] (must-fix) Steering/throttle + commanded markers never greyed when `rc_out`/`helm`/`cmd_vel` go stale; `CenterZeroGauge` has no `mark_stale()` and `_check_stale` skips it — frozen control values shown as live — `boat_state_widget.py:274` / `gauges/center_zero_gauge.py`
+- [x] (must-fix) Steering/throttle + commanded markers never greyed when `rc_out`/`helm`/`cmd_vel` go stale; `CenterZeroGauge` has no `mark_stale()` and `_check_stale` skips it — frozen control values shown as live — `boat_state_widget.py:274` / `gauges/center_zero_gauge.py`
 - [ ] (must-fix) Heading not finiteness-gated in `_on_odom` (unlike round-1 battery/speed fix); NaN orientation renders "nan°" instead of "---" — `boat_state_widget.py:184`
 - [ ] (suggestion) `velocity_frame` ENU/NED selectable but never applied in code; selecting NED silently yields ENU math — wire or remove — `config_dialog.py:94` / `config_model.py:275`
 - [ ] (suggestion) `_setup_subscriptions` seeds `_last_update=now`, so not-yet-received sources read fresh for `stale_timeout` after startup/reload; seed to "never received" — `boat_state_widget.py:167`

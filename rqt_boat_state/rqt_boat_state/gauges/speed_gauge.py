@@ -66,6 +66,11 @@ class SpeedGauge(QWidget):
         self._commanded_stale = stale
         self.update()
 
+    def mark_commanded_stale(self):
+        """Grey a frozen commanded needle once its source (cmd_vel) goes stale."""
+        self._commanded_stale = True
+        self.update()
+
     def _frac(self, value):
         return max(0.0, min(1.0, value / self._max))
 

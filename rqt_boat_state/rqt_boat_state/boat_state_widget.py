@@ -293,6 +293,17 @@ class BoatStateWidget(QWidget):
             self._heading.mark_stale()
             self._speed.set_speed(None)
             self._heading.set_cog(None)
+        # Steering/throttle actuals come from rc_out; their commanded ghosts
+        # from helm; the speed ghost from cmd_vel.  Grey each frozen overlay
+        # once its own source stops publishing so it can't read as live.
+        if self._is_source_stale('rc_out'):
+            self._steering.mark_stale()
+            self._throttle.mark_stale()
+        if self._is_source_stale('helm'):
+            self._steering.mark_commanded_stale()
+            self._throttle.mark_commanded_stale()
+        if self._is_source_stale('cmd_vel'):
+            self._speed.mark_commanded_stale()
         if self._is_source_stale('battery'):
             self._battery.set_battery(stale=True)
         if self._is_source_stale('sound_speed'):
