@@ -197,7 +197,7 @@ Round-1 findings (2 must-fix, 5 suggestions) all verified genuinely addressed in
 - [x] (suggestion) `velocity_frame` ENU/NED selectable but never applied in code; selecting NED silently yields ENU math — wire or remove — `config_dialog.py:94` / `config_model.py:275`
 - [x] (suggestion) `_setup_subscriptions` seeds `_last_update=now`, so not-yet-received sources read fresh for `stale_timeout` after startup/reload; seed to "never received" — `boat_state_widget.py:167`
 - [x] (suggestion) `_handle_message` can write `_last_update` for a source torn down by a concurrent `load_config`; gate on `source in self._subscriptions` — `boat_state_widget.py:177`
-- [ ] (suggestion) `test_default_capacity_is_two_hours` is a tautology codifying a "2 h" claim the corrected docstring contradicts — retire or test real decimation — `test/test_trend_plot.py:11`
+- [x] (suggestion) `test_default_capacity_is_two_hours` is a tautology codifying a "2 h" claim the corrected docstring contradicts — retire or test real decimation — `test/test_trend_plot.py:11`
 
 ### Next step
 Lifecycle: **Local Review** → **address-findings** (verdict is changes-requested) → re-run **review-code** → push / open PR → **triage-reviews**. The diff is not pushed until a pre-push review returns approved.

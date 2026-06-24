@@ -1,5 +1,5 @@
 """Tests for the Qt-free TrendBuffer behind the TrendPlot sparkline:
-ring-buffer wraparound, per-slot min/max, and the 2-hour window sizing.
+ring-buffer wraparound, per-slot min/max, and the default sample capacity.
 No Qt, no display."""
 
 import pytest
@@ -8,11 +8,11 @@ from rqt_boat_state.trend_buffer import TrendBuffer
 
 
 class TestWindowSizing:
-    def test_default_capacity_is_two_hours(self):
-        # 720 slots × 10 s/slot = 7200 s = 2 h.
+    def test_default_capacity_is_720_samples(self):
+        # Capacity is counted in samples, not wall-clock: the buffer holds the
+        # most recent 720 pushes regardless of arrival rate (no decimation).
         buf = TrendBuffer()
         assert buf.capacity == 720
-        assert buf.capacity * 10 == 7200
 
     def test_rejects_nonpositive_capacity(self):
         with pytest.raises(ValueError):
