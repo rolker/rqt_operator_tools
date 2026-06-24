@@ -11,7 +11,7 @@ from python_qt_binding.QtCore import QPointF, QRectF, QSize, Qt
 from python_qt_binding.QtGui import QFont, QPen
 from python_qt_binding.QtWidgets import QSizePolicy, QWidget
 
-from ..config_model import mps_to_knots
+from ..config_model import is_valid_measurement, mps_to_knots
 from . import (
     ACTUAL_COLOR,
     BG_COLOR,
@@ -56,11 +56,13 @@ class SpeedGauge(QWidget):
         self.update()
 
     def set_speed(self, speed_mps):
-        self._speed = speed_mps
+        # Non-finite (NaN/inf) speed is treated as no-data so the arc/readout
+        # do not show a full-deflection "nan kn" instead of a dash.
+        self._speed = speed_mps if is_valid_measurement(speed_mps) else None
         self.update()
 
     def set_commanded(self, speed_mps, stale=False):
-        self._commanded = speed_mps
+        self._commanded = speed_mps if is_valid_measurement(speed_mps) else None
         self._commanded_stale = stale
         self.update()
 

@@ -14,7 +14,7 @@ from python_qt_binding.QtWidgets import (
     QWidget,
 )
 
-from ..config_model import IndicatorLevel
+from ..config_model import IndicatorLevel, is_valid_measurement
 from ..trend_plot import TrendPlot
 from . import ERROR_COLOR, OK_COLOR, WARN_COLOR
 
@@ -84,7 +84,7 @@ class BatteryGauge(QWidget):
 
         *percentage* is the mavros 0..1 fraction; *current* is amps.
         """
-        if stale or voltage is None:
+        if stale or not is_valid_measurement(voltage):
             self._volt_label.setText('-- V')
             self._set_level(IndicatorLevel.STALE)
         else:
@@ -92,12 +92,12 @@ class BatteryGauge(QWidget):
             self._trend.add_sample(voltage)
             self._set_level(self._level_for(voltage))
 
-        if percentage is None:
+        if not is_valid_measurement(percentage):
             self._pct_label.setText('-- %')
         else:
             self._pct_label.setText(f'{percentage * 100.0:.0f} %')
 
-        if current is None:
+        if not is_valid_measurement(current):
             self._amp_label.setText('-- A')
         else:
             self._amp_label.setText(f'{current:.1f} A')
