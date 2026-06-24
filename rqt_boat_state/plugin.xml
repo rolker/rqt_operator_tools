@@ -1,0 +1,17 @@
+<library path="rqt_boat_state">
+  <class name="rqt_boat_state/BoatStatePlugin"
+         type="rqt_boat_state.boat_state_plugin.BoatStatePlugin"
+         base_class_type="rqt_gui_py::Plugin">
+    <description>
+      Live control/power/environment gauge panel for operator station boat-state monitoring.
+    </description>
+    <qtgui>
+      <group>
+        <label>Robot Tools</label>
+      </group>
+      <label>Boat State Panel</label>
+      <icon type="theme">utilities-system-monitor</icon>
+      <statustip>Glanceable heading, speed, steering, throttle, battery, and environment gauges.</statustip>
+    </qtgui>
+  </class>
+</library>
