@@ -6,6 +6,7 @@ thread and hand messages to the Qt thread via a queued signal (the pattern
 borrowed from ``AnnunciatorWidget``).
 """
 
+import importlib
 import math
 import time
 
@@ -119,35 +120,41 @@ class BoatStateWidget(QWidget):
     # -- Subscriptions ---------------------------------------------------------
 
     def _topic_specs(self):
-        """Yield (source-name, msg-class, topic) for every configured source."""
-        from nav_msgs.msg import Odometry
-        from geometry_msgs.msg import TwistStamped
-        from sensor_msgs.msg import BatteryState, Temperature
-        from std_msgs.msg import String
-        from marine_interfaces.msg import Helm, SoundSpeed
-        from mavros_msgs.msg import RCIn, RCOut, State
+        """Yield (source-name, msg-class, topic) for every importable source.
 
+        Each message type is resolved independently so a single missing
+        package (e.g. ``marine_interfaces`` unbuilt in this worktree) disables
+        only the sources that depend on it rather than aborting every
+        subscription.  Sources whose message package cannot be imported are
+        logged and skipped.
+        """
         cfg = self._config
-        return [
-            ('odom', Odometry, cfg.odom_topic),
-            ('cmd_vel', TwistStamped, cfg.cmd_vel_topic),
-            ('helm', Helm, cfg.helm_topic),
-            ('fcu_state', State, cfg.fcu_state_topic),
-            ('piloting_mode', String, cfg.piloting_mode_topic),
-            ('rc_out', RCOut, cfg.rc_out_topic),
-            ('rc_in', RCIn, cfg.rc_in_topic),
-            ('battery', BatteryState, cfg.battery_topic),
-            ('sound_speed', SoundSpeed, cfg.sound_speed_topic),
-            ('water_temp', Temperature, cfg.water_temp_topic),
+        wanted = [
+            ('odom', 'nav_msgs.msg', 'Odometry', cfg.odom_topic),
+            ('cmd_vel', 'geometry_msgs.msg', 'TwistStamped', cfg.cmd_vel_topic),
+            ('helm', 'marine_interfaces.msg', 'Helm', cfg.helm_topic),
+            ('fcu_state', 'mavros_msgs.msg', 'State', cfg.fcu_state_topic),
+            ('piloting_mode', 'std_msgs.msg', 'String', cfg.piloting_mode_topic),
+            ('rc_out', 'mavros_msgs.msg', 'RCOut', cfg.rc_out_topic),
+            ('rc_in', 'mavros_msgs.msg', 'RCIn', cfg.rc_in_topic),
+            ('battery', 'sensor_msgs.msg', 'BatteryState', cfg.battery_topic),
+            ('sound_speed', 'marine_interfaces.msg', 'SoundSpeed',
+             cfg.sound_speed_topic),
+            ('water_temp', 'sensor_msgs.msg', 'Temperature', cfg.water_temp_topic),
         ]
+        specs = []
+        for name, module, attr, topic in wanted:
+            try:
+                msg_class = getattr(importlib.import_module(module), attr)
+            except (ImportError, AttributeError) as exc:
+                self._node.get_logger().warning(
+                    f'Skipping {name}: cannot import {module}.{attr} ({exc})')
+                continue
+            specs.append((name, msg_class, topic))
+        return specs
 
     def _setup_subscriptions(self):
-        try:
-            specs = self._topic_specs()
-        except Exception as exc:  # message packages unavailable
-            self._node.get_logger().error(
-                f'Cannot import message types: {exc}')
-            return
+        specs = self._topic_specs()
         now = time.monotonic()
         for name, msg_class, topic in specs:
             if not topic:
