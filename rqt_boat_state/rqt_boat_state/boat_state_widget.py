@@ -25,6 +25,7 @@ from .config_model import (
     BoatStateConfig,
     enu_yaw_to_compass,
     is_stale,
+    is_valid_measurement,
     quaternion_to_yaw,
     resolve_authority,
     should_grey_commanded,
@@ -199,15 +200,20 @@ class BoatStateWidget(QWidget):
     def _on_odom(self, msg):
         q = msg.pose.pose.orientation
         yaw = quaternion_to_yaw(q.x, q.y, q.z, q.w)
-        self._heading.set_heading(enu_yaw_to_compass(yaw))
+        # A NaN/inf orientation must blank the compass ("---"), not render
+        # "nan°" — same finiteness gate the battery/speed gauges already apply.
+        heading = enu_yaw_to_compass(yaw)
+        self._heading.set_heading(heading if is_valid_measurement(heading) else None)
 
         lin = msg.twist.twist.linear
         vx, vy = lin.x, lin.y
         sog = math.hypot(vx, vy)
-        self._speed.set_speed(sog)
+        self._speed.set_speed(sog)  # gates non-finite values itself
 
-        # Course over ground, gated by the min-speed threshold.
-        if sog >= self._config.cog_min_speed:
+        # Course over ground, gated by the min-speed threshold (and finiteness:
+        # a NaN yaw or speed yields no COG arrow rather than a garbage bearing).
+        if is_valid_measurement(sog) and is_valid_measurement(yaw) \
+                and sog >= self._config.cog_min_speed:
             if self._config.velocity_reference == 'body':
                 # Rotate body velocity into the ENU world frame.
                 vx_e = vx * math.cos(yaw) - vy * math.sin(yaw)
