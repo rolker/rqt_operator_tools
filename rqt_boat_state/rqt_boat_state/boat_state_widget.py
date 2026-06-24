@@ -194,6 +194,11 @@ class BoatStateWidget(QWidget):
     # -- Qt-thread message handling --------------------------------------------
 
     def _handle_message(self, source, msg):
+        # A message queued before a ``load_config`` teardown can arrive after
+        # the source was destroyed; drop it so a torn-down source can't be
+        # marked fresh (and resurrected in ``_last_update``).
+        if source not in self._subscriptions:
+            return
         self._last_update[source] = time.monotonic()
         handler = getattr(self, f'_on_{source}', None)
         if handler is not None:
