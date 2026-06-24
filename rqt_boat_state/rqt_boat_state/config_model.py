@@ -221,6 +221,28 @@ def _default_stale_timeouts() -> dict:
     return {}
 
 
+def _coerce_channel_map(raw: dict) -> dict:
+    """Sanitize a loaded channel map to ``{name: [int, ...]}``.
+
+    A hand-edited or corrupt config may carry non-integer indices (floats,
+    strings, nulls).  Each index is coerced to ``int`` where possible and
+    dropped otherwise, so the downstream ``channels[i]`` lookups never raise a
+    ``TypeError`` on bad input.
+    """
+    coerced = {}
+    for name, indices in raw.items():
+        if not isinstance(indices, (list, tuple)):
+            continue
+        clean = []
+        for i in indices:
+            try:
+                clean.append(int(i))
+            except (TypeError, ValueError):
+                continue
+        coerced[str(name)] = clean
+    return coerced
+
+
 @dataclass
 class BoatStateConfig:
     """All operator-tunable settings for the boat-state panel.
@@ -322,7 +344,7 @@ class BoatStateConfig:
         if not isinstance(channel_map, dict):
             channel_map = _default_channel_map()
         else:
-            channel_map = {k: list(v) for k, v in channel_map.items()}
+            channel_map = _coerce_channel_map(channel_map)
         stale_timeouts = d.get('stale_timeouts')
         if not isinstance(stale_timeouts, dict):
             stale_timeouts = {}
