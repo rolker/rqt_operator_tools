@@ -21,9 +21,10 @@ _AXIS_COLOR = QColor(70, 70, 70)
 class TrendPlot(QWidget):
     """Auto-scaling sparkline of a single scalar over time.
 
-    The history lives in a :class:`TrendBuffer` (default 720 samples = 2 h at
-    1 sample / 10 s).  ``add_sample`` is called by the owning panel on its
-    cadence; the widget never times anything itself.
+    The history lives in a :class:`TrendBuffer` (default 720 samples —
+    ≈2 h only at a nominal 1 sample / 10 s).  ``add_sample`` is called by the
+    owning panel once per received message; the widget never times anything
+    itself, so the window spanned tracks message arrival rate, not a fixed 2 h.
     """
 
     _MIN_HINT = QSize(60, 24)

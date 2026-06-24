@@ -11,11 +11,14 @@ import math
 class TrendBuffer:
     """Fixed-capacity ring buffer of (min, max) samples for a sparkline.
 
-    The panel pushes one value per fixed cadence (default 1 sample / 10 s);
-    at the default capacity of 720 that holds a 2-hour window
-    (720 × 10 s = 7200 s).  Each slot keeps the min and max of the values
-    folded into it so a decimated plot still shows excursions; with one
-    ``push`` per slot min == max == the pushed value.
+    Capacity is counted in *samples* (slots), not wall-clock time: the
+    default 720 holds the most recent 720 pushes.  The wall-clock window the
+    buffer spans therefore depends on how fast the owner pushes — at a
+    nominal 1 sample / 10 s it would be ≈2 h (720 × 10 s), but the boat-state
+    panel currently pushes once per received message (no decimation), so the
+    real span tracks message arrival rate.  Each slot keeps the min and max
+    of the values folded into it so a decimated plot still shows excursions;
+    with one ``push`` per slot min == max == the pushed value.
 
     Non-finite samples (NaN/inf) are ignored so a NaN ``SoundSpeed`` does not
     poison the trend.
