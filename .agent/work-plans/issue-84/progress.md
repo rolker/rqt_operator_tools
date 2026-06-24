@@ -309,3 +309,49 @@ Round-4 re-review of the `rqt_boat_state` safety panel covering the 4 feature co
 Lifecycle: **Local Review** (approved) → push / open PR → **triage-reviews**. Verdict is **approved** with 0 must-fix, so the diff is ready to push. Hand off to a fresh-context sub-agent after pushing:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 84 --skill triage-reviews
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-24 11:10 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-84 at `567e5e0`
+**Mode**: pre-push
+**Depth**: Deep (reason: safety-relevant operator display; the 2 new commits add a commanded-yaw-rate indicator and a steering-direction reversal that touch turn-direction semantics)
+**Must-fix**: 0 | **Suggestions**: 4
+**Round**: 5 | **Ship**: recommended — round-3/4 approved the base; the 2 follow-on commits (`cffad52`, `567e5e0`) add zero must-fixes. Two Deep adversarial passes converged; Lens A verified the steering/yaw-rate sign conventions end-to-end against `Helm.msg` + `helm_manager.cpp` (correct). Converged.
+
+Re-review of the 2 commits landed after the round-4 approval (`cffad52` commanded-rotation secondary bar + battery zone-marker EMA + equal bar thickness + `cmd_rotation_max`; `567e5e0` `steering_reversed` flag flipping the displayed actual steering). pytest 74/74, pyflakes clean. The trend backward-timestamp guard recommended in round 4 was applied (`trend_buffer.py:92`).
+
+### Findings
+- [ ] (suggestion) `-rot / cmd_rotation_max` is unguarded; a hand-edited config with `cmd_rotation_max: 0` raises `ZeroDivisionError` in the `_on_cmd_vel` Qt slot. Config-reachable only (dialog enforces a 0.1 min; not from message data). Module precedent: `pwm_to_unit` guards `half_range<=0`. Cross-pass A+B confirmed. Recommended before push (trivial). — `boat_state_widget.py:271` / `config_model.py:390`
+- [ ] (suggestion) A non-finite `angular.z` (finite `linear`) skips `set_secondary`, so the cmd-rotation marker freezes at full non-greyed amber while `cmd_vel` stays fresh — frozen command shown as live. Same latent gap as the speed-commanded overlay. Grey/clear on the invalid branch. Cross-pass A+B. — `boat_state_widget.py:270`
+- [ ] (suggestion) No tests cover the new behavior: `steering_reversed`/`cmd_rotation_max` round-trip not asserted (`test_yaml_roundtrip` field-checks specific keys), nor secondary-staleness, steering reversal, battery EMA, or the trend drop-guard. New fields are Qt-free/testable (issue-review action #1). — `test/test_config_model.py`
+- [ ] (suggestion, carried from round 4) Fixed `_BAR_THICKNESS=24` (horiz) + hardcoded `top=36`/`bottom=h-32` (vert) can clip below min-hint heights; mitigated by min size hints (throttle's 120px drives the shared row). Cosmetic. — `gauges/center_zero_gauge.py:143` / `:221`
+
+**Dismissed (recorded so they don't resurface in triage):**
+- Direction/sign correctness flagged for cold inspection — **not a finding**. Verified end-to-end against `marine_interfaces/Helm.msg` (`rudder` = full-left..full-right) and `helm_manager.cpp` (`angular.z = -rudder*max_yaw_speed`): the flipped rc_out actual, the un-flipped helm rudder marker, and the negated cmd-rotation all agree in direction. No wrong-way indication.
+
+### Governance
+- **Human-control transparency** — Pass (strengthened): the commanded-yaw-rate bar adds autonomy-intent visibility (greys on `cmd_vel` staleness); `steering_reversed` makes the actual bar match the physical turn.
+- **Fail-safe display** — Pass: the battery EMA feeds only the cosmetic zone-split marker; the warn/critical lamp uses raw instantaneous voltage (verified), so smoothing can't delay a low-voltage alarm. NaN/stale gating preserved (suggestion #2 is the one residual edge).
+- **Message-contract correctness** — Pass: steering/yaw-rate sign conventions verified against source (above).
+- **ADR-0008** — Compliant; `package.xml` unchanged by these commits.
+
+### Plan Adherence
+Post-approval UI/behaviour refinements consistent with the plan's intent; no scope creep. `steering_reversed=True` default is a BizzyBoat-specific calibration consistent with the package's other platform defaults (`/bizzy/odom`, ArduRover channel map) and documented in a code comment.
+
+### Summary
+Round-5 re-review of the 2 commits after the round-4 approval. Two Deep adversarial passes converged with no must-fix; Lens A traced the turn-direction conventions to source and confirmed them. Three actionable suggestions (cross-pass div-by-zero with module precedent, non-finite-command display edge, test-coverage gap) plus one carried cosmetic note. Tests 74/74, pyflakes clean. The diff is shippable.
+
+### Recommended Actions
+- [ ] (recommended before push — trivial) Guard `cmd_rotation_max` against zero (clamp in `from_dict` or `if > 0` before the division).
+- [ ] (suggestion) Grey/clear the cmd-rotation secondary on a non-finite `angular.z`.
+- [ ] (suggestion) Add round-trip assertions for the two new config fields and a secondary-staleness test.
+- [ ] (optional, carried) Clamp the gauge band math so sub-min-hint heights degrade gracefully.
+
+### Next step
+Lifecycle: **Local Review** (approved) → push / open PR → **triage-reviews**. Verdict is **approved** with 0 must-fix, so the diff is ready to push. The 4 suggestions are non-blocking (the operator may apply the trivial div-by-zero guard first). Hand off to a fresh-context sub-agent after pushing:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 84 --skill triage-reviews
