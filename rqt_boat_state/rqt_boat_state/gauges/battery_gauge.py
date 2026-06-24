@@ -29,7 +29,11 @@ _LAMP_COLORS = {
 class BatteryGauge(QWidget):
     """Numeric battery readout with a status lamp and a voltage trend."""
 
-    def __init__(self, warn_v=12.5, critical_v=11.5, parent=None):
+    # Fixed trend scale; zones within it track the configured thresholds.
+    _SCALE_MIN = 21.0
+    _SCALE_MAX = 29.0
+
+    def __init__(self, warn_v=23.5, critical_v=22.0, parent=None):
         super().__init__(parent)
         self._warn_v = warn_v
         self._critical_v = critical_v
@@ -60,7 +64,14 @@ class BatteryGauge(QWidget):
         readouts.addWidget(self._amp_label, 0, 2)
         layout.addLayout(readouts)
 
-        self._trend = TrendPlot()
+        # Battery voltage sags under load and recovers at rest; bin to 30 s and
+        # plot the per-bin MAX (resting voltage) so the line tracks pack health,
+        # while the min/max band still shows the sag.  240 bins * 30 s = 2 h.
+        # Fixed 21..29 V scale with red/yellow/green zones derived from the
+        # configured critical/warn thresholds (no numeric axis labels).
+        self._trend = TrendPlot(capacity=240, bin_seconds=30.0, agg='max',
+                                y_min=self._SCALE_MIN, y_max=self._SCALE_MAX,
+                                zones=self._zones())
         layout.addWidget(self._trend, 1)
 
         self._set_level(IndicatorLevel.STALE)
@@ -74,9 +85,23 @@ class BatteryGauge(QWidget):
             return IndicatorLevel.WARN
         return IndicatorLevel.OK
 
+    def _zones(self):
+        """Red/yellow/green bands derived from the critical/warn thresholds:
+        red below critical, yellow critical..warn, green above warn — clamped
+        to the fixed trend scale."""
+        crit = max(self._SCALE_MIN, min(self._critical_v, self._SCALE_MAX))
+        warn = max(crit, min(self._warn_v, self._SCALE_MAX))
+        return [
+            (self._SCALE_MIN, crit, ERROR_COLOR),   # red:    < critical
+            (crit, warn, WARN_COLOR),               # yellow: critical..warn
+            (warn, self._SCALE_MAX, OK_COLOR),       # green:  > warn
+        ]
+
     def set_thresholds(self, warn_v, critical_v):
         self._warn_v = warn_v
         self._critical_v = critical_v
+        # Keep the trend's health zones in sync with the new thresholds.
+        self._trend.set_zones(self._zones())
 
     def set_battery(self, voltage=None, percentage=None, current=None,
                     stale=False):

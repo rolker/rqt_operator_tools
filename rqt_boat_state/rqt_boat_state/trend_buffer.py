@@ -1,103 +1,152 @@
-"""Qt-free ring buffer backing the TrendPlot sparklines.
+"""Qt-free, time-binned ring buffer backing the TrendPlot sparklines.
 
-Split out from ``trend_plot.py`` so the wraparound / min-max / window-sizing
-logic can be unit-tested without importing Qt or needing a display.  The
-QPainter widget in ``trend_plot.py`` owns one of these and only reads from it.
+Split out from ``trend_plot.py`` so the binning / window-sizing logic can be
+unit-tested without importing Qt or needing a display.  The QPainter widget in
+``trend_plot.py`` owns one of these and only reads from it.
 """
 
 import math
 
 
 class TrendBuffer:
-    """Fixed-capacity ring buffer of (min, max) samples for a sparkline.
+    """Time-binned history of a scalar for a sparkline.
 
-    Capacity is counted in *samples* (slots), not wall-clock time: the
-    default 720 holds the most recent 720 pushes.  The wall-clock window the
-    buffer spans therefore depends on how fast the owner pushes — at a
-    nominal 1 sample / 10 s it would be ≈2 h (720 × 10 s), but the boat-state
-    panel currently pushes once per received message (no decimation), so the
-    real span tracks message arrival rate.  Each slot keeps the min and max
-    of the values folded into it so a decimated plot still shows excursions;
-    with one ``push`` per slot min == max == the pushed value.
+    Samples are folded into fixed-duration **time bins** (``bin_seconds``)
+    rather than counted one-per-slot, so the span the plot covers is a real
+    wall-clock window — ``capacity * bin_seconds`` — independent of how fast
+    samples arrive.  The default 240 bins * 30 s = **2 h**.  (The previous
+    sample-counted buffer spanned only seconds at a 75 Hz feed; binning fixes
+    that.)
 
-    Non-finite samples (NaN/inf) are ignored so a NaN ``SoundSpeed`` does not
-    poison the trend.
+    Each finalized bin retains:
+
+    * ``min`` / ``max`` of the samples folded into it — the plot's excursion
+      band, so e.g. a battery's under-load voltage *sag* still shows; and
+    * one ``agg`` value — the plot's line — selected per channel:
+
+      - ``'max'``  peak in the bin (battery *resting* voltage; sag shows in band)
+      - ``'min'``  trough
+      - ``'mean'`` average
+      - ``'last'`` most recent sample
+
+    The currently-open (in-progress) bin is included in the readouts so live
+    data appears without waiting a full ``bin_seconds`` to finalize.  Non-finite
+    samples or timestamps are ignored so a NaN ``SoundSpeed`` cannot poison the
+    trend.
     """
 
-    def __init__(self, capacity: int = 720):
+    _AGGS = ('max', 'min', 'mean', 'last')
+
+    def __init__(self, capacity: int = 240, bin_seconds: float = 30.0,
+                 agg: str = 'mean'):
         if capacity <= 0:
             raise ValueError('capacity must be positive')
+        if bin_seconds <= 0:
+            raise ValueError('bin_seconds must be positive')
+        if agg not in self._AGGS:
+            raise ValueError(f'agg must be one of {self._AGGS}, got {agg!r}')
         self._capacity = capacity
-        self._mins: list = []
-        self._maxs: list = []
-        self._start = 0  # index of the oldest sample once full
+        self._bin_seconds = float(bin_seconds)
+        self._agg = agg
+        self._bins: list = []   # finalized (min, max, value), chronological
+        self._cur = None        # open bin dict, or None
 
     @property
     def capacity(self) -> int:
         return self._capacity
 
-    def __len__(self) -> int:
-        return len(self._mins)
+    @property
+    def bin_seconds(self) -> float:
+        return self._bin_seconds
 
-    def is_full(self) -> bool:
-        return len(self._mins) >= self._capacity
+    @property
+    def window_seconds(self) -> float:
+        """Wall-clock span the buffer covers once full."""
+        return self._capacity * self._bin_seconds
 
     def clear(self):
-        self._mins.clear()
-        self._maxs.clear()
-        self._start = 0
+        self._bins = []
+        self._cur = None
 
-    def push(self, value, vmax=None):
-        """Append a sample, dropping the oldest once at capacity.
+    def add(self, value, t):
+        """Fold *value* (stamped at time *t*, seconds) into its time bin.
 
-        With a single argument the slot's min and max are both *value*.  Pass
-        *vmax* to fold a pre-aggregated (min, max) pair into one slot.  Non-
-        finite samples are silently ignored.
+        Non-finite values/timestamps are silently ignored.  Crossing a bin
+        boundary finalizes the open bin into the ring (dropping the oldest once
+        over capacity) and opens a new one.
         """
-        vmin = value
-        if vmax is None:
-            vmax = value
         try:
-            vmin = float(vmin)
-            vmax = float(vmax)
+            v = float(value)
+            tt = float(t)
         except (TypeError, ValueError):
             return
-        if not (math.isfinite(vmin) and math.isfinite(vmax)):
+        if not (math.isfinite(v) and math.isfinite(tt)):
             return
-        if vmin > vmax:
-            vmin, vmax = vmax, vmin
 
-        if not self.is_full():
-            self._mins.append(vmin)
-            self._maxs.append(vmax)
-            return
-        # Full: overwrite the oldest slot and advance the ring start.
-        self._mins[self._start] = vmin
-        self._maxs[self._start] = vmax
-        self._start = (self._start + 1) % self._capacity
+        bin_start = math.floor(tt / self._bin_seconds) * self._bin_seconds
+        if self._cur is None:
+            self._cur = self._new_bin(bin_start, v)
+        elif bin_start > self._cur['t0']:
+            self._finalize()
+            self._cur = self._new_bin(bin_start, v)
+        else:
+            # Same bin (or a slightly out-of-order sample for the open bin):
+            # fold it in.
+            c = self._cur
+            if v < c['min']:
+                c['min'] = v
+            if v > c['max']:
+                c['max'] = v
+            c['sum'] += v
+            c['count'] += 1
+            c['last'] = v
 
-    def values(self) -> list:
-        """Mid-points oldest→newest (``(min+max)/2`` per slot)."""
-        return [(lo + hi) * 0.5 for lo, hi in self._pairs()]
+    @staticmethod
+    def _new_bin(t0, v):
+        return {'t0': t0, 'min': v, 'max': v, 'sum': v, 'count': 1, 'last': v}
+
+    def _finalize(self):
+        self._bins.append(self._bin_tuple(self._cur))
+        if len(self._bins) > self._capacity:
+            self._bins = self._bins[-self._capacity:]
+        self._cur = None
+
+    def _bin_tuple(self, c):
+        if self._agg == 'max':
+            val = c['max']
+        elif self._agg == 'min':
+            val = c['min']
+        elif self._agg == 'last':
+            val = c['last']
+        else:  # mean
+            val = c['sum'] / c['count']
+        return (c['min'], c['max'], val)
+
+    def _all(self) -> list:
+        """Finalized bins plus the open bin, clipped to the window, oldest→newest."""
+        bins = list(self._bins)
+        if self._cur is not None:
+            bins.append(self._bin_tuple(self._cur))
+        return bins[-self._capacity:]
+
+    def __len__(self) -> int:
+        return len(self._all())
+
+    def is_full(self) -> bool:
+        return len(self._bins) >= self._capacity
 
     def minmax_pairs(self) -> list:
-        """``(min, max)`` per slot, oldest→newest."""
-        return list(self._pairs())
+        """``(min, max)`` per bin, oldest→newest — the excursion band."""
+        return [(mn, mx) for mn, mx, _ in self._all()]
+
+    def values(self) -> list:
+        """The per-bin aggregate (line), oldest→newest."""
+        return [val for _, _, val in self._all()]
 
     def value_range(self):
-        """Overall ``(min, max)`` across the buffer, or ``None`` when empty."""
-        if not self._mins:
+        """Overall ``(min, max)`` across the window, or ``None`` when empty."""
+        allbins = self._all()
+        if not allbins:
             return None
-        return (min(self._mins), max(self._maxs))
-
-    def _pairs(self):
-        """Yield (min, max) slots in chronological (oldest→newest) order."""
-        n = len(self._mins)
-        if n < self._capacity:
-            # Not yet wrapped: stored in insertion order.
-            for i in range(n):
-                yield self._mins[i], self._maxs[i]
-        else:
-            for k in range(self._capacity):
-                i = (self._start + k) % self._capacity
-                yield self._mins[i], self._maxs[i]
+        return (min(mn for mn, _, _ in allbins),
+                max(mx for _, mx, _ in allbins))
