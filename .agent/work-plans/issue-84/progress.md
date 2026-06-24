@@ -226,3 +226,43 @@ Lifecycle: **Local Review** → **address-findings** (verdict is changes-request
 Lifecycle: **Implementation** → **review-code** (re-review the fixes). Hand off to a fresh-context sub-agent:
 
     .agent/scripts/dispatch_subagent.sh --mode in-process --issue 84 --skill review-code
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-24 01:07 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-84 at `c106ee4` (code tip `474dd4d`)
+**Mode**: pre-push
+**Depth**: Deep (reason: new safety-relevant operator display, 2721 lines / 25 files, FCU/RC authority logic)
+**Must-fix**: 0 | **Suggestions**: 1
+**Round**: 3 | **Ship**: recommended — round-1 (2 mf) and round-2 (3 mf) findings all verified fixed; two fresh Deep adversarial passes surfaced zero genuine must-fixes. Converged.
+
+Round-2 findings (3 must-fix, 4 suggestions) all verified genuinely addressed in code: BEST_EFFORT `qos_profile_sensor_data` on telemetry sources, `CenterZeroGauge.mark_stale`/`mark_commanded_stale` + `SpeedGauge.mark_commanded_stale` wired into the 1 Hz sweep, heading finiteness-gated in `_on_odom`, dead `velocity_frame` removed, `_last_update` seeded `None`, torn-down-source guard in `_handle_message`. pyflakes clean; pytest 68/68. Two Deep adversarial passes (logic + systemic/lifecycle) returned two "must-fix" candidates, both dismissed on verification (see Findings).
+
+### Findings
+- [ ] (suggestion) `pwm_to_unit` returns `1.0` (full deflection) for a non-finite arg: `max(-1, min(1, NaN))` → `1.0`. Unreachable from the live path — `RCOut.channels` is `sequence<uint16>` (no NaN/inf), `pwm_center` is spinbox-bounded, `pwm_half_range<=0` is guarded — so a finiteness gate in `channel_unit_value`/`pwm_to_unit` is defensive consistency only (the public Qt-free API could be fed bad input by a test/caller). — `config_model.py:82`
+
+**Dismissed (false positives, recorded so they don't resurface in triage):**
+- Lens B flagged `_RELIABLE_DEPTH = 10` (a bare int) passed as `qos` to `create_subscription` as a TypeError/safety bug. **False positive** — rclpy's `_validate_qos_or_depth_parameter` accepts an `int` and returns `QoSProfile(depth=10)` (RELIABLE default); passing a depth int is idiomatic. — `boat_state_widget.py:53`
+- The ~150 `ament_flake8` D-series (missing-docstring) / I-series (import-order) nits are repo convention — the sibling `rqt_annunciator` carries the same class/count and the package does not run `ament_flake8` in CI. The genuinely-bad statics (F401, A003) were already fixed in round 1; `pyflakes` is now clean. Not findings.
+
+### Governance
+- **Human-control transparency** — Pass (strong): the authority banner makes the active driver visible at all times; commanded overlays grey under stale RC; staleness/NaN gating blanks rather than showing frozen/garbage data as live.
+- **Fail-safe display** — Pass: per-source 1 Hz staleness sweep greys every overlay on its own source's silence; non-finite telemetry blanks to `---`/`—`.
+- **ADR-0008 (ROS 2 package conventions)** — Compliant: `package.xml` format 3, BSD-3-Clause, correct `exec_depend` tags (incl. `marine_interfaces`), `ament_python` + `rqt_gui` plugin export; no per-file SPDX headers, matching repo convention (documented deviation).
+
+### Plan Adherence
+Implementation matches `plan.md`; deviations (`trend_buffer.py` split out for Qt-free tests, `boat_state_standalone.py` entry point, gauge file-count reconciliation) are documented in the Implementation entries. No undisclosed scope creep.
+
+### Summary
+Round-3 re-review of the new `rqt_boat_state` safety panel. All round-1/round-2 must-fixes verified fixed; two fresh Deep adversarial passes found no genuine must-fix (both candidates dismissed on verification). One optional defensive-consistency suggestion remains, unreachable from the live ROS path. Tests 68/68, pyflakes clean. The diff is shippable.
+
+### Recommended Actions
+- [ ] (optional) Add a finiteness gate to `channel_unit_value`/`pwm_to_unit` for parity with the other gauge NaN gates — defensive only; not required before push.
+
+### Next step
+Lifecycle: **Local Review** (approved) → push / open PR → **triage-reviews**. Verdict is **approved** with 0 must-fix, so the diff is ready to push. Hand off to a fresh-context sub-agent after pushing:
+
+    .agent/scripts/dispatch_subagent.sh --mode in-process --issue 84 --skill triage-reviews
