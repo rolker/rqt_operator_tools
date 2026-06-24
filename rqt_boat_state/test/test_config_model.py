@@ -139,7 +139,7 @@ class TestConfigRoundTrip:
         cfg = BoatStateConfig()
         assert cfg.odom_topic == '/bizzy/odom'
         assert cfg.rc_channel_map == {'throttle': [0, 1], 'steering': [2, 3]}
-        assert cfg.velocity_frame == 'ENU'
+        assert cfg.velocity_reference == 'ground'
 
     def test_yaml_roundtrip(self):
         cfg = BoatStateConfig(

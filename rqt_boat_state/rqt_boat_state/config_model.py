@@ -269,10 +269,10 @@ class BoatStateConfig:
     pwm_center: float = 1500.0
     pwm_half_range: float = 500.0
 
-    # Velocity convention.  The odom from mru_transform is ENU (REP-103);
-    # the body/ground distinction is documentary — ‖twist.linear‖ (SOG) is
-    # invariant under it.
-    velocity_frame: str = 'ENU'  # 'ENU' or 'NED'
+    # Velocity convention.  The odom from mru_transform is always ENU (REP-103),
+    # so there is no frame selector to get wrong; ``velocity_reference`` only
+    # chooses whether the COG arrow reads ``twist.linear`` as ground- or
+    # body-frame (SOG itself is frame-invariant).
     velocity_reference: str = 'ground'  # 'ground' or 'body'
 
     # Gauge ranges / gates.
@@ -324,7 +324,6 @@ class BoatStateConfig:
             'rc_channel_map': {k: list(v) for k, v in self.rc_channel_map.items()},
             'pwm_center': self.pwm_center,
             'pwm_half_range': self.pwm_half_range,
-            'velocity_frame': self.velocity_frame,
             'velocity_reference': self.velocity_reference,
             'cog_min_speed': self.cog_min_speed,
             'speed_arc_max': self.speed_arc_max,
@@ -363,7 +362,6 @@ class BoatStateConfig:
             rc_channel_map=channel_map,
             pwm_center=d.get('pwm_center', defaults.pwm_center),
             pwm_half_range=d.get('pwm_half_range', defaults.pwm_half_range),
-            velocity_frame=d.get('velocity_frame', defaults.velocity_frame),
             velocity_reference=d.get(
                 'velocity_reference', defaults.velocity_reference),
             cog_min_speed=d.get('cog_min_speed', defaults.cog_min_speed),

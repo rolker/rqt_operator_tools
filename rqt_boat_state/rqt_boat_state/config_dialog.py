@@ -91,11 +91,6 @@ class ConfigDialog(QDialog):
         conv_help.setStyleSheet('color: #888; font-size: 10px;')
         conv_form.addRow(conv_help)
 
-        self._frame_combo = QComboBox()
-        self._frame_combo.addItems(['ENU', 'NED'])
-        self._frame_combo.setCurrentText(config.velocity_frame)
-        conv_form.addRow('Velocity frame:', self._frame_combo)
-
         self._reference_combo = QComboBox()
         self._reference_combo.addItems(['ground', 'body'])
         self._reference_combo.setCurrentText(config.velocity_reference)
@@ -161,7 +156,6 @@ class ConfigDialog(QDialog):
             rc_channel_map=channel_map,
             pwm_center=self._pwm_center_spin.value(),
             pwm_half_range=self._pwm_half_spin.value(),
-            velocity_frame=self._frame_combo.currentText(),
             velocity_reference=self._reference_combo.currentText(),
             cog_min_speed=self._cog_min_spin.value(),
             speed_arc_max=self._speed_max_spin.value(),
