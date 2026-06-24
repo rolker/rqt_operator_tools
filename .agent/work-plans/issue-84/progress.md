@@ -146,7 +146,7 @@ Lifecycle: **implement** → **review-code**.
 - [x] (suggestion) "2-hour window" is nominal only — `add_sample` runs per-message, no 10 s decimation; reconcile docstrings/plan or decimate. — `trend_buffer.py:11`
 - [x] (suggestion) Corrupt/hand-edited config with non-int channel indices raises TypeError in `_on_rc_out`; validate element types on load. — `config_model.py:270`
 - [x] (suggestion) Invalid channel-map JSON silently discarded in the dialog with no user feedback. — `config_dialog.py:136`
-- [ ] (suggestion) Static: unused `IndicatorLevel` import (F401); `TrendBuffer.range` shadows builtin (A003). Other 25 ament_flake8 D/I nits consistent with repo convention (sibling rqt_annunciator same; CI doesn't run flake8). — `test/test_config_model.py:6`
+- [x] (suggestion) Static: unused `IndicatorLevel` import (F401); `TrendBuffer.range` shadows builtin (A003). Other 25 ament_flake8 D/I nits consistent with repo convention (sibling rqt_annunciator same; CI doesn't run flake8). — `test/test_config_model.py:6`
 
 ### Next step
 Lifecycle: **Local Review** → **address-findings** (verdict is changes-requested) → re-run **review-code** → push / open PR → **triage-reviews**. The diff is not pushed until a pre-push review returns approved.

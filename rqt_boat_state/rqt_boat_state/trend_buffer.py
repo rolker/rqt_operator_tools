@@ -84,7 +84,7 @@ class TrendBuffer:
         """``(min, max)`` per slot, oldest→newest."""
         return list(self._pairs())
 
-    def range(self):
+    def value_range(self):
         """Overall ``(min, max)`` across the buffer, or ``None`` when empty."""
         if not self._mins:
             return None

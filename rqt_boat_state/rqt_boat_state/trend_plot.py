@@ -66,7 +66,7 @@ class TrendPlot(QWidget):
         if len(pairs) < 2:
             return
 
-        rng = self._buffer.range()
+        rng = self._buffer.value_range()
         lo, hi = rng
         span = hi - lo
         if span <= 0:

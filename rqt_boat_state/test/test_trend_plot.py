@@ -51,7 +51,7 @@ class TestWraparound:
         buf.push(2)
         buf.clear()
         assert len(buf) == 0
-        assert buf.range() is None
+        assert buf.value_range() is None
 
 
 class TestMinMax:
@@ -70,7 +70,7 @@ class TestMinMax:
         buf.push(3)
         buf.push(1, 9)
         buf.push(5)
-        assert buf.range() == (1.0, 9.0)
+        assert buf.value_range() == (1.0, 9.0)
 
     def test_midpoint_values(self):
         buf = TrendBuffer(capacity=2)

@@ -6,7 +6,6 @@ import math
 from rqt_boat_state.config_model import (
     AuthoritySource,
     BoatStateConfig,
-    IndicatorLevel,
     enu_yaw_to_compass,
     mps_to_knots,
     pwm_to_unit,
