@@ -16,10 +16,11 @@ from python_qt_binding.QtWidgets import (
     QGroupBox,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QVBoxLayout,
 )
 
-from .config_model import BoatStateConfig
+from .config_model import BoatStateConfig, _coerce_channel_map
 
 
 class ConfigDialog(QDialog):
@@ -137,9 +138,14 @@ class ConfigDialog(QDialog):
             channel_map = json.loads(self._channel_map_edit.text())
             if not isinstance(channel_map, dict):
                 raise ValueError
-            channel_map = {k: list(v) for k, v in channel_map.items()}
+            channel_map = _coerce_channel_map(channel_map)
         except (ValueError, TypeError):
             channel_map = self._base_config.rc_channel_map
+            QMessageBox.warning(
+                self, 'Invalid channel map',
+                'The RC channel map is not valid JSON; keeping the previous '
+                'value:\n\n'
+                f'{json.dumps(channel_map)}')
 
         return BoatStateConfig(
             odom_topic=self._topic_edits['odom'].text(),
