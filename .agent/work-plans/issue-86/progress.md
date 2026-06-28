@@ -213,3 +213,33 @@ is published operator-side, so the resolved absolute topic must be added to the
 - Persistent overlay of confirmed contacts → #59 (the waterfall scrolls, so a
   fixed widget-pixel rect would mislead; the published Contact + `RCLCPP_INFO` is
   the durable confirmation for this near-term tool).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-28 16:42 +0000
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-86 at `3479f73`
+**Mode**: pre-push
+**Depth**: Deep (reason: 200+ lines, 17 files, coordinate math + executor-thread TF/concurrency)
+**Must-fix**: 1 | **Suggestions**: 4
+**Round**: 1 | **Ship**: continue — one genuine correctness must-fix, low-effort fix
+
+Static analysis (cpplint + uncrustify) clean; reviewed against local `origin/jazzy`
+(offline, may be slightly stale). Two disjoint-lens Claude Adversarial passes;
+Copilot off (default). Both prior plan-review must-fixes (#1 ECEF/ENU split, #2
+`combine_rows` pose propagation) confirmed resolved and tested. Plan adherence strong.
+
+Dismissed as false positives (verified): `mark_counter_` atomic race (slot runs on
+GUI thread via AutoConnection, single-threaded access); int32 `sec` cast "2038
+overflow" (matches `builtin_interfaces/Time.sec` int32 by design); poses/stamps
+length assertion + publisher QoS + quaternion normalization (defensive-only).
+
+### Findings
+- [ ] (must-fix) Non-uniform scale: `range_at_x()` uses only the newest row's `display_half_width_` for all spanned rows, so a box marked with "Uniform scale" off + varying per-ping range yields a silently wrong Contact — `rqt_sonar_waterfall/src/waterfall_widget.cpp:296`
+- [ ] (suggestion) Carry original `builtin_interfaces/Time` (sec/nanosec) through `WaterfallRow` for an exact TF lookup stamp instead of re-splitting the flattened double — `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp:709`
+- [ ] (suggestion) Make the world frame (`"earth"`) configurable via settings rather than hard-coded — `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp:715`
+- [ ] (suggestion) Strengthen `MarkModeDragEmitsBox…` to assert the spanned-row count/indices, not just non-empty — `rqt_sonar_waterfall/test/test_waterfall_widget.cpp:240`
+- [ ] (suggestion) Add an operator status cue when a drag lands on un-markable (no-pose) rows — `rqt_sonar_waterfall/src/waterfall_widget.cpp:307`
+- [ ] (governance) File a tracking issue for the cross-repo operator-bag `record:` update (new `sonar_waterfall/contacts` topic) in `unh_echoboats_project11`
