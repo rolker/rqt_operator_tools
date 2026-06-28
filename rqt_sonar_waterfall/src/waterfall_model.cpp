@@ -173,6 +173,15 @@ std::optional<WaterfallRow> combine_rows(
   // superseded.
   combined.stamp = std::max(
     port ? port->stamp : 0.0, starboard ? starboard->stamp : 0.0);
+  // Propagate the per-ping pose metadata (issue #86) so the combined row stays
+  // markable: post_row() resolves sensor_to_earth from sensor_frame downstream,
+  // and a fresh WaterfallRow would otherwise drop it. A combined sidescan row
+  // represents one vessel pose, so either transducer frame georeferences it;
+  // prefer port for determinism, falling back to starboard.
+  const WaterfallRow & pose_src = port ? *port : *starboard;
+  combined.sensor_frame = pose_src.sensor_frame;
+  combined.sensor_to_earth = pose_src.sensor_to_earth;
+  combined.has_pose = pose_src.has_pose;
   return combined;
 }
 

@@ -102,3 +102,47 @@ TEST(CombineRows, NeitherReturnsNullopt)
 {
   EXPECT_FALSE(combine_rows(std::nullopt, std::nullopt).has_value());
 }
+
+TEST(CombineRows, PropagatesPoseFromPort)
+{
+  // A fresh combined row must carry the per-ping pose fields (issue #86), or the
+  // downstream TF lookup in post_row() has no source frame and the row is
+  // un-markable. Port is preferred when both sides are present.
+  WaterfallRow p = row({1, 2}, 30.0, 10.0);
+  p.sensor_frame = "bizzy/sidescan_port";
+  p.has_pose = true;
+  p.sensor_to_earth.translation.x = 11.0;
+  p.sensor_to_earth.rotation.w = 1.0;
+
+  WaterfallRow s = row({4, 5}, 25.0, 12.0);
+  s.sensor_frame = "bizzy/sidescan_starboard";
+  s.has_pose = true;
+
+  auto out = combine_rows(p, s);
+  ASSERT_TRUE(out.has_value());
+  EXPECT_EQ(out->sensor_frame, "bizzy/sidescan_port");  // port preferred
+  EXPECT_TRUE(out->has_pose);
+  EXPECT_DOUBLE_EQ(out->sensor_to_earth.translation.x, 11.0);
+  EXPECT_DOUBLE_EQ(out->sensor_to_earth.rotation.w, 1.0);
+}
+
+TEST(CombineRows, PropagatesPoseFromStarboardWhenPortAbsent)
+{
+  WaterfallRow s = row({4, 5}, 20.0, 7.0);
+  s.sensor_frame = "bizzy/sidescan_starboard";
+  s.has_pose = true;
+
+  auto out = combine_rows(std::nullopt, s);
+  ASSERT_TRUE(out.has_value());
+  EXPECT_EQ(out->sensor_frame, "bizzy/sidescan_starboard");
+  EXPECT_TRUE(out->has_pose);
+}
+
+TEST(CombineRows, PoseDefaultsUnsetWhenSidesHaveNone)
+{
+  // Sides without a resolved pose leave the combined row un-markable, not stale.
+  auto out = combine_rows(row({1, 2}, 0.0, 0.0), row({7, 8, 9}, 0.0, 0.0));
+  ASSERT_TRUE(out.has_value());
+  EXPECT_FALSE(out->has_pose);
+  EXPECT_TRUE(out->sensor_frame.empty());
+}

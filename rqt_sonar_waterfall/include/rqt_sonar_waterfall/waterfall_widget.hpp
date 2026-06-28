@@ -32,16 +32,38 @@
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLWidget>
 
+#include <QPoint>
+
 #include <cstddef>
 #include <utility>
+#include <vector>
 
 #include "rqt_sonar_waterfall/color_map.hpp"
 #include "rqt_sonar_waterfall/gpu_color_map.hpp"
 #include "rqt_sonar_waterfall/waterfall_buffer.hpp"
 #include "rqt_sonar_waterfall/waterfall_model.hpp"
 
+class QMouseEvent;
+
 namespace rqt_sonar_waterfall
 {
+
+/// A target box the operator dragged over the waterfall (issue #86).
+///
+/// The widget owns the buffer/ring/scroll state, so it resolves the drag rect
+/// into both the across-track range bounds and the spanned rows (each carrying
+/// its per-ping pose) before emitting. The plugin georeferences and publishes a
+/// Contact from this — it never has to replicate widget-internal scroll geometry.
+struct MarkBox
+{
+  /// Signed across-track display range (metres) at the box's left/right edges;
+  /// negative = port/left. `is_ground` says whether the axis is ground range.
+  double range_left_m = 0.0;
+  double range_right_m = 0.0;
+  bool is_ground = false;
+  /// Rows spanned by the box, oldest-first.
+  std::vector<WaterfallRow> rows;
+};
 
 /// Scrolling backscatter waterfall canvas, rendered on the GPU.
 ///
@@ -101,13 +123,28 @@ public:
   /// TVG slope exponent (R/ref)^slope; <=0 is identity. Re-derives the cache.
   void set_tvg_slope(float slope);
 
+  // --- target marking (issue #86) ---
+  /// Enable box-drag target marking. While on, a left-drag draws a selection box
+  /// and emits boxMarked() on release; the normal view controls are unaffected.
+  void set_mark_mode(bool enabled);
+  bool mark_mode() const {return mark_mode_;}
+
   bool frozen() const {return frozen_;}
   std::size_t history() const {return buffer_.capacity();}
+
+Q_SIGNALS:
+  /// Emitted when the operator finishes dragging a target box (mark mode only,
+  /// and only when the box is non-degenerate over a metric, georeferenceable
+  /// display). Carries the resolved range bounds + spanned rows.
+  void boxMarked(const rqt_sonar_waterfall::MarkBox & box);
 
 protected:
   void initializeGL() override;
   void resizeGL(int w, int h) override;
   void paintGL() override;
+  void mousePressEvent(QMouseEvent * event) override;
+  void mouseMoveEvent(QMouseEvent * event) override;
+  void mouseReleaseEvent(QMouseEvent * event) override;
 
 private:
   /// (Re)upload the whole buffer to the intensity texture. Must run with the GL
@@ -130,6 +167,13 @@ private:
   void ensure_tvg_cache();
   /// Compute one row's TVG-corrected samples + extremes for the current slope.
   void compute_row_tvg(WaterfallRow & row) const;
+  /// Signed across-track display range (axis units) at widget pixel column `x`,
+  /// using the most recent render's half-width. Negative = port/left.
+  double range_at_x(int x) const;
+  /// Copies of the buffered rows whose displayed band falls within the inclusive
+  /// pixel span [y_top, y_bottom], oldest-first. Maps screen Y -> buffer index
+  /// using the newest-at-top layout the renderer draws.
+  std::vector<WaterfallRow> rows_in_y_range(int y_top, int y_bottom) const;
 
   WaterfallBuffer buffer_;
   GpuColorMap gpu_;
@@ -175,6 +219,12 @@ private:
   bool display_is_ground_ = false;   ///< axis is ground range
   bool display_metric_ = false;      ///< axis is metres (label with "m")
   bool depth_missing_ = false;       ///< ground requested but newest row has no altitude
+
+  // --- target marking state (issue #86) ---
+  bool mark_mode_ = false;     ///< box-drag marking enabled
+  bool marking_ = false;       ///< a drag is in progress
+  QPoint mark_start_;          ///< drag anchor (widget pixels)
+  QPoint mark_current_;        ///< current drag corner (widget pixels)
 };
 
 }  // namespace rqt_sonar_waterfall

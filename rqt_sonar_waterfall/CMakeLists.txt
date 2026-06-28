@@ -19,6 +19,21 @@ find_package(marine_radar_control_msgs REQUIRED)
 find_package(marine_colormap REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
+# Target marking (issue #86): Contact builder + msgs + TF + geodesy.
+find_package(geometry_msgs REQUIRED)
+find_package(marine_interfaces REQUIRED)
+find_package(geographic_msgs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(marine_perception_tools REQUIRED)
+# GeographicLib ships a Find module (not a CMake Config) under the system cmake
+# dir on Debian/Ubuntu, so add it to the module path before find_package resolves
+# it in MODULE mode. (Geocentric::Reverse converts the marked-box centroid from
+# ECEF to geodetic for the Contact's geo_pose.)
+if(EXISTS "/usr/share/cmake/geographiclib")
+  list(APPEND CMAKE_MODULE_PATH "/usr/share/cmake/geographiclib")
+endif()
+find_package(GeographicLib REQUIRED)
 find_package(Qt5 COMPONENTS Widgets Gui OpenGL REQUIRED)
 
 set(CMAKE_AUTOMOC ON)
@@ -28,6 +43,7 @@ set(${PROJECT_NAME}_HEADERS
   include/${PROJECT_NAME}/sonar_waterfall_plugin.hpp
   include/${PROJECT_NAME}/waterfall_widget.hpp
   include/${PROJECT_NAME}/waterfall_model.hpp
+  include/${PROJECT_NAME}/contact_georef.hpp
   include/${PROJECT_NAME}/row_extractor.hpp
   include/${PROJECT_NAME}/waterfall_buffer.hpp
   include/${PROJECT_NAME}/color_map.hpp
@@ -42,6 +58,7 @@ set(${PROJECT_NAME}_SOURCES
   src/sonar_waterfall_plugin.cpp
   src/waterfall_widget.cpp
   src/waterfall_model.cpp
+  src/contact_georef.cpp
   src/row_extractor.cpp
   src/waterfall_buffer.cpp
   src/color_map.cpp
@@ -74,9 +91,19 @@ ament_target_dependencies(${PROJECT_NAME}
   marine_colormap
   sensor_msgs
   ament_index_cpp
+  geometry_msgs
+  marine_interfaces
+  geographic_msgs
+  tf2
+  tf2_ros
 )
 
-target_link_libraries(${PROJECT_NAME} Qt5::Widgets Qt5::Gui Qt5::OpenGL)
+target_include_directories(${PROJECT_NAME} PRIVATE ${GeographicLib_INCLUDE_DIRS})
+target_link_libraries(${PROJECT_NAME}
+  Qt5::Widgets Qt5::Gui Qt5::OpenGL
+  marine_perception_tools::contact_builder
+  ${GeographicLib_LIBRARIES}
+)
 
 pluginlib_export_plugin_description_file(rqt_gui plugin.xml)
 
@@ -114,21 +141,31 @@ if(BUILD_TESTING)
     src/waterfall_model.cpp
   )
   target_include_directories(test_decode_samples PRIVATE include)
-  ament_target_dependencies(test_decode_samples marine_acoustic_msgs)
+  ament_target_dependencies(test_decode_samples marine_acoustic_msgs geometry_msgs)
 
   ament_add_gtest(test_combine_rows
     test/test_combine_rows.cpp
     src/waterfall_model.cpp
   )
   target_include_directories(test_combine_rows PRIVATE include)
-  ament_target_dependencies(test_combine_rows marine_acoustic_msgs)
+  ament_target_dependencies(test_combine_rows marine_acoustic_msgs geometry_msgs)
+
+  # Pixel/pose -> ground-range + ENU extent + geodetic centroid (issue #86).
+  ament_add_gtest(test_contact_georef
+    test/test_contact_georef.cpp
+    src/contact_georef.cpp
+  )
+  target_include_directories(test_contact_georef PRIVATE include ${GeographicLib_INCLUDE_DIRS})
+  ament_target_dependencies(test_contact_georef geometry_msgs marine_interfaces)
+  target_link_libraries(test_contact_georef
+    marine_perception_tools::contact_builder ${GeographicLib_LIBRARIES})
 
   ament_add_gtest(test_ground_resample
     test/test_ground_resample.cpp
     src/waterfall_model.cpp
   )
   target_include_directories(test_ground_resample PRIVATE include)
-  ament_target_dependencies(test_ground_resample marine_acoustic_msgs)
+  ament_target_dependencies(test_ground_resample marine_acoustic_msgs geometry_msgs)
 
   ament_add_gtest(test_single_beam_extractor
     test/test_single_beam_extractor.cpp
@@ -136,27 +173,28 @@ if(BUILD_TESTING)
     src/waterfall_model.cpp
   )
   target_include_directories(test_single_beam_extractor PRIVATE include)
-  ament_target_dependencies(test_single_beam_extractor marine_acoustic_msgs)
+  ament_target_dependencies(test_single_beam_extractor marine_acoustic_msgs geometry_msgs)
 
   ament_add_gtest(test_waterfall_buffer
     test/test_waterfall_buffer.cpp
     src/waterfall_buffer.cpp
   )
   target_include_directories(test_waterfall_buffer PRIVATE include)
-  ament_target_dependencies(test_waterfall_buffer marine_acoustic_msgs)
+  ament_target_dependencies(test_waterfall_buffer marine_acoustic_msgs geometry_msgs)
 
   ament_add_gtest(test_color_map
     test/test_color_map.cpp
     src/color_map.cpp
   )
   target_include_directories(test_color_map PRIVATE include)
-  ament_target_dependencies(test_color_map marine_acoustic_msgs marine_colormap)
+  ament_target_dependencies(test_color_map marine_acoustic_msgs marine_colormap geometry_msgs)
 
   ament_add_gtest(test_waterfall_widget
     test/test_waterfall_widget.cpp
   )
   target_include_directories(test_waterfall_widget PRIVATE include)
-  ament_target_dependencies(test_waterfall_widget marine_acoustic_msgs marine_colormap)
+  ament_target_dependencies(test_waterfall_widget
+    marine_acoustic_msgs marine_colormap geometry_msgs)
   # Link the main library so the widget's MOC metaobjects are available.
   # Gui/OpenGL for QOpenGLWidget + the offscreen GL context the test creates.
   target_link_libraries(test_waterfall_widget
@@ -170,7 +208,7 @@ if(BUILD_TESTING)
     src/waterfall_model.cpp
   )
   target_include_directories(test_ping_pairer PRIVATE include)
-  ament_target_dependencies(test_ping_pairer marine_acoustic_msgs)
+  ament_target_dependencies(test_ping_pairer marine_acoustic_msgs geometry_msgs)
 
   ament_add_gtest(test_topic_filter
     test/test_topic_filter.cpp
@@ -214,6 +252,9 @@ ament_export_targets(export_${PROJECT_NAME})
 ament_export_dependencies(
   rclcpp rqt_gui_cpp qt_gui_cpp pluginlib marine_acoustic_msgs
   marine_radar_control_msgs ament_index_cpp marine_colormap sensor_msgs Qt5
+  # Public headers expose these (WaterfallRow's Transform, the plugin's Contact +
+  # TF members, contact_georef.hpp's MapPoint), so downstream consumers need them.
+  geometry_msgs marine_interfaces tf2_ros marine_perception_tools
 )
 
 ament_package()

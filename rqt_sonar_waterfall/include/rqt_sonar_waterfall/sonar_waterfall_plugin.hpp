@@ -37,14 +37,18 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 
 #include <marine_acoustic_msgs/msg/raw_sonar_image.hpp>
+#include <marine_interfaces/msg/contact.hpp>
 #include <marine_radar_control_msgs/msg/radar_control_set.hpp>
 #include <marine_radar_control_msgs/msg/radar_control_value.hpp>
 #include <sensor_msgs/msg/range.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <tf2_ros/buffer.h>  // NOLINT(build/include_order)
+#include <tf2_ros/transform_listener.h>  // NOLINT(build/include_order)
 
 #include "rqt_sonar_waterfall/ping_pairer.hpp"
 #include "rqt_sonar_waterfall/row_extractor.hpp"
@@ -62,6 +66,7 @@ namespace rqt_sonar_waterfall
 
 class WaterfallWidget;
 class ControlPanel;
+struct MarkBox;
 
 /// rqt plugin entry point for the sonar backscatter waterfall viewer.
 ///
@@ -110,6 +115,9 @@ private:
   void post_row(const WaterfallRow & row);
   void maybe_seed_manual_range(uint32_t dtype);
   void update_active_sides();
+  /// Georeference an operator-marked box and publish a marine_interfaces/Contact
+  /// (ORIGIN_HUMAN, STATUS_PROPOSED, BOX) for the operator bag (issue #86).
+  void on_box_marked(const MarkBox & box);
 
   QPointer<WaterfallWidget> widget_;
   QComboBox * port_combo_ = nullptr;
@@ -142,6 +150,18 @@ private:
   QDoubleSpinBox * density_spin_ = nullptr;
   QCheckBox * tvg_check_ = nullptr;
   QDoubleSpinBox * tvg_slope_spin_ = nullptr;
+
+  // Target marking (issue #86): a toggle button drives the widget's mark mode;
+  // marked boxes are georeferenced via TF and published as Contacts.
+  QPushButton * mark_button_ = nullptr;
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+  rclcpp::Publisher<marine_interfaces::msg::Contact>::SharedPtr contact_pub_;
+  /// Relative topic the marked Contacts publish on (resolves under the rqt node's
+  /// namespace). The operator bag must record the resolved absolute topic.
+  std::string contact_topic_ = "sonar_waterfall/contacts";
+  /// Monotonic counter for unique human-readable Contact ids within a session.
+  std::uint64_t mark_counter_ = 0;
 
   rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr port_sub_;
   rclcpp::Subscription<marine_acoustic_msgs::msg::RawSonarImage>::SharedPtr

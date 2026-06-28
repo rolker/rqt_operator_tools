@@ -33,6 +33,15 @@
   <depend>sensor_msgs</depend>
   <depend>ament_index_cpp</depend>
 
+  <!-- Target marking (issue #86): Contact builder + msgs, TF, and geodesy. -->
+  <depend>geometry_msgs</depend>
+  <depend>marine_interfaces</depend>
+  <depend>geographic_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>marine_perception_tools</depend>
+  <depend>geographiclib</depend>
+
   <!-- synthetic_sidescan.py test publisher -->
   <exec_depend>rclpy</exec_depend>
 

@@ -38,12 +38,15 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QImage>
+#include <QMouseEvent>
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
+#include <QPoint>
 #include <QSurfaceFormat>
 
 #include <cstddef>
 #include <memory>
+#include <vector>
 
 #include "rqt_sonar_waterfall/color_map.hpp"
 #include "rqt_sonar_waterfall/waterfall_widget.hpp"
@@ -97,6 +100,29 @@ QImage render(WaterfallWidget & w)
 {
   w.resize(64, 64);
   return w.grabFramebuffer();
+}
+
+// A metric row (per-side slant ranges set) so the display has a real range axis
+// and a marked box is georeferenceable. Centred nadir, ramp intensities.
+WaterfallRow metric_row(std::size_t width = 128, double range = 30.0)
+{
+  WaterfallRow r;
+  r.intensities.reserve(width);
+  for (std::size_t i = 0; i < width; ++i) {
+    r.intensities.push_back(static_cast<float>(i));
+  }
+  r.nadir_index = width / 2;
+  r.range_max = range;
+  r.range_max_port = range;
+  r.range_max_stbd = range;
+  return r;
+}
+
+// Deliver a synthetic mouse event to the widget (direct dispatch, GUI thread).
+void send_mouse(WaterfallWidget & w, QEvent::Type type, QPoint pos, Qt::MouseButton button)
+{
+  QMouseEvent ev(type, pos, button, button, Qt::NoModifier);
+  QApplication::sendEvent(&w, &ev);
 }
 
 class WaterfallWidgetTest : public ::testing::Test
@@ -213,4 +239,75 @@ TEST_F(WaterfallWidgetTest, HistoryCapacityClamped)
   EXPECT_EQ(w.history(), 1u);
   w.set_history(300);
   EXPECT_EQ(w.history(), 300u);
+}
+
+TEST_F(WaterfallWidgetTest, MarkModeDragEmitsBoxWithRowsAndRanges)
+{
+  WaterfallWidget w;
+  for (int i = 0; i < 8; ++i) {
+    w.add_row(metric_row());
+  }
+  render(w);  // forces a paint so the metric display geometry is established
+
+  bool fired = false;
+  rqt_sonar_waterfall::MarkBox captured;
+  QObject::connect(
+    &w, &WaterfallWidget::boxMarked,
+    [&](const rqt_sonar_waterfall::MarkBox & box) {fired = true; captured = box;});
+
+  w.set_mark_mode(true);
+  EXPECT_TRUE(w.mark_mode());
+
+  // Drag a box from upper-left to lower-right across nadir.
+  send_mouse(w, QEvent::MouseButtonPress, QPoint(10, 10), Qt::LeftButton);
+  send_mouse(w, QEvent::MouseMove, QPoint(50, 50), Qt::LeftButton);
+  send_mouse(w, QEvent::MouseButtonRelease, QPoint(50, 50), Qt::LeftButton);
+
+  ASSERT_TRUE(fired) << "a completed drag in mark mode must emit boxMarked";
+  EXPECT_FALSE(captured.rows.empty()) << "the box must resolve to spanned rows";
+  // Left edge is port (negative range), right edge starboard (positive); the box
+  // straddles nadir so the bounds bracket zero.
+  EXPECT_LT(captured.range_left_m, captured.range_right_m);
+  EXPECT_LT(captured.range_left_m, 0.0);
+  EXPECT_GT(captured.range_right_m, 0.0);
+}
+
+TEST_F(WaterfallWidgetTest, NoMarkWhenModeOff)
+{
+  WaterfallWidget w;
+  for (int i = 0; i < 4; ++i) {
+    w.add_row(metric_row());
+  }
+  render(w);
+
+  bool fired = false;
+  QObject::connect(
+    &w, &WaterfallWidget::boxMarked,
+    [&](const rqt_sonar_waterfall::MarkBox &) {fired = true;});
+
+  // Mark mode never enabled: a drag must be ignored (normal interaction).
+  send_mouse(w, QEvent::MouseButtonPress, QPoint(10, 10), Qt::LeftButton);
+  send_mouse(w, QEvent::MouseButtonRelease, QPoint(50, 50), Qt::LeftButton);
+  EXPECT_FALSE(fired);
+}
+
+TEST_F(WaterfallWidgetTest, NoMarkOnNonMetricDisplay)
+{
+  // A sample-axis (non-metric) display has no range scale, so a drag cannot be
+  // georeferenced and must not emit.
+  WaterfallWidget w;
+  for (int i = 0; i < 4; ++i) {
+    w.add_row(ramp_row(64));  // range_max_port/stbd unset -> non-metric
+  }
+  render(w);
+
+  bool fired = false;
+  QObject::connect(
+    &w, &WaterfallWidget::boxMarked,
+    [&](const rqt_sonar_waterfall::MarkBox &) {fired = true;});
+
+  w.set_mark_mode(true);
+  send_mouse(w, QEvent::MouseButtonPress, QPoint(10, 10), Qt::LeftButton);
+  send_mouse(w, QEvent::MouseButtonRelease, QPoint(50, 50), Qt::LeftButton);
+  EXPECT_FALSE(fired);
 }

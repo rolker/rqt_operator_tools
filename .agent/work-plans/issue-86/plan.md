@@ -46,37 +46,60 @@ This is a **two-repo, two-phase** change: Phase 1 touches `marine_perception_too
 5. **Enrich WaterfallRow with per-ping pose** — add `std::string sensor_frame`,
    `geometry_msgs::msg::Transform sensor_to_earth{}`, `bool has_pose = false` to
    `WaterfallRow`; populate `sensor_frame` from `RawSonarImage::header.frame_id` in
-   `SingleBeamExtractor::extract()`.
+   `SingleBeamExtractor::extract()`. **(must-fix #2)** `combine_rows()` builds a
+   fresh `WaterfallRow`, so it must propagate these three pose fields from a
+   present side (port preferred) or a combined port+stbd row loses its frame
+   before `post_row()` and becomes un-markable. Updated in `waterfall_model.cpp`
+   + covered by `test_combine_rows.cpp`.
 6. **TF lookup in post_row()** — add `tf2_ros::Buffer tf_buffer_` +
    `tf2_ros::TransformListener tf_listener_` to `SonarWaterfallPlugin`; in `post_row()`
    call `tf_buffer_.lookupTransform("earth", row.sensor_frame, stamp_as_time_point)` and
    store result in `row.sensor_to_earth` / `row.has_pose`. Non-blocking: skip if TF misses
    (row goes in the buffer with `has_pose=false`; a missed-pose row is un-markable).
-7. **Mark mode in WaterfallWidget** — add `Q_SIGNAL boxMarked(QRectF rect_in_widget)`;
-   add `bool mark_mode_` toggle + drag state (`mark_start_`, `mark_current_`,
-   `bool marking_`); implement `mousePressEvent`, `mouseMoveEvent`, `mouseReleaseEvent`;
-   draw in-progress drag rectangle via QPainter overlay in `paintGL()` (compatibility
-   profile allows QPainter post-GL draw, already used for range labels).
-8. **Georeference + publish** — add slot `on_box_marked(QRectF)` to
-   `SonarWaterfallPlugin`; on signal:
-   - Map widget pixel rect → ±ground-range metres per side using `display_half_width_`
-     + `display_is_ground_` from the widget's last render state.
-   - Find the rows spanning the dragged Y-pixel range; use the first/last row's
-     `sensor_to_earth` and `altitude` to derive 4 world-frame corner positions in
-     `"earth"` frame ENU via TF rotation + `ground_range()`.
-   - Convert centroid ECEF → geodetic (WGS84) with `GeographicLib::Geocentric::Reverse`
-     to populate `geo_pose.position` (lat/lon in degrees).
-   - Call `marine_perception_tools::make_box_contact(corners, id, source_str, "earth", stamp)`
-     then fill `contact.geo_pose` from the geodetic centroid; publish on
-     `sonar_waterfall/contacts` (default, configurable).
+7. **Mark mode in WaterfallWidget** — add `bool mark_mode_` toggle + drag state
+   (`mark_start_`, `mark_current_`, `bool marking_`); implement `mousePressEvent`,
+   `mouseMoveEvent`, `mouseReleaseEvent`; draw in-progress drag rectangle via
+   QPainter overlay in `paintGL()` (compatibility profile allows QPainter post-GL
+   draw, already used for range labels). **(plan-review suggestion)** The widget
+   owns `buffer_`/ring/scroll, so it resolves the rect → rows itself and emits a
+   `boxMarked(const MarkBox &)` carrying the across-track range bounds + the
+   spanned rows (each with its pose). The plugin never replicates scroll/ring
+   geometry from a bare `QRectF`. Helpers: `range_at_x()`, `rows_in_y_range()`.
+8. **Georeference + publish** — pure `contact_georef.{hpp,cpp}`
+   (`georeference_box()`, Qt-free, unit-tested) plus slot `on_box_marked(const
+   MarkBox &)` on `SonarWaterfallPlugin`. **(must-fix #1)** REP-105 `earth` is
+   ECEF, but `make_box_contact()` takes map-frame ENU metres — feeding ECEF deltas
+   as corners yields a rotated box with wrong dimensions. So the two concerns are
+   split:
+   - The BOX **extent** is built directly in the sensor's local frame (x =
+     alongtrack, y = athwartship metres): athwartship width = across-track ground
+     range span (from `display_half_width_`/`display_is_ground_`); alongtrack
+     length = vessel travel between the first/last marked ping's `sensor_to_earth`
+     translation. These `MapPoint` corners go to
+     `marine_perception_tools::make_box_contact(corners, id, "sidescan", frame, stamp)`
+     so `shape.dimensions` are true metres; `frame` = the sensor frame.
+   - Only the geodetic **centroid** is resolved: the centroid's sensor-frame
+     offset is rotated into ECEF by the middle ping's pose, added to its ECEF
+     origin, and converted ECEF→geodetic via `GeographicLib::Geocentric::Reverse`
+     to fill `geo_pose.position` (lat/lon/alt). Axis convention assumes REP-103
+     body (x fwd, y port/left) — see Open Questions.
+   - Publish on `sonar_waterfall/contacts` (relative; resolves under the rqt node
+     namespace).
 9. **Mark-mode toolbar button** — "Mark Target" toggle button in `build_controls_bar()`;
    connect to `widget_->set_mark_mode(bool)`.
-10. **Contact overlay** — store published contacts; render on waterfall in `paintGL()`
-    as small labelled rectangles (same QPainter pass as the drag-in-progress box).
-11. **Operator bag config** — add `/sonar_waterfall/contacts` (or namespaced equivalent)
-    to the operator bag recording config in
-    `platforms_ws/src/unh_echoboats_project11/bizzyboat_project11/config/` (verify the
-    exact file; likely `bizzyboat.yaml` under `record: topics:`).
+10. **Contact overlay** — only the in-progress drag rectangle is drawn (QPainter
+    overlay in `paintGL()`). A persistent overlay of confirmed contacts is
+    **deferred to #59**: the waterfall scrolls, so a fixed widget-pixel rect would
+    drift from the data and mislead; the published Contact (+ `RCLCPP_INFO` log) is
+    the durable confirmation for this near-term tool.
+11. **Operator bag config** — **(cross-repo follow-up, NOT in this PR)** The bag
+    config `bizzyboat.yaml` lives in a *different* repo
+    (`unh_echoboats_project11`), which is not part of the `rqt_operator_tools`
+    worktree, so it cannot be changed atomically in #86's PR. `bizzyboat.yaml`
+    has three `record:` blocks (main `/**/` logger, the operator-station bag, and
+    `/**/sonar_logger`); the marked Contact is published operator-side, so the
+    resolved absolute topic must be added to the **operator-station bag**'s
+    `record: topics:` list in that repo. Tracked as a follow-up there.
 12. **Tests**:
     - `test_waterfall_widget.cpp`: add mark-mode test — synthesize mouse events on
       offscreen widget, assert `boxMarked` signal fires with correct rect.
@@ -100,11 +123,16 @@ This is a **two-repo, two-phase** change: Phase 1 touches `marine_perception_too
 | `rqt_sonar_waterfall/src/waterfall_widget.cpp` | Mouse event handlers, drag overlay in paintGL |
 | `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp` | TF setup, `on_box_marked()`, mark button wiring |
 | `rqt_sonar_waterfall/src/row_extractor.cpp` | Populate `sensor_frame` from `RawSonarImage.header.frame_id` |
-| `rqt_sonar_waterfall/CMakeLists.txt` | Add `marine_interfaces`, `tf2_ros`, `geometry_msgs`, `marine_perception_tools::contact_builder` |
-| `rqt_sonar_waterfall/package.xml` | Add `marine_interfaces`, `tf2_ros`, `geometry_msgs` depend; `marine_perception_tools` build dep |
-| `rqt_sonar_waterfall/test/test_waterfall_widget.cpp` | Add mark-mode test |
-| `rqt_sonar_waterfall/test/test_contact_georef.cpp` | **New** — georeferencing unit test |
-| Operator bag config (`bizzyboat_project11/config/bizzyboat.yaml` or equivalent) | Add contact topic to `record: topics:` |
+| `rqt_sonar_waterfall/src/waterfall_model.cpp` | **(must-fix #2)** `combine_rows()` propagates the 3 pose fields |
+| `rqt_sonar_waterfall/include/.../contact_georef.hpp` | **New** — `georeference_box()` + `GeorefBox` (ENU extent / geodetic centroid split) |
+| `rqt_sonar_waterfall/src/contact_georef.cpp` | **New** — pure georeference impl (GeographicLib::Geocentric::Reverse) |
+| `rqt_sonar_waterfall/CMakeLists.txt` | Add `geometry_msgs`, `marine_interfaces`, `geographic_msgs`, `tf2`, `tf2_ros`, `marine_perception_tools::contact_builder`, GeographicLib |
+| `rqt_sonar_waterfall/package.xml` | Add `geometry_msgs`, `marine_interfaces`, `geographic_msgs`, `tf2`, `tf2_ros`, `marine_perception_tools`, `geographiclib` depends |
+| `rqt_sonar_waterfall/test/test_waterfall_widget.cpp` | Add mark-mode tests (drag→signal; off-mode + non-metric negatives) |
+| `rqt_sonar_waterfall/test/test_combine_rows.cpp` | **(must-fix #2)** pose-propagation tests |
+| `rqt_sonar_waterfall/test/test_single_beam_extractor.cpp` | `sensor_frame` from header test |
+| `rqt_sonar_waterfall/test/test_contact_georef.cpp` | **New** — georeferencing unit test (extent + geodetic centroid) |
+| Operator bag config (`bizzyboat_project11/config/bizzyboat.yaml`) | **Cross-repo follow-up** (different repo; not in this PR — see step 11) |
 
 ## Principles Self-Check
 
@@ -135,8 +163,21 @@ This is a **two-repo, two-phase** change: Phase 1 touches `marine_perception_too
 
 ## Open Questions
 
-- [ ] Verify sensor frame axis convention for athwartship ground range (which TF axis is across-track for Bizzyboat's sidescan configuration — needed for step 8 ECEF computation).
-- [ ] Confirm exact bag recording config file path (step 11). The plan points to `bizzyboat_project11/config/bizzyboat.yaml`; verify this is the live operator bag config.
+- [ ] **Athwartship axis convention (verify in field).** `georeference_box()`
+  assumes the sidescan sensor frame is REP-103 body (x forward = alongtrack, y
+  left = port, z up), so a port return (negative display range) maps to sensor
+  +Y. The extent (box dimensions) is correct regardless of this; only the
+  across-track *side* of the resolved geo centroid depends on it. Documented in
+  `contact_georef.hpp`; confirm against the live Garmin sidescan mount before
+  trusting which side of the track contacts land on.
+- [x] **Bag config path.** Resolved: `bizzyboat.yaml` in `unh_echoboats_project11`
+  (a *separate* repo) has the `record: topics:` blocks. Because it is cross-repo
+  it is a follow-up there, not part of #86's PR (see step 11). The Contact is
+  published operator-side → operator-station bag block.
+- [x] **`earth` (ECEF) broadcast.** Per the issue brief the operator/boat TF tree
+  broadcasts `earth → <prefix>/map → … → base_link` with the sidescan frame off
+  base_link via tf_static, so `lookupTransform("earth", sensor_frame)` resolves
+  at runtime. A TF miss is non-fatal (row stays un-markable).
 
 ## Estimated Scope
 

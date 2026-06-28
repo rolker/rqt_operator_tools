@@ -29,13 +29,16 @@
 #include "rqt_sonar_waterfall/waterfall_widget.hpp"
 
 #include <QColor>
+#include <QMouseEvent>
 #include <QPainter>
+#include <QPen>
 #include <QRect>
 #include <QString>
 #include <QSurfaceFormat>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <exception>
 #include <limits>
 #include <utility>
@@ -201,6 +204,111 @@ void WaterfallWidget::set_tvg_slope(float slope)
     data_dirty_ = true;
   }
   update();
+}
+
+void WaterfallWidget::set_mark_mode(bool enabled)
+{
+  if (mark_mode_ == enabled) {
+    return;
+  }
+  mark_mode_ = enabled;
+  marking_ = false;  // cancel any in-progress drag when toggling
+  setCursor(enabled ? Qt::CrossCursor : Qt::ArrowCursor);
+  update();
+}
+
+double WaterfallWidget::range_at_x(int x) const
+{
+  const double w = static_cast<double>(width());
+  if (w <= 0.0) {
+    return 0.0;
+  }
+  const double half = w / 2.0;
+  // Columns span [-display_half_width_, +display_half_width_] about nadir (centre).
+  return (static_cast<double>(x) - half) / half * display_half_width_;
+}
+
+std::vector<WaterfallRow> WaterfallWidget::rows_in_y_range(int y_top, int y_bottom) const
+{
+  std::vector<WaterfallRow> out;
+  const auto & rows = buffer_.rows();
+  const int h = height();
+  if (rows.empty() || h <= 0) {
+    return out;
+  }
+  const int n = static_cast<int>(rows.size());
+  const int top = std::clamp(std::min(y_top, y_bottom), 0, h - 1);
+  const int bot = std::clamp(std::max(y_top, y_bottom), 0, h - 1);
+  // The renderer draws the whole buffer across the viewport, newest at the top.
+  // Map a pixel row to its buffer index (0 = oldest at the bottom).
+  const auto idx_at = [&](int y) {
+      // f: 0 at the top (newest) -> 1 at the bottom (oldest).
+      const double f = static_cast<double>(y) / static_cast<double>(h);
+      int from_newest = static_cast<int>(f * static_cast<double>(n));
+      from_newest = std::clamp(from_newest, 0, n - 1);
+      return (n - 1) - from_newest;
+    };
+  int lo = idx_at(bot);  // bottom pixel -> older -> smaller index
+  int hi = idx_at(top);  // top pixel -> newer -> larger index
+  if (lo > hi) {
+    std::swap(lo, hi);
+  }
+  out.reserve(static_cast<std::size_t>(hi - lo + 1));
+  for (int i = lo; i <= hi; ++i) {
+    out.push_back(rows[static_cast<std::size_t>(i)]);
+  }
+  return out;  // oldest-first
+}
+
+void WaterfallWidget::mousePressEvent(QMouseEvent * event)
+{
+  if (mark_mode_ && event->button() == Qt::LeftButton) {
+    marking_ = true;
+    mark_start_ = event->pos();
+    mark_current_ = event->pos();
+    update();
+    return;
+  }
+  QOpenGLWidget::mousePressEvent(event);
+}
+
+void WaterfallWidget::mouseMoveEvent(QMouseEvent * event)
+{
+  if (marking_) {
+    mark_current_ = event->pos();
+    update();
+    return;
+  }
+  QOpenGLWidget::mouseMoveEvent(event);
+}
+
+void WaterfallWidget::mouseReleaseEvent(QMouseEvent * event)
+{
+  if (!marking_ || event->button() != Qt::LeftButton) {
+    QOpenGLWidget::mouseReleaseEvent(event);
+    return;
+  }
+  marking_ = false;
+  const QRect r = QRect(mark_start_, mark_current_).normalized();
+  update();  // clear the in-progress overlay
+
+  // Only a metric, populated display can be georeferenced. A non-metric (sample)
+  // axis or an empty buffer has no range scale, so a mark there is meaningless.
+  if (!has_data_ || !display_metric_ || display_half_width_ <= 0.0 ||
+    r.width() < 2 || r.height() < 2)
+  {
+    return;
+  }
+
+  MarkBox box;
+  box.range_left_m = range_at_x(r.left());
+  box.range_right_m = range_at_x(r.right());
+  box.is_ground = display_is_ground_;
+  box.rows = rows_in_y_range(r.top(), r.bottom());
+  if (box.rows.empty()) {
+    return;
+  }
+  Q_EMIT boxMarked(box);
 }
 
 void WaterfallWidget::compute_row_tvg(WaterfallRow & row) const
@@ -697,6 +805,16 @@ void WaterfallWidget::paintGL()
     painter.setPen(QColor(150, 150, 160));
   }
   painter.drawText(rect().adjusted(4, 0, -4, -3), Qt::AlignBottom | Qt::AlignLeft, mode);
+
+  // Target-marking overlay (issue #86): the in-progress drag box. The published
+  // Contact is the durable record; a persistent overlay of confirmed contacts is
+  // deferred to the full marking feature (#59).
+  if (mark_mode_ && marking_) {
+    const QRect r = QRect(mark_start_, mark_current_).normalized();
+    painter.setPen(QPen(QColor(255, 90, 90), 2));
+    painter.setBrush(QColor(255, 90, 90, 40));
+    painter.drawRect(r);
+  }
 }
 
 }  // namespace rqt_sonar_waterfall
