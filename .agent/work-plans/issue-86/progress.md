@@ -275,3 +275,39 @@ on all touched files.
 - [x] (suggestion) `MarkModeDragEmitsBox…` now asserts the exact spanned-row count and contiguous oldest-first indices via per-row stamp tags — `rqt_sonar_waterfall/test/test_waterfall_widget.cpp` (`5773921`)
 - [x] (suggestion) Transient operator cue drawn when a drag lands on un-markable (no-pose) rows; auto-clears and clears on the next drag/mode toggle — `rqt_sonar_waterfall/src/waterfall_widget.cpp` (`918059b`)
 - [x] (governance) Tracking issue for the cross-repo operator-bag `record:` update — `unh_echoboats_project11` (deferred: cross-repo GitHub issue; `gh` unauthenticated and out of this worktree's scope — host to file)
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-28 17:34 +0000
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-86 at `b0c0d79`
+**Mode**: pre-push
+**Depth**: Deep (reason: coordinate math + executor-thread TF, ~1040 LOC, 13 files)
+**Must-fix**: 0 | **Suggestions**: 8
+**Round**: 2 | **Ship**: recommended — no must-fix; Round-1 must-fix + 4 suggestions all resolved and independently verified
+
+Re-review of the post-address-findings diff. Static analysis (ament_cpplint + ament_uncrustify)
+clean on all 13 files. Two disjoint-lens Claude Adversarial passes (Deep); Copilot off (default).
+Reviewed against local `origin/jazzy` (offline, may be slightly stale). Independently verified the
+render geometry: `upload_texture`/GPU ring stretches `ring_filled_` rows across the full viewport
+(newest at top), so `rows_in_y_range` screen-Y→index mapping is sound; the non-uniform-scale fix
+(`range_at_x` taking the georeferenced row's half-width) is geometrically correct. Georef
+quaternion/ECEF math confirmed against tests (identity + 90° + offset centroid). All five Round-1
+findings confirmed resolved. Both adversarial passes converged; no new must-fix. Verified
+`make_box_contact`'s map-frame contract against `marine_perception_tools/src/contact_store.cpp`:
+the plugin passes a sensor frame + box-local corners (suggestion #1), but the Contact is
+self-consistent and `geo_pose` (the archival authority per Contact.msg) is correctly resolved, so
+it is a convention/interoperability suggestion, not a correctness must-fix for the operator-bag goal.
+
+### Findings
+- [ ] (suggestion) Contact uses a moving sensor frame for `header.frame_id`/`kinematics.pose` while other producers use stable `bizzy/map` ENU; works here because `geo_pose` is resolved (the archival authority), but a consumer reading `kinematics.pose` as map coords without TF-resolving at `header.stamp` mis-places it — `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp:859`
+- [ ] (suggestion) Single-spanned-ping mark → `alongtrack=0` → zero-length box published silently; guard a zero-extent box — `rqt_sonar_waterfall/src/contact_georef.cpp:618`
+- [ ] (suggestion) Half-width "middle row" (`box.rows[size/2]`, all rows) and centroid "middle pose" (`poses[size/2]`, pose-filtered) diverge under non-uniform scale + partial TF coverage; comments claim they're the same ping — `rqt_sonar_waterfall/src/waterfall_widget.cpp:252`
+- [ ] (suggestion) `source = "sidescan"` drops port/stbd provenance; Contact.msg convention is `"<sensor>.<stream>"` — `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp:866`
+- [ ] (suggestion) Contact publisher QoS reliable KeepLast(100) without `transient_local`; late recorder/viewer misses prior marks — `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp:738`
+- [ ] (suggestion) Zero/unknown `stamp_time` falls through to tf2 "latest" (`Time(0)`); gate on non-zero stamp — `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp:808`
+- [ ] (suggestion) Hardcoded `/usr/share/cmake/geographiclib` module path is distro/version-specific; prefer a ROS-exported Find module — `rqt_sonar_waterfall/CMakeLists.txt:20`
+- [ ] (suggestion) Doc nits: `contact_georef.hpp` dimension axis order reversed; plugin comments say "executor thread" but `on_box_marked` runs on the GUI thread — `rqt_sonar_waterfall/include/rqt_sonar_waterfall/contact_georef.hpp:202`
+- [ ] (governance, carried) Host to file cross-repo tracking issue: add `sonar_waterfall/contacts` to operator-station bag `record:` in `unh_echoboats_project11` (`gh` unauthenticated, out of worktree scope)
