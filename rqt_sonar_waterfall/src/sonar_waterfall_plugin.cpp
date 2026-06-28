@@ -33,6 +33,7 @@
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMetaObject>
 #include <QPushButton>
 #include <QScrollArea>
@@ -143,6 +144,14 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   hbox->addWidget(depth_combo_, 1);
   hbox->addWidget(new QLabel(tr("Controls:"), toolbar));
   hbox->addWidget(control_combo_, 1);
+  frame_edit_ = new QLineEdit(QString::fromStdString(world_frame_), toolbar);
+  frame_edit_->setToolTip(
+    tr("World TF frame the marked-target pose resolves against (REP-105 ECEF "
+      "'earth' by default). Change it for a deployment using a different world "
+      "frame."));
+  frame_edit_->setMaximumWidth(90);
+  hbox->addWidget(new QLabel(tr("Frame:"), toolbar));
+  hbox->addWidget(frame_edit_);
   hbox->addWidget(refresh_button);
 
   // Sonar-control panel: hidden until a RadarControlSet topic is selected.
@@ -175,6 +184,9 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
     depth_combo_, &QComboBox::currentTextChanged, this,
     [this](const QString & topic) {on_depth_topic_changed(topic);});
   connect(refresh_button, &QPushButton::clicked, this, [this]() {refresh_topics();});
+  connect(
+    frame_edit_, &QLineEdit::textChanged, this,
+    [this](const QString & text) {set_world_frame(text);});
 
   // Target marking (issue #86): TF for earth<-sensor pose, a Contact publisher,
   // and the widget's box-marked signal feeding the georeference/publish slot.
@@ -440,6 +452,9 @@ void SonarWaterfallPlugin::saveSettings(
   if (depth_combo_) {
     instance_settings.setValue("depth_topic", depth_combo_->currentText());
   }
+  if (frame_edit_) {
+    instance_settings.setValue("world_frame", frame_edit_->text());
+  }
   if (colormap_combo_) {
     instance_settings.setValue("color_map", colormap_combo_->currentIndex());
     instance_settings.setValue("gain", gain_spin_->value());
@@ -474,6 +489,11 @@ void SonarWaterfallPlugin::restoreSettings(
   }
   if (depth_combo_ && instance_settings.contains("depth_topic")) {
     select_topic(depth_combo_, instance_settings.value("depth_topic").toString());
+  }
+  if (frame_edit_ && instance_settings.contains("world_frame")) {
+    // setText drives set_world_frame via textChanged, so world_frame_ tracks it.
+    frame_edit_->setText(
+      instance_settings.value("world_frame", QString::fromStdString(world_frame_)).toString());
   }
 
   if (colormap_combo_ && instance_settings.contains("color_map")) {
@@ -705,14 +725,19 @@ void SonarWaterfallPlugin::post_row(const WaterfallRow & row)
   // (issue #86). tf2_ros::Buffer is thread-safe; this runs on the executor
   // thread. On a TF miss the row still displays — it is simply un-markable.
   if (tf_buffer_ && node_ && !copy.sensor_frame.empty()) {
-    const auto sec = static_cast<int32_t>(copy.stamp);
-    const auto nsec = static_cast<uint32_t>((copy.stamp - static_cast<double>(sec)) * 1e9);
-    const rclcpp::Time stamp(sec, nsec, node_->get_clock()->get_clock_type());
+    // Key the lookup on the ping's exact header stamp (sec/nanosec), avoiding a
+    // double round-trip on the nanosecond field (issue #86).
+    const rclcpp::Time stamp(copy.stamp_time, node_->get_clock()->get_clock_type());
+    std::string world_frame;
+    {
+      std::lock_guard<std::mutex> lock(world_frame_mutex_);
+      world_frame = world_frame_;
+    }
     try {
       // Zero timeout: non-blocking; throws when the transform is unavailable so
       // the executor thread is never stalled inside a callback.
       const auto tf = tf_buffer_->lookupTransform(
-        "earth", copy.sensor_frame, stamp, rclcpp::Duration(0, 0));
+        world_frame, copy.sensor_frame, stamp, rclcpp::Duration(0, 0));
       copy.sensor_to_earth = tf.transform;
       copy.has_pose = true;
     } catch (const tf2::TransformException &) {
@@ -827,6 +852,16 @@ void SonarWaterfallPlugin::on_box_marked(const MarkBox & box)
     id.c_str(), geo.latitude, geo.longitude,
     contact.shape.dimensions.x, contact.shape.dimensions.y,
     box.is_ground ? "" : ", slant-range box: enable ground range for accuracy");
+}
+
+void SonarWaterfallPlugin::set_world_frame(const QString & frame)
+{
+  std::string name = frame.trimmed().toStdString();
+  if (name.empty()) {
+    name = "earth";  // never resolve a pose against an empty target frame
+  }
+  std::lock_guard<std::mutex> lock(world_frame_mutex_);
+  world_frame_ = name;
 }
 
 void SonarWaterfallPlugin::update_active_sides()

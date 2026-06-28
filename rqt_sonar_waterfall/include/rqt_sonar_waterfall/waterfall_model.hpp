@@ -35,6 +35,7 @@
 #include <string>
 #include <vector>
 
+#include <builtin_interfaces/msg/time.hpp>
 #include <geometry_msgs/msg/transform.hpp>
 #include <marine_acoustic_msgs/msg/sonar_image_data.hpp>
 
@@ -77,8 +78,15 @@ struct WaterfallRow
   /// conversion. Stamped from the depth subscription at row assembly.
   double altitude = 0.0;
 
-  /// Acquisition time in seconds since the epoch. 0 if unknown.
+  /// Acquisition time in seconds since the epoch. 0 if unknown. Used for the
+  /// Contact stamp and ordering; for the TF pose lookup prefer `stamp_time`,
+  /// which avoids a double round-trip on the nanosecond field.
   double stamp = 0.0;
+
+  /// Original message header stamp (sec/nanosec), carried unflattened so the
+  /// earth<-sensor TF lookup uses the exact ping time rather than re-splitting
+  /// the `stamp` double (issue #86). Zero-initialised when unknown.
+  builtin_interfaces::msg::Time stamp_time;
 
   /// TF frame the ping was observed in (RawSonarImage.header.frame_id, i.e. the
   /// sidescan sensor frame). Source frame for the earth<-sensor pose lookup that

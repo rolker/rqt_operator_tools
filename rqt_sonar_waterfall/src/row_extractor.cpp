@@ -69,6 +69,8 @@ std::optional<WaterfallRow> SingleBeamExtractor::extract(
 
   row.stamp = static_cast<double>(msg.header.stamp.sec) +
     static_cast<double>(msg.header.stamp.nanosec) * 1e-9;
+  // Keep the unflattened header stamp for an exact TF lookup (issue #86).
+  row.stamp_time = msg.header.stamp;
   // Carry the sensor frame so the plugin can resolve the earth<-sensor pose for
   // target marking (issue #86). post_row() does the TF lookup against this frame.
   row.sensor_frame = msg.header.frame_id;

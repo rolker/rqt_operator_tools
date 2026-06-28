@@ -56,6 +56,7 @@
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QLineEdit;
 class QPushButton;
 class QSpinBox;
 class QTimer;
@@ -118,6 +119,9 @@ private:
   /// Georeference an operator-marked box and publish a marine_interfaces/Contact
   /// (ORIGIN_HUMAN, STATUS_PROPOSED, BOX) for the operator bag (issue #86).
   void on_box_marked(const MarkBox & box);
+  /// Update the world TF frame from the toolbar field (issue #86). Trims blanks
+  /// and falls back to "earth" so the pose lookup never targets an empty frame.
+  void set_world_frame(const QString & frame);
 
   QPointer<WaterfallWidget> widget_;
   QComboBox * port_combo_ = nullptr;
@@ -160,6 +164,15 @@ private:
   /// Relative topic the marked Contacts publish on (resolves under the rqt node's
   /// namespace). The operator bag must record the resolved absolute topic.
   std::string contact_topic_ = "sonar_waterfall/contacts";
+  /// Toolbar field that sets `world_frame_`.
+  QLineEdit * frame_edit_ = nullptr;
+  /// World/earth TF frame the marked-target pose lookup resolves against
+  /// (REP-105 ECEF by default). Operator-configurable via the toolbar Frame
+  /// field and persisted per perspective. Written on the GUI thread (the line
+  /// edit) and read on the executor thread (post_row's TF lookup), so both ends
+  /// hold world_frame_mutex_; an empty field falls back to "earth".
+  std::string world_frame_ = "earth";
+  mutable std::mutex world_frame_mutex_;
   /// Monotonic counter for unique human-readable Contact ids within a session.
   std::uint64_t mark_counter_ = 0;
 

@@ -182,6 +182,9 @@ std::optional<WaterfallRow> combine_rows(
   combined.sensor_frame = pose_src.sensor_frame;
   combined.sensor_to_earth = pose_src.sensor_to_earth;
   combined.has_pose = pose_src.has_pose;
+  // Carry the exact header stamp of the same ping whose frame/pose we adopt, so
+  // the downstream TF lookup keys on that ping's time (issue #86).
+  combined.stamp_time = pose_src.stamp_time;
   return combined;
 }
 
