@@ -4,6 +4,19 @@ issue: 86
 
 # Issue #86 — rqt_sonar_waterfall: mark a sidescan target → publish marine_interfaces/Contact to operator bag (Massabesic near-term, subset of #59)
 
+## Plan Authored
+**Status**: complete
+**When**: 2026-06-28 00:00 +0000
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-86/plan.md` at `b0f8e66`
+**Branch**: feature/issue-86 at `b0f8e66`
+**Phases**: 2 (Phase 1: marine_perception_tools contact_builder export; Phase 2: rqt_sonar_waterfall marking feature)
+
+### Open questions
+- [ ] Verify sensor frame axis convention for athwartship ground range (which TF axis is across-track for Bizzyboat's sidescan).
+- [ ] Confirm exact operator bag recording config file path (plan points to `bizzyboat_project11/config/bizzyboat.yaml`).
+
 ## Issue Review
 **Status**: complete
 **When**: 2026-06-28 00:00 +0000
