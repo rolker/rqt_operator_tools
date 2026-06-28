@@ -88,9 +88,11 @@ void BridgeControlClient::connect(const ControlDevice & device)
   }
   // state: ask the remote to push its ControlSet to us. change: push our local
   // ControlValue to the remote. The bridge's default per-topic QoS is already
-  // RELIABLE + VOLATILE (ADR-0003 D5), so no QoS override is needed here.
-  callService(remote_subscribe_client_, device.remote, device.state_topic, device.state_topic);
-  callService(remote_advertise_client_, device.remote, device.change_topic, device.change_topic);
+  // RELIABLE + VOLATILE (ADR-0003 D5), so no QoS override is needed here. Wire
+  // over every connection the remote offers (cell/vpn/wifi), so control keeps
+  // working whichever link is up.
+  callServiceAllConnections(remote_subscribe_client_, device.remote, device.state_topic, device.state_topic);
+  callServiceAllConnections(remote_advertise_client_, device.remote, device.change_topic, device.change_topic);
 }
 
 void BridgeControlClient::disconnect(const ControlDevice & device)
@@ -101,13 +103,41 @@ void BridgeControlClient::disconnect(const ControlDevice & device)
     connected_.erase(key);
     established_.erase(key);
   }
-  callService(remove_subscribe_client_, device.remote, device.state_topic, device.state_topic);
-  callService(remove_advertise_client_, device.remote, device.change_topic, device.change_topic);
+  callServiceAllConnections(remove_subscribe_client_, device.remote, device.state_topic, device.state_topic);
+  callServiceAllConnections(remove_advertise_client_, device.remote, device.change_topic, device.change_topic);
+}
+
+void BridgeControlClient::callServiceAllConnections(
+  const rclcpp::Client<Subscribe>::SharedPtr & client, const std::string & remote,
+  const std::string & source_topic, const std::string & destination_topic)
+{
+  std::vector<std::string> connection_ids;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = connection_ids_by_remote_.find(remote);
+    if (it != connection_ids_by_remote_.end()) {
+      connection_ids = it->second;
+    }
+  }
+  // The device was discovered from the same bridge_info that carries the
+  // connection list, so this is normally populated. Fall back to the configured
+  // default only if a race left it empty, and say so.
+  if (connection_ids.empty()) {
+    RCLCPP_WARN(
+      node_->get_logger(),
+      "marine_control bridge client: no connections known for remote '%s'; "
+      "falling back to connection_id '%s'", remote.c_str(), connection_id_.c_str());
+    connection_ids.push_back(connection_id_);
+  }
+  for (const auto & connection_id : connection_ids) {
+    callService(client, remote, connection_id, source_topic, destination_topic);
+  }
 }
 
 void BridgeControlClient::callService(
   const rclcpp::Client<Subscribe>::SharedPtr & client, const std::string & remote,
-  const std::string & source_topic, const std::string & destination_topic)
+  const std::string & connection_id, const std::string & source_topic,
+  const std::string & destination_topic)
 {
   if (!client->service_is_ready()) {
     RCLCPP_WARN(
@@ -118,7 +148,7 @@ void BridgeControlClient::callService(
   }
   auto request = std::make_shared<Subscribe::Request>();
   request->remote = remote;
-  request->connection_id = connection_id_;
+  request->connection_id = connection_id;
   request->source_topic = source_topic;
   request->destination_topic = destination_topic;
   request->queue_size = 10;
@@ -144,6 +174,14 @@ void BridgeControlClient::onLocalBridgeInfo(const BridgeInfo::SharedPtr info)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto & remote : info->remotes) {
+      // Record the connection_ids this remote offers, so connect()/disconnect()
+      // can wire device topics over all of them (not a hardcoded "default").
+      std::vector<std::string> ids;
+      ids.reserve(remote.connections.size());
+      for (const auto & connection : remote.connections) {
+        ids.push_back(connection.connection_id);
+      }
+      connection_ids_by_remote_[remote.name] = std::move(ids);
       if (remote_bridge_info_subs_.find(remote.topic_name) == remote_bridge_info_subs_.end()) {
         new_remote_subs.push_back({remote.name, remote.topic_name});
       }
@@ -172,8 +210,8 @@ void BridgeControlClient::onLocalBridgeInfo(const BridgeInfo::SharedPtr info)
   }
 
   for (const auto & device : to_reestablish) {
-    callService(remote_subscribe_client_, device.remote, device.state_topic, device.state_topic);
-    callService(remote_advertise_client_, device.remote, device.change_topic, device.change_topic);
+    callServiceAllConnections(remote_subscribe_client_, device.remote, device.state_topic, device.state_topic);
+    callServiceAllConnections(remote_advertise_client_, device.remote, device.change_topic, device.change_topic);
   }
 }
 
