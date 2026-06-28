@@ -85,8 +85,16 @@ private:
 
   void onLocalBridgeInfo(const BridgeInfo::SharedPtr info);
   void onRemoteBridgeInfo(const std::string & remote_name, const BridgeInfo::SharedPtr info);
-  // Issue one Subscribe-shaped request (subscribe/advertise/remove) to a service.
+  // Issue one Subscribe-shaped request (subscribe/advertise/remove) over a single
+  // named connection.
   void callService(
+    const rclcpp::Client<Subscribe>::SharedPtr & client, const std::string & remote,
+    const std::string & connection_id, const std::string & source_topic,
+    const std::string & destination_topic);
+  // Issue the request over every connection_id the remote currently offers (per
+  // the local bridge_info), so a device's control survives any one link going
+  // down. Falls back to connection_id_ if no connections are known yet.
+  void callServiceAllConnections(
     const rclcpp::Client<Subscribe>::SharedPtr & client, const std::string & remote,
     const std::string & source_topic, const std::string & destination_topic);
   static std::string deviceKey(const std::string & remote, const std::string & state_topic);
@@ -107,6 +115,9 @@ private:
 
   mutable std::mutex mutex_;
   std::map<std::string, std::vector<ControlDevice>> devices_by_remote_;  // discovered
+  // remote name -> the connection_ids it currently offers (from local bridge_info).
+  // Device topics are wired over ALL of these so control survives any one link.
+  std::map<std::string, std::vector<std::string>> connection_ids_by_remote_;
   std::map<std::string, ControlDevice> connected_;                       // key -> device
   // Connected devices observed actually bridged at least once since their last
   // (re)connect. Re-establish fires only on an established->lost transition, so a
