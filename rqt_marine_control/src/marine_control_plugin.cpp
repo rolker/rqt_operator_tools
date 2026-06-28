@@ -90,7 +90,9 @@ void MarineControlPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   device_combo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
   bridge_bar->addWidget(device_combo_, 1);
   connect_button_ = new QPushButton(tr("Connect"));
-  connect_button_->setCheckable(true);
+  // Momentary push button (not checkable): it must visibly release on click. The
+  // connected/disconnected state is carried by the button text and the status
+  // label, not by a sunken "checked" look (which read as a stuck/pressed button).
   connect_button_->setToolTip(tr("Connect/disconnect the selected device over the bridge"));
   bridge_bar->addWidget(connect_button_);
   // Connection-status indicator: starts "Disconnected" and is driven from the
@@ -367,8 +369,6 @@ void MarineControlPlugin::onDeviceChanged(int index)
     const auto & device = devices_[index];
     connected = bridge_client_->isConnected(device.remote, device.state_topic);
   }
-  const QSignalBlocker blocker(connect_button_);
-  connect_button_->setChecked(connected);
   connect_button_->setText(connected ? tr("Disconnect") : tr("Connect"));
   // Single source of truth for the status indicator: driven from the client's
   // actual connection state, and refreshed here on every device/bridge switch
@@ -385,7 +385,9 @@ void MarineControlPlugin::onConnectClicked()
     return;
   }
   const auto device = devices_[index];
-  if (connect_button_->isChecked()) {
+  // Toggle on the actual connection state rather than a checkable-button state,
+  // since the button is now momentary.
+  if (!bridge_client_->isConnected(device.remote, device.state_topic)) {
     bridge_client_->connect(device);
     // Render the device; its state topic appears locally once the bridge wires
     // it (subscribing before it exists is fine — it waits for the publisher).
