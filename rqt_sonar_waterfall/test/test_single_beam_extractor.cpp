@@ -132,3 +132,15 @@ TEST(SingleBeamExtractor, StampFromHeader)
   ASSERT_TRUE(row.has_value());
   EXPECT_DOUBLE_EQ(row->stamp, 42.5);
 }
+
+TEST(SingleBeamExtractor, SensorFrameFromHeader)
+{
+  // The row carries the ping's frame_id so the plugin can look up the
+  // earth<-sensor pose for target marking (issue #86).
+  rqt_sonar_waterfall::SingleBeamExtractor ex;
+  auto msg = make_ping(1, 4);
+  msg.header.frame_id = "bizzy/sidescan_port";
+  auto row = ex.extract(msg);
+  ASSERT_TRUE(row.has_value());
+  EXPECT_EQ(row->sensor_frame, "bizzy/sidescan_port");
+}

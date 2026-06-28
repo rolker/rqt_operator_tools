@@ -32,8 +32,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
+#include <builtin_interfaces/msg/time.hpp>
+#include <geometry_msgs/msg/transform.hpp>
 #include <marine_acoustic_msgs/msg/sonar_image_data.hpp>
 
 namespace rqt_sonar_waterfall
@@ -75,8 +78,30 @@ struct WaterfallRow
   /// conversion. Stamped from the depth subscription at row assembly.
   double altitude = 0.0;
 
-  /// Acquisition time in seconds since the epoch. 0 if unknown.
+  /// Acquisition time in seconds since the epoch. 0 if unknown. Used for the
+  /// Contact stamp and ordering; for the TF pose lookup prefer `stamp_time`,
+  /// which avoids a double round-trip on the nanosecond field.
   double stamp = 0.0;
+
+  /// Original message header stamp (sec/nanosec), carried unflattened so the
+  /// earth<-sensor TF lookup uses the exact ping time rather than re-splitting
+  /// the `stamp` double (issue #86). Zero-initialised when unknown.
+  builtin_interfaces::msg::Time stamp_time;
+
+  /// TF frame the ping was observed in (RawSonarImage.header.frame_id, i.e. the
+  /// sidescan sensor frame). Source frame for the earth<-sensor pose lookup that
+  /// georeferences a marked target (issue #86). Empty when unknown.
+  std::string sensor_frame;
+
+  /// earth (REP-105 ECEF) <- sensor_frame transform at this ping's stamp,
+  /// resolved from TF in the plugin's post_row(). The translation is the sensor
+  /// origin in ECEF metres; the rotation maps sensor axes into ECEF. Valid only
+  /// when has_pose is true.
+  geometry_msgs::msg::Transform sensor_to_earth;
+
+  /// Whether sensor_to_earth was resolved (a TF hit). A row with has_pose=false
+  /// still displays, but is un-markable (no georeference is available).
+  bool has_pose = false;
 
   /// Cached intensity extremes over `intensities`, populated once when the row
   /// enters the display buffer. They let auto-range scan two numbers per row
@@ -132,7 +157,9 @@ double default_full_scale(uint32_t dtype);
 /// samples left of nadir; starboard-only -> all right) — the renderer centers
 /// nadir even when one side is silent. Neither present -> empty. `range_max` is
 /// the larger of the two (for the slant label); `range_max_port`/`range_max_stbd`
-/// carry each side's range; `stamp` is the later of the two.
+/// carry each side's range; `stamp` is the later of the two. The per-ping pose
+/// metadata (`sensor_frame`/`sensor_to_earth`/`has_pose`) is propagated from the
+/// present side (port preferred) so a combined row stays markable downstream.
 std::optional<WaterfallRow> combine_rows(
   const std::optional<WaterfallRow> & port,
   const std::optional<WaterfallRow> & starboard);

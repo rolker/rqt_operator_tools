@@ -29,13 +29,17 @@
 #include "rqt_sonar_waterfall/waterfall_widget.hpp"
 
 #include <QColor>
+#include <QMouseEvent>
 #include <QPainter>
+#include <QPen>
 #include <QRect>
 #include <QString>
 #include <QSurfaceFormat>
+#include <QTimer>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <exception>
 #include <limits>
 #include <utility>
@@ -43,6 +47,14 @@
 
 namespace rqt_sonar_waterfall
 {
+
+namespace
+{
+// Per-row display half-width (axis units), matching what upload_texture() fits
+// each non-uniform row to. Defined alongside row_geom() below; forward-declared
+// here so mark_half_width() (above that point) can reach it.
+double row_display_half_width(const WaterfallRow & row, bool ground_enabled);
+}  // namespace
 
 WaterfallWidget::WaterfallWidget(QWidget * parent)
 : QOpenGLWidget(parent)
@@ -203,6 +215,142 @@ void WaterfallWidget::set_tvg_slope(float slope)
   update();
 }
 
+void WaterfallWidget::set_mark_mode(bool enabled)
+{
+  if (mark_mode_ == enabled) {
+    return;
+  }
+  mark_mode_ = enabled;
+  marking_ = false;  // cancel any in-progress drag when toggling
+  mark_status_.clear();  // toggling modes clears any stale cue
+  setCursor(enabled ? Qt::CrossCursor : Qt::ArrowCursor);
+  update();
+}
+
+double WaterfallWidget::range_at_x(int x, double half_width) const
+{
+  const double w = static_cast<double>(width());
+  if (w <= 0.0) {
+    return 0.0;
+  }
+  const double half = w / 2.0;
+  // Columns span [-half_width, +half_width] about nadir (centre).
+  return (static_cast<double>(x) - half) / half * half_width;
+}
+
+double WaterfallWidget::mark_half_width(const std::vector<WaterfallRow> & rows) const
+{
+  // Uniform scale fits every visible row to the one shared half-width that the
+  // last render computed, so a pixel column maps the same range in every row.
+  if (uniform_scale_ || rows.empty()) {
+    return display_half_width_;
+  }
+  // Non-uniform: each row fits its own range. Georeference against the
+  // representative (vertical-middle) spanned row — the same ping that
+  // georeference_box() uses for the centroid — so the box's range edges and its
+  // anchor pose describe one row rather than mixing the newest row's scale in.
+  return row_display_half_width(rows[rows.size() / 2], ground_range_);
+}
+
+std::vector<WaterfallRow> WaterfallWidget::rows_in_y_range(int y_top, int y_bottom) const
+{
+  std::vector<WaterfallRow> out;
+  const auto & rows = buffer_.rows();
+  const int h = height();
+  if (rows.empty() || h <= 0) {
+    return out;
+  }
+  const int n = static_cast<int>(rows.size());
+  const int top = std::clamp(std::min(y_top, y_bottom), 0, h - 1);
+  const int bot = std::clamp(std::max(y_top, y_bottom), 0, h - 1);
+  // The renderer draws the whole buffer across the viewport, newest at the top.
+  // Map a pixel row to its buffer index (0 = oldest at the bottom).
+  const auto idx_at = [&](int y) {
+      // f: 0 at the top (newest) -> 1 at the bottom (oldest).
+      const double f = static_cast<double>(y) / static_cast<double>(h);
+      int from_newest = static_cast<int>(f * static_cast<double>(n));
+      from_newest = std::clamp(from_newest, 0, n - 1);
+      return (n - 1) - from_newest;
+    };
+  int lo = idx_at(bot);  // bottom pixel -> older -> smaller index
+  int hi = idx_at(top);  // top pixel -> newer -> larger index
+  if (lo > hi) {
+    std::swap(lo, hi);
+  }
+  out.reserve(static_cast<std::size_t>(hi - lo + 1));
+  for (int i = lo; i <= hi; ++i) {
+    out.push_back(rows[static_cast<std::size_t>(i)]);
+  }
+  return out;  // oldest-first
+}
+
+void WaterfallWidget::mousePressEvent(QMouseEvent * event)
+{
+  if (mark_mode_ && event->button() == Qt::LeftButton) {
+    marking_ = true;
+    mark_start_ = event->pos();
+    mark_current_ = event->pos();
+    mark_status_.clear();  // a fresh drag supersedes any prior cue
+    update();
+    return;
+  }
+  QOpenGLWidget::mousePressEvent(event);
+}
+
+void WaterfallWidget::mouseMoveEvent(QMouseEvent * event)
+{
+  if (marking_) {
+    mark_current_ = event->pos();
+    update();
+    return;
+  }
+  QOpenGLWidget::mouseMoveEvent(event);
+}
+
+void WaterfallWidget::mouseReleaseEvent(QMouseEvent * event)
+{
+  if (!marking_ || event->button() != Qt::LeftButton) {
+    QOpenGLWidget::mouseReleaseEvent(event);
+    return;
+  }
+  marking_ = false;
+  const QRect r = QRect(mark_start_, mark_current_).normalized();
+  update();  // clear the in-progress overlay
+
+  // Only a metric, populated display can be georeferenced. A non-metric (sample)
+  // axis or an empty buffer has no range scale, so a mark there is meaningless.
+  if (!has_data_ || !display_metric_ || display_half_width_ <= 0.0 ||
+    r.width() < 2 || r.height() < 2)
+  {
+    return;
+  }
+
+  MarkBox box;
+  box.is_ground = display_is_ground_;
+  box.rows = rows_in_y_range(r.top(), r.bottom());
+  if (box.rows.empty()) {
+    return;
+  }
+  // A box is only georeferenceable if at least one spanned row carries a pose
+  // (the plugin skips publishing otherwise, logging a warning). Cue the operator
+  // when none do so a dropped mark doesn't fail silently from their side.
+  const bool any_pose = std::any_of(
+    box.rows.begin(), box.rows.end(), [](const WaterfallRow & row) {return row.has_pose;});
+  if (!any_pose) {
+    mark_status_ = tr("Target not georeferenced: no vehicle pose for these pings.");
+    // Auto-clear so the cue doesn't linger past its relevance.
+    QTimer::singleShot(4000, this, [this]() {mark_status_.clear(); update();});
+  }
+
+  // Map the box edges against the row that anchors the georeferenced centroid,
+  // so a non-uniform display (each row fit to its own range) reports the marked
+  // row's scale rather than the newest row's display_half_width_.
+  const double half_width = mark_half_width(box.rows);
+  box.range_left_m = range_at_x(r.left(), half_width);
+  box.range_right_m = range_at_x(r.right(), half_width);
+  Q_EMIT boxMarked(box);
+}
+
 void WaterfallWidget::compute_row_tvg(WaterfallRow & row) const
 {
   row.intensities_tvg = apply_tvg(
@@ -326,6 +474,11 @@ RowGeom row_geom(const WaterfallRow & row, bool ground_enabled)
   const double dr_stbd = g.ground ? ground_range(g.range_stbd, g.altitude) : g.range_stbd;
   g.half_width = std::max(dr_port, dr_stbd);
   return g;
+}
+
+double row_display_half_width(const WaterfallRow & row, bool ground_enabled)
+{
+  return row_geom(row, ground_enabled).half_width;
 }
 
 // Snap a raw spacing to the nearest "nice" 1/2/5 x 10^n value for round labels.
@@ -697,6 +850,23 @@ void WaterfallWidget::paintGL()
     painter.setPen(QColor(150, 150, 160));
   }
   painter.drawText(rect().adjusted(4, 0, -4, -3), Qt::AlignBottom | Qt::AlignLeft, mode);
+
+  // Target-marking overlay (issue #86): the in-progress drag box. The published
+  // Contact is the durable record; a persistent overlay of confirmed contacts is
+  // deferred to the full marking feature (#59).
+  if (mark_mode_ && marking_) {
+    const QRect r = QRect(mark_start_, mark_current_).normalized();
+    painter.setPen(QPen(QColor(255, 90, 90), 2));
+    painter.setBrush(QColor(255, 90, 90, 40));
+    painter.drawRect(r);
+  }
+
+  // Transient cue for a drag that landed on un-markable (no-pose) rows (#86).
+  if (!mark_status_.isEmpty()) {
+    painter.setPen(QColor(240, 200, 90));
+    painter.drawText(
+      rect().adjusted(4, 0, -4, -3), Qt::AlignBottom | Qt::AlignHCenter, mark_status_);
+  }
 }
 
 }  // namespace rqt_sonar_waterfall

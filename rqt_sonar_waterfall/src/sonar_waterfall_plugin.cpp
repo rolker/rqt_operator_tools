@@ -33,6 +33,7 @@
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMetaObject>
 #include <QPushButton>
 #include <QScrollArea>
@@ -46,14 +47,20 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include <pluginlib/class_list_macros.hpp>
 
+#include <marine_contacts/contact_store.hpp>
+#include <tf2/exceptions.h>  // NOLINT(build/include_order)
+
 #include "rqt_sonar_waterfall/color_map.hpp"
+#include "rqt_sonar_waterfall/contact_georef.hpp"
 #include "rqt_sonar_waterfall/control_panel.hpp"
 #include "rqt_sonar_waterfall/history_spinbox.hpp"
 #include "rqt_sonar_waterfall/topic_filter.hpp"
@@ -137,6 +144,14 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   hbox->addWidget(depth_combo_, 1);
   hbox->addWidget(new QLabel(tr("Controls:"), toolbar));
   hbox->addWidget(control_combo_, 1);
+  frame_edit_ = new QLineEdit(QString::fromStdString(world_frame_), toolbar);
+  frame_edit_->setToolTip(
+    tr("World TF frame the marked-target pose resolves against (REP-105 ECEF "
+      "'earth' by default). Change it for a deployment using a different world "
+      "frame."));
+  frame_edit_->setMaximumWidth(90);
+  hbox->addWidget(new QLabel(tr("Frame:"), toolbar));
+  hbox->addWidget(frame_edit_);
   hbox->addWidget(refresh_button);
 
   // Sonar-control panel: hidden until a RadarControlSet topic is selected.
@@ -169,6 +184,23 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
     depth_combo_, &QComboBox::currentTextChanged, this,
     [this](const QString & topic) {on_depth_topic_changed(topic);});
   connect(refresh_button, &QPushButton::clicked, this, [this]() {refresh_topics();});
+  connect(
+    frame_edit_, &QLineEdit::textChanged, this,
+    [this](const QString & text) {set_world_frame(text);});
+
+  // Target marking (issue #86): TF for earth<-sensor pose, a Contact publisher,
+  // and the widget's box-marked signal feeding the georeference/publish slot.
+  if (node_) {
+    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
+    // spin_thread=false: rqt already spins node_, so reuse its executor for the
+    // /tf + /tf_static subscriptions instead of spawning a second thread.
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, node_, false);
+    contact_pub_ = node_->create_publisher<marine_interfaces::msg::Contact>(
+      contact_topic_, rclcpp::QoS(rclcpp::KeepLast(100)).reliable());
+  }
+  connect(
+    widget_.data(), &WaterfallWidget::boxMarked, this,
+    [this](const MarkBox & box) {on_box_marked(box);});
 
   apply_view_settings();
 
@@ -300,6 +332,19 @@ QWidget * SonarWaterfallPlugin::build_controls_bar(QWidget * parent)
   h2->addWidget(tvg_slope_spin_);
   h2->addStretch(1);
 
+  // Target marking (issue #86): a checkable toggle that puts the widget into
+  // box-drag mark mode. Kept out of apply_view_settings() — it drives marking,
+  // not the render state — and wired straight to the widget.
+  mark_button_ = new QPushButton(tr("Mark target"), bar);
+  mark_button_->setCheckable(true);
+  mark_button_->setToolTip(
+    tr("Drag a box over a target to publish a Contact (recorded in the operator "
+    "bag). Needs ground/slant range (a metric axis) and live TF."));
+  h2->addWidget(mark_button_);
+  connect(
+    mark_button_, &QPushButton::toggled, this,
+    [this](bool on) {if (widget_) {widget_->set_mark_mode(on);}});
+
   // Any control change re-applies the full view state to the widget. The
   // widget rebuilds its cached image once per setter; at UI rates the extra
   // rebuilds are negligible and the code stays single-pathed.
@@ -386,6 +431,9 @@ void SonarWaterfallPlugin::shutdownPlugin()
   control_sub_.reset();
   control_pub_.reset();
   depth_sub_.reset();
+  contact_pub_.reset();
+  tf_listener_.reset();
+  tf_buffer_.reset();
 }
 
 void SonarWaterfallPlugin::saveSettings(
@@ -403,6 +451,9 @@ void SonarWaterfallPlugin::saveSettings(
   }
   if (depth_combo_) {
     instance_settings.setValue("depth_topic", depth_combo_->currentText());
+  }
+  if (frame_edit_) {
+    instance_settings.setValue("world_frame", frame_edit_->text());
   }
   if (colormap_combo_) {
     instance_settings.setValue("color_map", colormap_combo_->currentIndex());
@@ -438,6 +489,11 @@ void SonarWaterfallPlugin::restoreSettings(
   }
   if (depth_combo_ && instance_settings.contains("depth_topic")) {
     select_topic(depth_combo_, instance_settings.value("depth_topic").toString());
+  }
+  if (frame_edit_ && instance_settings.contains("world_frame")) {
+    // setText drives set_world_frame via textChanged, so world_frame_ tracks it.
+    frame_edit_->setText(
+      instance_settings.value("world_frame", QString::fromStdString(world_frame_)).toString());
   }
 
   if (colormap_combo_ && instance_settings.contains("color_map")) {
@@ -665,6 +721,29 @@ void SonarWaterfallPlugin::post_row(const WaterfallRow & row)
   // Stamp the latest cached altitude (nadir depth). Read here on the executor
   // thread, the same thread the depth callback writes on — no lock needed.
   copy.altitude = latest_altitude_.load();
+  // Resolve the earth(ECEF)<-sensor pose at this ping's stamp for target marking
+  // (issue #86). tf2_ros::Buffer is thread-safe; this runs on the executor
+  // thread. On a TF miss the row still displays — it is simply un-markable.
+  if (tf_buffer_ && node_ && !copy.sensor_frame.empty()) {
+    // Key the lookup on the ping's exact header stamp (sec/nanosec), avoiding a
+    // double round-trip on the nanosecond field (issue #86).
+    const rclcpp::Time stamp(copy.stamp_time, node_->get_clock()->get_clock_type());
+    std::string world_frame;
+    {
+      std::lock_guard<std::mutex> lock(world_frame_mutex_);
+      world_frame = world_frame_;
+    }
+    try {
+      // Zero timeout: non-blocking; throws when the transform is unavailable so
+      // the executor thread is never stalled inside a callback.
+      const auto tf = tf_buffer_->lookupTransform(
+        world_frame, copy.sensor_frame, stamp, rclcpp::Duration(0, 0));
+      copy.sensor_to_earth = tf.transform;
+      copy.has_pose = true;
+    } catch (const tf2::TransformException &) {
+      copy.has_pose = false;
+    }
+  }
   QMetaObject::invokeMethod(
     target.data(),
     [target, copy]() {
@@ -722,6 +801,67 @@ void SonarWaterfallPlugin::maybe_seed_manual_range(uint32_t dtype)
       }
     },
     Qt::QueuedConnection);
+}
+
+void SonarWaterfallPlugin::on_box_marked(const MarkBox & box)
+{
+  if (!contact_pub_ || !node_) {
+    return;
+  }
+  // Keep only rows with a resolved pose; the first non-empty frame names the
+  // contact frame. Rows are oldest-first, matching georeference_box()'s contract.
+  std::vector<geometry_msgs::msg::Transform> poses;
+  std::vector<double> stamps;
+  std::string frame;
+  for (const auto & r : box.rows) {
+    if (r.has_pose) {
+      poses.push_back(r.sensor_to_earth);
+      stamps.push_back(r.stamp);
+      if (frame.empty()) {
+        frame = r.sensor_frame;
+      }
+    }
+  }
+  if (poses.empty() || frame.empty()) {
+    RCLCPP_WARN(
+      node_->get_logger(),
+      "Sonar waterfall: marked box has no georeferenced rows (TF 'earth'<-sensor "
+      "missed); contact not published.");
+    return;
+  }
+
+  const GeorefBox geo = georeference_box(
+    poses, stamps, frame, box.range_left_m, box.range_right_m);
+  if (!geo.ok) {
+    RCLCPP_WARN(node_->get_logger(), "Sonar waterfall: could not georeference the marked box.");
+    return;
+  }
+
+  const std::string id = "sonar_waterfall-" + std::to_string(++mark_counter_);
+  marine_interfaces::msg::Contact contact = marine_contacts::make_box_contact(
+    geo.corners, id, "sidescan", geo.frame, geo.stamp_s);
+  // Resolve the archival geo_pose centroid (make_box_contact leaves it NaN).
+  contact.geo_pose.position.latitude = geo.latitude;
+  contact.geo_pose.position.longitude = geo.longitude;
+  contact.geo_pose.position.altitude = geo.altitude;
+  contact_pub_->publish(contact);
+
+  RCLCPP_INFO(
+    node_->get_logger(),
+    "Published Contact %s at %.7f, %.7f (%.1f x %.1f m%s).",
+    id.c_str(), geo.latitude, geo.longitude,
+    contact.shape.dimensions.x, contact.shape.dimensions.y,
+    box.is_ground ? "" : ", slant-range box: enable ground range for accuracy");
+}
+
+void SonarWaterfallPlugin::set_world_frame(const QString & frame)
+{
+  std::string name = frame.trimmed().toStdString();
+  if (name.empty()) {
+    name = "earth";  // never resolve a pose against an empty target frame
+  }
+  std::lock_guard<std::mutex> lock(world_frame_mutex_);
+  world_frame_ = name;
 }
 
 void SonarWaterfallPlugin::update_active_sides()
