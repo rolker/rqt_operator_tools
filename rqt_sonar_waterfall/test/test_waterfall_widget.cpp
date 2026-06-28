@@ -258,10 +258,14 @@ TEST_F(WaterfallWidgetTest, MarkModeDragEmitsBoxWithRowsAndRanges)
   w.set_mark_mode(true);
   EXPECT_TRUE(w.mark_mode());
 
-  // Drag a box from upper-left to lower-right across nadir.
-  send_mouse(w, QEvent::MouseButtonPress, QPoint(10, 10), Qt::LeftButton);
-  send_mouse(w, QEvent::MouseMove, QPoint(50, 50), Qt::LeftButton);
-  send_mouse(w, QEvent::MouseButtonRelease, QPoint(50, 50), Qt::LeftButton);
+  // Drag a box that straddles nadir, using the widget's ACTUAL paint width:
+  // an unshown offscreen widget does not reliably apply resize(64,64), so a
+  // fixed pixel span can sit entirely in one half (range_at_x() centres on
+  // width()/2, so a left-quarter box yields two same-sign ranges).
+  const int cx = w.width() / 2;
+  send_mouse(w, QEvent::MouseButtonPress, QPoint(cx - 20, 8), Qt::LeftButton);
+  send_mouse(w, QEvent::MouseMove, QPoint(cx + 20, 40), Qt::LeftButton);
+  send_mouse(w, QEvent::MouseButtonRelease, QPoint(cx + 20, 40), Qt::LeftButton);
 
   ASSERT_TRUE(fired) << "a completed drag in mark mode must emit boxMarked";
   EXPECT_FALSE(captured.rows.empty()) << "the box must resolve to spanned rows";
