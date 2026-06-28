@@ -237,9 +237,41 @@ overflow" (matches `builtin_interfaces/Time.sec` int32 by design); poses/stamps
 length assertion + publisher QoS + quaternion normalization (defensive-only).
 
 ### Findings
-- [ ] (must-fix) Non-uniform scale: `range_at_x()` uses only the newest row's `display_half_width_` for all spanned rows, so a box marked with "Uniform scale" off + varying per-ping range yields a silently wrong Contact — `rqt_sonar_waterfall/src/waterfall_widget.cpp:296`
-- [ ] (suggestion) Carry original `builtin_interfaces/Time` (sec/nanosec) through `WaterfallRow` for an exact TF lookup stamp instead of re-splitting the flattened double — `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp:709`
-- [ ] (suggestion) Make the world frame (`"earth"`) configurable via settings rather than hard-coded — `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp:715`
-- [ ] (suggestion) Strengthen `MarkModeDragEmitsBox…` to assert the spanned-row count/indices, not just non-empty — `rqt_sonar_waterfall/test/test_waterfall_widget.cpp:240`
-- [ ] (suggestion) Add an operator status cue when a drag lands on un-markable (no-pose) rows — `rqt_sonar_waterfall/src/waterfall_widget.cpp:307`
-- [ ] (governance) File a tracking issue for the cross-repo operator-bag `record:` update (new `sonar_waterfall/contacts` topic) in `unh_echoboats_project11`
+- [x] (must-fix) Non-uniform scale: `range_at_x()` uses only the newest row's `display_half_width_` for all spanned rows, so a box marked with "Uniform scale" off + varying per-ping range yields a silently wrong Contact — `rqt_sonar_waterfall/src/waterfall_widget.cpp:296`
+- [x] (suggestion) Carry original `builtin_interfaces/Time` (sec/nanosec) through `WaterfallRow` for an exact TF lookup stamp instead of re-splitting the flattened double — `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp:709`
+- [x] (suggestion) Make the world frame (`"earth"`) configurable via settings rather than hard-coded — `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp:715`
+- [x] (suggestion) Strengthen `MarkModeDragEmitsBox…` to assert the spanned-row count/indices, not just non-empty — `rqt_sonar_waterfall/test/test_waterfall_widget.cpp:240`
+- [x] (suggestion) Add an operator status cue when a drag lands on un-markable (no-pose) rows — `rqt_sonar_waterfall/src/waterfall_widget.cpp:307`
+- [x] (governance) File a tracking issue for the cross-repo operator-bag `record:` update (new `sonar_waterfall/contacts` topic) in `unh_echoboats_project11` (deferred: needs a GitHub issue in another repo — `gh` is unauthenticated in this sub-agent and the handoff scopes me to this worktree; the host should file it)
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-28 17:15 +0000
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-86 at `5773921`
+**Addressed**: Local Review (Pre-Push) of 2026-06-28 16:42 +0000 (branch `feature/issue-86` at `3479f73`)
+**Commits**: `918059b`, `ec1e362`, `5773921`
+
+Addressed the one must-fix and the four suggestions from the pre-push review;
+deferred the cross-repo governance item (issue-filing) to the host. Built the
+full dependency chain (core `marine_interfaces`/`marine_control`, sensors
+`depthai_marine`/`sea_surface_segmentation`/`marine_radar_control_msgs`, ui
+`marine_perception_tools` et al.) and rebuilt `rqt_sonar_waterfall`:
+`colcon test` → 272 tests, 0 failures, 50 skipped. cpplint + uncrustify clean
+on all touched files.
+
+> **Caveat for the re-review:** the offscreen-GL gtests in
+> `test_waterfall_widget` (including the new non-uniform-scale mark test and the
+> strengthened spanned-row assertions) **self-skip** here — this runner has no
+> OpenGL 3.3 context, so they compile but do not execute. Their logic is
+> unverified at runtime in this environment; run on a GL-capable host to exercise
+> them.
+
+### Actions
+- [x] (must-fix) Non-uniform scale: `range_at_x()` now takes the georeferenced row's half-width — the representative (vertical-middle) spanned row when uniform scale is off, the shared display half-width when on — so a box marked with uniform scale off over varying per-ping range reports the marked row's true extent — `rqt_sonar_waterfall/src/waterfall_widget.cpp` (`918059b`)
+- [x] (suggestion) Carry the original `builtin_interfaces/Time` through `WaterfallRow::stamp_time` (set in row_extractor, propagated in combine_rows) and key the TF lookup on it instead of re-splitting the double — `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp` (`ec1e362`)
+- [x] (suggestion) World TF frame made operator-configurable via a toolbar Frame field (default `earth`), persisted per perspective, read under a mutex on the executor thread — `rqt_sonar_waterfall/src/sonar_waterfall_plugin.cpp` (`ec1e362`)
+- [x] (suggestion) `MarkModeDragEmitsBox…` now asserts the exact spanned-row count and contiguous oldest-first indices via per-row stamp tags — `rqt_sonar_waterfall/test/test_waterfall_widget.cpp` (`5773921`)
+- [x] (suggestion) Transient operator cue drawn when a drag lands on un-markable (no-pose) rows; auto-clears and clears on the next drag/mode toggle — `rqt_sonar_waterfall/src/waterfall_widget.cpp` (`918059b`)
+- [x] (governance) Tracking issue for the cross-repo operator-bag `record:` update — `unh_echoboats_project11` (deferred: cross-repo GitHub issue; `gh` unauthenticated and out of this worktree's scope — host to file)
