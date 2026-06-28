@@ -93,6 +93,18 @@ jobs:
           find . -maxdepth 1 -mindepth 1 -type d \
             ! -name udp_bridge_interfaces ! -name '.git' -exec rm -rf {} +
 
+      # marine_interfaces (Contact.msg) and marine_contacts (the Qt-free Contact
+      # builder that rqt_sonar_waterfall's target marking links) are packages inside
+      # the unh_marine_autonomy repo, not published to rosdep. Clone the repo and keep
+      # only those two lightweight packages so CI doesn't pull the heavy transitive
+      # deps of their sibling packages.
+      - name: Clone marine_interfaces + marine_contacts source dependencies
+        run: |
+          git clone --depth 1 -b jazzy \
+            https://github.com/rolker/unh_marine_autonomy.git /tmp/uma
+          mv /tmp/uma/marine_interfaces ../ws/src/marine_interfaces
+          mv /tmp/uma/marine_contacts ../ws/src/marine_contacts
+
       - name: Install ROS dependencies
         working-directory: ../ws
         run: >

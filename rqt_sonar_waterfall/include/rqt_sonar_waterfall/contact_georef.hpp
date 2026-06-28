@@ -34,7 +34,7 @@
 
 #include <geometry_msgs/msg/transform.hpp>
 
-#include "marine_perception_tools/contact_store.hpp"
+#include "marine_contacts/contact_store.hpp"
 
 namespace rqt_sonar_waterfall
 {
@@ -42,7 +42,7 @@ namespace rqt_sonar_waterfall
 /// Georeferenced footprint of a box drawn on the live sidescan waterfall.
 ///
 /// `corners` are in a LOCAL sensor frame (x = along-track, y = athwartship,
-/// metres) ready to hand to marine_perception_tools::make_box_contact(), so the
+/// metres) ready to hand to marine_contacts::make_box_contact(), so the
 /// resulting Contact's BOX `shape.dimensions` are true athwartship x alongtrack
 /// metres (NOT ECEF deltas — see georeference_box()). `latitude`/`longitude` are
 /// the box centroid resolved to WGS84 degrees for the Contact's archival
@@ -50,7 +50,7 @@ namespace rqt_sonar_waterfall
 struct GeorefBox
 {
   bool ok = false;
-  std::vector<marine_perception_tools::MapPoint> corners;
+  std::vector<marine_contacts::MapPoint> corners;
   std::string frame;       ///< Contact header.frame_id (the sensor frame)
   double stamp_s = 0.0;    ///< representative ping stamp (seconds since epoch)
   double latitude = 0.0;   ///< centroid latitude, degrees

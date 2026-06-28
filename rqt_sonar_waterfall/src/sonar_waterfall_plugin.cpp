@@ -56,7 +56,7 @@
 
 #include <pluginlib/class_list_macros.hpp>
 
-#include <marine_perception_tools/contact_store.hpp>
+#include <marine_contacts/contact_store.hpp>
 #include <tf2/exceptions.h>  // NOLINT(build/include_order)
 
 #include "rqt_sonar_waterfall/color_map.hpp"
@@ -838,7 +838,7 @@ void SonarWaterfallPlugin::on_box_marked(const MarkBox & box)
   }
 
   const std::string id = "sonar_waterfall-" + std::to_string(++mark_counter_);
-  marine_interfaces::msg::Contact contact = marine_perception_tools::make_box_contact(
+  marine_interfaces::msg::Contact contact = marine_contacts::make_box_contact(
     geo.corners, id, "sidescan", geo.frame, geo.stamp_s);
   // Resolve the archival geo_pose centroid (make_box_contact leaves it NaN).
   contact.geo_pose.position.latitude = geo.latitude;

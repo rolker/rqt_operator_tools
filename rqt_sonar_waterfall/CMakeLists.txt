@@ -25,7 +25,7 @@ find_package(marine_interfaces REQUIRED)
 find_package(geographic_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
-find_package(marine_perception_tools REQUIRED)
+find_package(marine_contacts REQUIRED)
 # GeographicLib (Geocentric::Reverse: marked-box centroid ECEF -> geodetic for the
 # Contact's geo_pose). Resolve robustly across distro/version: GeographicLib 2.x
 # (Ubuntu 24.04 / Jazzy) ships a CMake Config, while older versions ship a Find
@@ -106,7 +106,7 @@ ament_target_dependencies(${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME} PRIVATE ${GeographicLib_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME}
   Qt5::Widgets Qt5::Gui Qt5::OpenGL
-  marine_perception_tools::contact_builder
+  marine_contacts::marine_contacts
   ${GeographicLib_LIBRARIES}
 )
 
@@ -163,7 +163,7 @@ if(BUILD_TESTING)
   target_include_directories(test_contact_georef PRIVATE include ${GeographicLib_INCLUDE_DIRS})
   ament_target_dependencies(test_contact_georef geometry_msgs marine_interfaces)
   target_link_libraries(test_contact_georef
-    marine_perception_tools::contact_builder ${GeographicLib_LIBRARIES})
+    marine_contacts::marine_contacts ${GeographicLib_LIBRARIES})
 
   ament_add_gtest(test_ground_resample
     test/test_ground_resample.cpp
@@ -259,7 +259,7 @@ ament_export_dependencies(
   marine_radar_control_msgs ament_index_cpp marine_colormap sensor_msgs Qt5
   # Public headers expose these (WaterfallRow's Transform, the plugin's Contact +
   # TF members, contact_georef.hpp's MapPoint), so downstream consumers need them.
-  geometry_msgs marine_interfaces tf2_ros marine_perception_tools
+  geometry_msgs marine_interfaces tf2_ros marine_contacts
 )
 
 ament_package()

@@ -39,7 +39,7 @@
   <depend>geographic_msgs</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
-  <depend>marine_perception_tools</depend>
+  <depend>marine_contacts</depend>
   <depend>geographiclib</depend>
 
   <!-- synthetic_sidescan.py test publisher -->
