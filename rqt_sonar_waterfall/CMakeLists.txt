@@ -26,14 +26,19 @@ find_package(geographic_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(marine_perception_tools REQUIRED)
-# GeographicLib ships a Find module (not a CMake Config) under the system cmake
-# dir on Debian/Ubuntu, so add it to the module path before find_package resolves
-# it in MODULE mode. (Geocentric::Reverse converts the marked-box centroid from
-# ECEF to geodetic for the Contact's geo_pose.)
-if(EXISTS "/usr/share/cmake/geographiclib")
-  list(APPEND CMAKE_MODULE_PATH "/usr/share/cmake/geographiclib")
+# GeographicLib (Geocentric::Reverse: marked-box centroid ECEF -> geodetic for the
+# Contact's geo_pose). Resolve robustly across distro/version: GeographicLib 2.x
+# (Ubuntu 24.04 / Jazzy) ships a CMake Config, while older versions ship a Find
+# module under /usr/share/cmake/geographiclib. Try Config first; on miss, add the
+# Debian module dir and retry in MODULE mode. (Hardcoding the module path failed
+# wherever only the Config is installed.)
+find_package(GeographicLib QUIET)
+if(NOT GeographicLib_FOUND)
+  if(EXISTS "/usr/share/cmake/geographiclib")
+    list(APPEND CMAKE_MODULE_PATH "/usr/share/cmake/geographiclib")
+  endif()
+  find_package(GeographicLib REQUIRED)
 endif()
-find_package(GeographicLib REQUIRED)
 find_package(Qt5 COMPONENTS Widgets Gui OpenGL REQUIRED)
 
 set(CMAKE_AUTOMOC ON)

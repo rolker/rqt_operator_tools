@@ -89,6 +89,24 @@ TEST(ContactGeoref, DegenerateQuaternionNotOk)
   EXPECT_FALSE(g.ok);
 }
 
+TEST(ContactGeoref, SinglePingMarkIsDegenerateNotOk)
+{
+  // A single ping has zero alongtrack travel -> zero-area box. Reject it so the
+  // plugin shows the un-markable cue instead of publishing a meaningless contact.
+  auto g = georeference_box({pose_at(100.0, 0.0, 0.0)}, {5.0}, "frame", -10.0, 20.0);
+  EXPECT_FALSE(g.ok);
+}
+
+TEST(ContactGeoref, ZeroWidthDragIsDegenerateNotOk)
+{
+  // Two pings (real alongtrack) but zero athwartship width -> still zero-area.
+  std::vector<geometry_msgs::msg::Transform> poses = {
+    pose_at(100.0, 0.0, 0.0),
+    pose_at(108.0, 0.0, 0.0)};
+  auto g = georeference_box(poses, {10.0, 12.0}, "frame", 5.0, 5.0);
+  EXPECT_FALSE(g.ok);
+}
+
 TEST(ContactGeoref, BoxExtentIsAthwartByAlongtrack)
 {
   // Two pings 8 m apart in ECEF -> alongtrack length 8 m; range span 30 m wide.
@@ -116,8 +134,12 @@ TEST(ContactGeoref, CentroidIdentityRotationAddsAthwartOffset)
   double ox, oy, oz;
   earth.Forward(43.0, -71.0, 50.0, ox, oy, oz);
 
-  // Symmetric box across track -> d_mid = 0 -> centroid at the ping origin.
-  auto g0 = georeference_box({pose_at(ox, oy, oz)}, {5.0}, "f", -15.0, 15.0);
+  // Symmetric box across track -> d_mid = 0 -> centroid at the ping origin. Use
+  // two pings (the centroid anchors on the middle = poses[1], here the origin) so
+  // the mark has a real alongtrack extent and is not rejected as degenerate;
+  // poses[0] only sets the alongtrack length and does not move the centroid.
+  auto g0 = georeference_box(
+    {pose_at(ox - 4.0, oy, oz), pose_at(ox, oy, oz)}, {4.0, 5.0}, "f", -15.0, 15.0);
   ASSERT_TRUE(g0.ok);
   double lat0, lon0, h0;
   earth.Reverse(ox, oy, oz, lat0, lon0, h0);
@@ -125,7 +147,8 @@ TEST(ContactGeoref, CentroidIdentityRotationAddsAthwartOffset)
   EXPECT_NEAR(g0.longitude, lon0, 1e-7);
 
   // Offset box (10..40 m starboard side) -> d_mid = 25 -> centroid at -25 in Y.
-  auto g1 = georeference_box({pose_at(ox, oy, oz)}, {5.0}, "f", 10.0, 40.0);
+  auto g1 = georeference_box(
+    {pose_at(ox - 4.0, oy, oz), pose_at(ox, oy, oz)}, {4.0, 5.0}, "f", 10.0, 40.0);
   ASSERT_TRUE(g1.ok);
   double elat, elon, eh;
   earth.Reverse(ox, oy - 25.0, oz, elat, elon, eh);
@@ -142,8 +165,11 @@ TEST(ContactGeoref, CentroidRotationRotatesOffset)
   earth.Forward(43.0, -71.0, 50.0, ox, oy, oz);
 
   const double s = std::sin(M_PI / 4.0);  // quaternion for 90 deg about +Z
+  // Two pings; the centroid + rotation anchor on the middle pose (poses[1], the
+  // 90 deg one). poses[0] (identity) only gives the mark a real alongtrack extent.
   auto g = georeference_box(
-    {pose_at(ox, oy, oz, 0.0, 0.0, s, s)}, {5.0}, "f", 10.0, 40.0);  // d_mid = 25
+    {pose_at(ox - 4.0, oy, oz), pose_at(ox, oy, oz, 0.0, 0.0, s, s)},
+    {4.0, 5.0}, "f", 10.0, 40.0);  // d_mid = 25
   ASSERT_TRUE(g.ok);
 
   double elat, elon, eh;

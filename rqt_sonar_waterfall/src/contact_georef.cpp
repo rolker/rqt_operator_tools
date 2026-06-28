@@ -96,6 +96,15 @@ GeorefBox georeference_box(
   const double d_hi = std::max(range_left_m, range_right_m);
   const double d_mid = 0.5 * (d_lo + d_hi);
 
+  // Reject a degenerate box: a single-ping mark has zero alongtrack travel, and a
+  // zero-width drag has zero athwartship extent. Either yields a zero-area BOX
+  // Contact that means nothing on the map -> bail (ok stays false) so the plugin
+  // shows the un-markable cue instead of publishing it.
+  constexpr double kMinExtentM = 1e-3;  // 1 mm
+  if (alongtrack < kMinExtentM || (d_hi - d_lo) < kMinExtentM) {
+    return out;  // ok = false
+  }
+
   // Sensor-frame box corners (x = alongtrack, y = athwartship). Display range is
   // negative to port (left); REP-103 body y is +left, so sensor y = -range. The
   // sign only flips which corner is which; make_box_contact takes the AABB.
