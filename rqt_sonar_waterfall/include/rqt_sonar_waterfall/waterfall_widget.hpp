@@ -33,6 +33,7 @@
 #include <QOpenGLWidget>
 
 #include <QPoint>
+#include <QString>
 
 #include <cstddef>
 #include <utility>
@@ -168,8 +169,17 @@ private:
   /// Compute one row's TVG-corrected samples + extremes for the current slope.
   void compute_row_tvg(WaterfallRow & row) const;
   /// Signed across-track display range (axis units) at widget pixel column `x`,
-  /// using the most recent render's half-width. Negative = port/left.
-  double range_at_x(int x) const;
+  /// for a row spanning `[-half_width, +half_width]` about the nadir centre.
+  /// Negative = port/left. The caller passes the half-width of the row the box
+  /// is georeferenced against (uniform: the shared display half-width; otherwise
+  /// the representative spanned row's own), so a non-uniform display maps each
+  /// box to its actual row scale rather than the newest row's.
+  double range_at_x(int x, double half_width) const;
+  /// Half-width (axis units) to georeference a box spanning `rows` against. In
+  /// uniform mode every row shares `display_half_width_`; otherwise each row fits
+  /// its own range, so the representative (vertical-middle) row — the one whose
+  /// pose anchors the georeferenced centroid — sets the scale.
+  double mark_half_width(const std::vector<WaterfallRow> & rows) const;
   /// Copies of the buffered rows whose displayed band falls within the inclusive
   /// pixel span [y_top, y_bottom], oldest-first. Maps screen Y -> buffer index
   /// using the newest-at-top layout the renderer draws.
@@ -225,6 +235,10 @@ private:
   bool marking_ = false;       ///< a drag is in progress
   QPoint mark_start_;          ///< drag anchor (widget pixels)
   QPoint mark_current_;        ///< current drag corner (widget pixels)
+  /// Transient cue drawn after a drag lands on un-markable (no-pose) rows, so
+  /// the operator sees why no Contact resulted. Cleared on the next drag, on a
+  /// mode toggle, or by a short auto-clear timer.
+  QString mark_status_;
 };
 
 }  // namespace rqt_sonar_waterfall
