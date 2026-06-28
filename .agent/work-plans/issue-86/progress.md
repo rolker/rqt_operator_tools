@@ -116,3 +116,20 @@ Project-specific UI code; correctly placed in the project repo.
 - [ ] Add unit test for georeferencing path (pixel → ground range + pose → lat/lon).
 - [ ] Update affected `WaterfallRow` tests if the struct gains a pose field.
 - [ ] Follow ADR-0008: add `marine_interfaces` (and `tf2_ros`/`nav_msgs`) to `package.xml` + CMakeLists with correct `ament_target_dependencies`.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-06-28 13:50 +0000
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-86/plan.md` at `b0f8e66`
+**PR**: PR-less (--issue mode; reviewed local plan file)
+**Verdict**: approve-with-suggestions
+
+### Findings
+- [ ] (must-fix) `combine_rows()` builds a fresh `WaterfallRow` and only copies select fields — it must also propagate the new `sensor_frame`/`sensor_to_earth`/`has_pose`; otherwise combined port+starboard sidescan rows lose the pose before `post_row()` and become un-markable. Add `src/waterfall_model.cpp` (`combine_rows`) + `test/test_combine_rows.cpp` to Files to Change — `plan.md:50` / `plan.md:88`
+- [ ] (must-fix) Frame semantics for `make_box_contact` corners are muddled: REP-105 `earth` is ECEF, not ENU ("earth frame ENU" is contradictory). `make_box_contact`'s contract takes map-frame ENU metres; ECEF X/Y deltas yield a rotated box whose `shape.dimensions` are not true athwartship/alongtrack metres. Build the BOX extent in a local ENU/map frame (set `frame` accordingly) and resolve only the geodetic centroid via `Geocentric::Reverse` for `geo_pose` — `plan.md:64-71`
+- [ ] (suggestion) Pixel→row mapping lives entirely in `WaterfallWidget` (owns `buffer_`, ring, scroll/history); `SonarWaterfallPlugin` holds only `QPointer<WaterfallWidget>` and no rows. Step 8's "find rows spanning the dragged Y-range" in `on_box_marked()` will have to replicate widget-internal scroll/ring state. Prefer resolving rect→rows in the widget (expose a `rowAt(y)`/buffer accessor or emit resolved rows) rather than emitting bare `QRectF rect_in_widget` — `plan.md:56` / `plan.md:64`
+- [ ] (suggestion) Verify `earth` (ECEF) TF is actually broadcast in the operator stack before locking `lookupTransform("earth", sensor_frame)`; if only `map`/`odom` is published the lookup always misses and every row is un-markable. Tie this to Open Question #1 (athwartship axis convention) — `plan.md:53`
+- [ ] (suggestion) Phase 1 (`marine_perception_tools` `contact_builder` export) is a cross-repo prerequisite with no tracked issue/PR or sequencing gate; #86's PR won't build until it merges and is available in the workspace. Note Phase 1's own issue/PR and the merge-before-#86 ordering in the plan — `plan.md:31`
+- [ ] (suggestion) Open Question #2 partly resolved: `bizzyboat.yaml` does contain the `record: topics:` block (the plan's guess is correct); but confirm whether the contact belongs in the operator bag vs the separate sonar/main bag streams before editing — `plan.md:139`
