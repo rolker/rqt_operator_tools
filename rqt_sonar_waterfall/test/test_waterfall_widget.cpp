@@ -44,6 +44,7 @@
 #include <QPoint>
 #include <QSurfaceFormat>
 
+#include <algorithm>
 #include <cstddef>
 #include <memory>
 #include <vector>
@@ -244,8 +245,12 @@ TEST_F(WaterfallWidgetTest, HistoryCapacityClamped)
 TEST_F(WaterfallWidgetTest, MarkModeDragEmitsBoxWithRowsAndRanges)
 {
   WaterfallWidget w;
-  for (int i = 0; i < 8; ++i) {
-    w.add_row(metric_row());
+  constexpr int kRows = 8;
+  for (int i = 0; i < kRows; ++i) {
+    WaterfallRow row = metric_row();
+    row.stamp = static_cast<double>(i);  // tag each row with its buffer index
+    row.has_pose = true;                 // markable so the box is emitted/published
+    w.add_row(row);
   }
   render(w);  // forces a paint so the metric display geometry is established
 
@@ -258,22 +263,91 @@ TEST_F(WaterfallWidgetTest, MarkModeDragEmitsBoxWithRowsAndRanges)
   w.set_mark_mode(true);
   EXPECT_TRUE(w.mark_mode());
 
-  // Drag a box that straddles nadir, using the widget's ACTUAL paint width:
-  // an unshown offscreen widget does not reliably apply resize(64,64), so a
-  // fixed pixel span can sit entirely in one half (range_at_x() centres on
-  // width()/2, so a left-quarter box yields two same-sign ranges).
+  // Drag a box that straddles nadir, using the widget's ACTUAL paint size: an
+  // unshown offscreen widget does not reliably apply resize(64,64), so derive
+  // the expected spanned rows from the live geometry rather than hard pixels.
   const int cx = w.width() / 2;
-  send_mouse(w, QEvent::MouseButtonPress, QPoint(cx - 20, 8), Qt::LeftButton);
-  send_mouse(w, QEvent::MouseMove, QPoint(cx + 20, 40), Qt::LeftButton);
-  send_mouse(w, QEvent::MouseButtonRelease, QPoint(cx + 20, 40), Qt::LeftButton);
+  const int y_top = 8;
+  const int y_bot = 40;
+  send_mouse(w, QEvent::MouseButtonPress, QPoint(cx - 20, y_top), Qt::LeftButton);
+  send_mouse(w, QEvent::MouseMove, QPoint(cx + 20, y_bot), Qt::LeftButton);
+  send_mouse(w, QEvent::MouseButtonRelease, QPoint(cx + 20, y_bot), Qt::LeftButton);
 
   ASSERT_TRUE(fired) << "a completed drag in mark mode must emit boxMarked";
-  EXPECT_FALSE(captured.rows.empty()) << "the box must resolve to spanned rows";
+
+  // Mirror the widget's screen-Y -> buffer-index map (newest drawn at the top,
+  // buffer index 0 = oldest) to assert the EXACT spanned band, not just non-empty.
+  const int h = w.height();
+  auto idx_at = [&](int y) {
+      const double f = static_cast<double>(std::clamp(y, 0, h - 1)) / static_cast<double>(h);
+      const int from_newest = std::clamp(static_cast<int>(f * kRows), 0, kRows - 1);
+      return (kRows - 1) - from_newest;
+    };
+  const int lo = idx_at(y_bot);  // bottom pixel -> older -> smaller index
+  const int hi = idx_at(y_top);  // top pixel -> newer -> larger index
+  ASSERT_LE(lo, hi);
+  const std::size_t expected = static_cast<std::size_t>(hi - lo + 1);
+  ASSERT_EQ(captured.rows.size(), expected) << "spanned-row count must match the drag band";
+  // Rows are returned oldest-first and contiguous: stamp == buffer index, so the
+  // tags must run lo, lo+1, ..., hi.
+  for (std::size_t k = 0; k < captured.rows.size(); ++k) {
+    EXPECT_DOUBLE_EQ(captured.rows[k].stamp, static_cast<double>(lo + static_cast<int>(k)))
+      << "spanned rows must be the contiguous oldest-first band [" << lo << ", " << hi << "]";
+  }
   // Left edge is port (negative range), right edge starboard (positive); the box
   // straddles nadir so the bounds bracket zero.
   EXPECT_LT(captured.range_left_m, captured.range_right_m);
   EXPECT_LT(captured.range_left_m, 0.0);
   EXPECT_GT(captured.range_right_m, 0.0);
+}
+
+TEST_F(WaterfallWidgetTest, MarkModeNonUniformScaleUsesMarkedRowScale)
+{
+  // With uniform scale OFF each row is fit to its own range, so a box must be
+  // georeferenced against the row it covers — not the newest row's scale. Stack
+  // narrow-range (30 m) history under a single wide-range (120 m) newest ping and
+  // mark a box over the lower (older) band: the reported range must reflect 30 m.
+  WaterfallWidget w;
+  for (int i = 0; i < 7; ++i) {
+    WaterfallRow row = metric_row(128, 30.0);
+    row.has_pose = true;
+    w.add_row(row);
+  }
+  WaterfallRow newest = metric_row(128, 120.0);  // newest, much wider scale
+  newest.has_pose = true;
+  w.add_row(newest);
+  w.set_uniform_scale(false);
+  render(w);
+
+  bool fired = false;
+  rqt_sonar_waterfall::MarkBox captured;
+  QObject::connect(
+    &w, &WaterfallWidget::boxMarked,
+    [&](const rqt_sonar_waterfall::MarkBox & box) {fired = true; captured = box;});
+
+  w.set_mark_mode(true);
+  // Drag a nadir-straddling box across the lower band so it covers only the
+  // older 30 m rows (newest is drawn at the very top).
+  const int cx = w.width() / 2;
+  const int y_lo = (w.height() * 5) / 8;   // ~40/64
+  const int y_hi = (w.height() * 15) / 16;  // ~60/64
+  send_mouse(w, QEvent::MouseButtonPress, QPoint(cx - 20, y_lo), Qt::LeftButton);
+  send_mouse(w, QEvent::MouseMove, QPoint(cx + 20, y_hi), Qt::LeftButton);
+  send_mouse(w, QEvent::MouseButtonRelease, QPoint(cx + 20, y_hi), Qt::LeftButton);
+
+  ASSERT_TRUE(fired);
+  ASSERT_FALSE(captured.rows.empty());
+  // The band must cover only the 30 m history, never the 120 m newest ping.
+  for (const auto & row : captured.rows) {
+    EXPECT_DOUBLE_EQ(row.range_max_port, 30.0)
+      << "lower-band drag must not reach the newest (120 m) row";
+  }
+  // Range edges scale to the marked rows' 30 m half-width, so they stay well
+  // inside what the newest 120 m row would have yielded (the pre-fix bug).
+  EXPECT_LT(captured.range_right_m, 40.0)
+    << "non-uniform box must use the marked row's scale, not the newest row's";
+  EXPECT_GT(captured.range_left_m, -40.0);
+  EXPECT_LT(captured.range_left_m, captured.range_right_m);
 }
 
 TEST_F(WaterfallWidgetTest, NoMarkWhenModeOff)
