@@ -91,8 +91,10 @@ void BridgeControlClient::connect(const ControlDevice & device)
   // RELIABLE + VOLATILE (ADR-0003 D5), so no QoS override is needed here. Wire
   // over every connection the remote offers (cell/vpn/wifi), so control keeps
   // working whichever link is up.
-  callServiceAllConnections(remote_subscribe_client_, device.remote, device.state_topic, device.state_topic);
-  callServiceAllConnections(remote_advertise_client_, device.remote, device.change_topic, device.change_topic);
+  callServiceAllConnections(remote_subscribe_client_, device.remote, device.state_topic,
+      device.state_topic);
+  callServiceAllConnections(remote_advertise_client_, device.remote, device.change_topic,
+      device.change_topic);
 }
 
 void BridgeControlClient::disconnect(const ControlDevice & device)
@@ -103,8 +105,10 @@ void BridgeControlClient::disconnect(const ControlDevice & device)
     connected_.erase(key);
     established_.erase(key);
   }
-  callServiceAllConnections(remove_subscribe_client_, device.remote, device.state_topic, device.state_topic);
-  callServiceAllConnections(remove_advertise_client_, device.remote, device.change_topic, device.change_topic);
+  callServiceAllConnections(remove_subscribe_client_, device.remote, device.state_topic,
+      device.state_topic);
+  callServiceAllConnections(remove_advertise_client_, device.remote, device.change_topic,
+      device.change_topic);
 }
 
 void BridgeControlClient::callServiceAllConnections(
@@ -210,8 +214,10 @@ void BridgeControlClient::onLocalBridgeInfo(const BridgeInfo::SharedPtr info)
   }
 
   for (const auto & device : to_reestablish) {
-    callServiceAllConnections(remote_subscribe_client_, device.remote, device.state_topic, device.state_topic);
-    callServiceAllConnections(remote_advertise_client_, device.remote, device.change_topic, device.change_topic);
+    callServiceAllConnections(remote_subscribe_client_, device.remote, device.state_topic,
+        device.state_topic);
+    callServiceAllConnections(remote_advertise_client_, device.remote, device.change_topic,
+        device.change_topic);
   }
 }
 
