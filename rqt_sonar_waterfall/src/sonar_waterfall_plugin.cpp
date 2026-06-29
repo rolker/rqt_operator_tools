@@ -152,6 +152,15 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   frame_edit_->setMaximumWidth(90);
   hbox->addWidget(new QLabel(tr("Frame:"), toolbar));
   hbox->addWidget(frame_edit_);
+  contact_topic_edit_ = new QLineEdit(QString::fromStdString(contact_topic_), toolbar);
+  contact_topic_edit_->setToolTip(
+    tr("Topic the marked target Contacts publish on. Relative by default (resolves "
+      "under the rqt node's namespace); set an absolute name (e.g. "
+      "/operator/sonar_waterfall/contacts) to place it directly. The operator bag "
+      "must record the resolved topic."));
+  contact_topic_edit_->setMaximumWidth(150);
+  hbox->addWidget(new QLabel(tr("Contacts:"), toolbar));
+  hbox->addWidget(contact_topic_edit_);
   hbox->addWidget(refresh_button);
 
   // Sonar-control panel: hidden until a RadarControlSet topic is selected.
@@ -187,6 +196,11 @@ void SonarWaterfallPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
   connect(
     frame_edit_, &QLineEdit::textChanged, this,
     [this](const QString & text) {set_world_frame(text);});
+  // editingFinished (Enter / focus-out), not textChanged: recreating the publisher
+  // on every keystroke would churn it through partial/invalid topic names.
+  connect(
+    contact_topic_edit_, &QLineEdit::editingFinished, this,
+    [this]() {set_contact_topic(contact_topic_edit_->text());});
 
   // Target marking (issue #86): TF for earth<-sensor pose, a Contact publisher,
   // and the widget's box-marked signal feeding the georeference/publish slot.
@@ -455,6 +469,9 @@ void SonarWaterfallPlugin::saveSettings(
   if (frame_edit_) {
     instance_settings.setValue("world_frame", frame_edit_->text());
   }
+  if (contact_topic_edit_) {
+    instance_settings.setValue("contact_topic", contact_topic_edit_->text());
+  }
   if (colormap_combo_) {
     instance_settings.setValue("color_map", colormap_combo_->currentIndex());
     instance_settings.setValue("gain", gain_spin_->value());
@@ -494,6 +511,14 @@ void SonarWaterfallPlugin::restoreSettings(
     // setText drives set_world_frame via textChanged, so world_frame_ tracks it.
     frame_edit_->setText(
       instance_settings.value("world_frame", QString::fromStdString(world_frame_)).toString());
+  }
+  if (contact_topic_edit_ && instance_settings.contains("contact_topic")) {
+    const QString t = instance_settings.value(
+      "contact_topic", QString::fromStdString(contact_topic_)).toString();
+    contact_topic_edit_->setText(t);
+    // editingFinished does not fire on setText, so apply the restored topic
+    // explicitly (recreates the publisher to match the saved perspective).
+    set_contact_topic(t);
   }
 
   if (colormap_combo_ && instance_settings.contains("color_map")) {
@@ -862,6 +887,29 @@ void SonarWaterfallPlugin::set_world_frame(const QString & frame)
   }
   std::lock_guard<std::mutex> lock(world_frame_mutex_);
   world_frame_ = name;
+}
+
+void SonarWaterfallPlugin::set_contact_topic(const QString & topic)
+{
+  const std::string name = topic.trimmed().toStdString();
+  if (name.empty()) {
+    // Never publish to "": restore the field to the live topic and bail.
+    if (contact_topic_edit_) {
+      contact_topic_edit_->setText(QString::fromStdString(contact_topic_));
+    }
+    return;
+  }
+  if (name == contact_topic_ && contact_pub_) {
+    return;  // unchanged and already advertised — nothing to do
+  }
+  contact_topic_ = name;
+  // contact_pub_ is only ever touched on the GUI thread (here + on_box_marked,
+  // which runs on the widget's boxMarked signal), so no lock is needed. Recreating
+  // drops the old publisher via shared_ptr reassignment.
+  if (node_) {
+    contact_pub_ = node_->create_publisher<marine_interfaces::msg::Contact>(
+      contact_topic_, rclcpp::QoS(rclcpp::KeepLast(100)).reliable());
+  }
 }
 
 void SonarWaterfallPlugin::update_active_sides()

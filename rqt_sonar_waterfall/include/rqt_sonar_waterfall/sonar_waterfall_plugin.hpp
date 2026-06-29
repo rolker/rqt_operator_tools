@@ -122,6 +122,10 @@ private:
   /// Update the world TF frame from the toolbar field (issue #86). Trims blanks
   /// and falls back to "earth" so the pose lookup never targets an empty frame.
   void set_world_frame(const QString & frame);
+  /// Retarget the marked-Contact publisher from the toolbar field (issue #90).
+  /// Trims blanks (an empty field keeps the current topic) and recreates
+  /// `contact_pub_` on the new topic; both run on the GUI thread, like marking.
+  void set_contact_topic(const QString & topic);
 
   QPointer<WaterfallWidget> widget_;
   QComboBox * port_combo_ = nullptr;
@@ -161,11 +165,15 @@ private:
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   rclcpp::Publisher<marine_interfaces::msg::Contact>::SharedPtr contact_pub_;
-  /// Relative topic the marked Contacts publish on (resolves under the rqt node's
-  /// namespace). The operator bag must record the resolved absolute topic.
+  /// Topic the marked Contacts publish on. Operator-configurable via the toolbar
+  /// Contacts field and persisted per perspective (issue #90); the default is
+  /// relative, so it resolves under the rqt node's namespace unless overridden
+  /// with an absolute name. The operator bag must record the resolved topic.
   std::string contact_topic_ = "sonar_waterfall/contacts";
   /// Toolbar field that sets `world_frame_`.
   QLineEdit * frame_edit_ = nullptr;
+  /// Toolbar field that sets `contact_topic_` (recreates the publisher on edit).
+  QLineEdit * contact_topic_edit_ = nullptr;
   /// World/earth TF frame the marked-target pose lookup resolves against
   /// (REP-105 ECEF by default). Operator-configurable via the toolbar Frame
   /// field and persisted per perspective. Written on the GUI thread (the line
