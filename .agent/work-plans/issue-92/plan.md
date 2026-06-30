@@ -28,7 +28,9 @@ Row>`) is unchanged; `apply()`, `clear()`, `rowCount()`, `valueText()`, `inputFo
 keep their existing semantics. Add `sectionCount() const` for test introspection.
 
 `clear()` deletes the header widgets and inner grids, resets `sections_` and
-`section_order_`, and clears `rows_` (as before).
+`section_order_`, and clears `rows_` (as before). It also deletes the new
+`Row::range_hint` label so no hint widget is leaked (resolves Plan Review
+suggestion).
 
 ### 2. `ControlSetWidget` — range hints
 
@@ -40,70 +42,109 @@ Also set a tooltip on the spinbox: "Range: min – max unit, step N" for full de
 
 ### 3. `MarineControlPlugin` — multi-device tabs
 
-Replace the single `control_widget_` / `state_sub_` / `change_pub_` / `latest*` with:
-- `QTabWidget * tab_widget_` (closable tabs, set via `setTabsClosable(true)`)
-- `std::map<std::string, std::shared_ptr<TabEntry>> tabs_` keyed by state topic
-- `std::mutex tabs_mutex_` (guards `tabs_` from executor callbacks)
-- `std::string manual_topic_` (tracks which tab was opened via `topic_combo_`)
+Replace the single `control_widget_` / `state_sub_` / `change_pub_` / `latest*` with a
+`QTabWidget * tab_widget_` (closable tabs, `setTabsClosable(true)`) plus a dedicated,
+node-free **`TabManager`** that owns the per-tab lifecycle, and `std::string
+manual_topic_` (tracks which tab was opened via `topic_combo_`).
 
-`TabEntry` holds: `ControlSetWidget * widget`, `state_sub`, `change_pub`,
-`std::mutex latest_mutex`, `ControlSet latest`, `bool have_latest`.
+**Test seam (resolves Plan Review must-fix).** The per-tab subscription/publisher is
+created behind an injectable `TabTransportFactory`, so the tab lifecycle is
+unit-testable without a live ROS node:
 
-**`openTab(state_topic)`** — if a tab for that topic already exists, activate it and
-return. Otherwise: create a `TabEntry`, subscribe (RELIABLE + VOLATILE, depth 10);
-connect the entry's `controlChanged` to a per-tab lambda that publishes via
-`entry->change_pub`; add tab to `tab_widget_` with `setTabData(index, topic)` set
-to the topic string; wrap the subscription callback to invoke `applyLatest(topic)` on
-the GUI thread via `QMetaObject::invokeMethod(this, [=](){ ... }, Qt::QueuedConnection)`.
+- `TabTransport` (interface) — `publishChange(name, value)`; its destruction tears
+  down the underlying subscription/publisher.
+- `TabTransportFactory = std::function<shared_ptr<TabTransport>(state_topic, on_set)>`
+  where `on_set(ControlSet)` is invoked on the GUI thread for each received set.
+- `RclcppTabTransport` (the real impl, in the plugin .cpp) creates the
+  RELIABLE+VOLATILE/depth-10 state subscription and the change publisher, and marshals
+  each received set onto the GUI thread.
+- `TabManager` holds `std::map<std::string, std::shared_ptr<TabEntry>>` keyed by state
+  topic; `TabEntry` = `{ ControlSetWidget * widget, shared_ptr<TabTransport> transport,
+  bool titled }`.
 
-**`closeTab(state_topic)`** — reset `entry->state_sub` and `entry->change_pub`
-(destroying the DDS subscription/publisher), remove the tab widget from `tab_widget_`,
-erase from `tabs_`.
+`TabManager` API: `openTab`, `closeTab`, `clear`, `hasTab`, `tabCount`,
+`topicForIndex`, `widgetFor`.
 
-**`applyLatest(topic)`** (GUI thread) — find `TabEntry`, copy latest set under lock,
-call `entry->widget->apply(set)`. On first apply, update the tab label to
-`set.device_name` if non-empty; otherwise show the topic string.
+**`openTab(state_topic)`** — if a tab for that topic exists, activate it and return.
+Otherwise create a `TabEntry` + `ControlSetWidget`, add the tab titled with the topic
+string, connect the widget's `controlChanged` to a lambda **capturing the
+`shared_ptr<TabEntry>`** (so it can't dangle if the tab closes) that publishes via
+`entry->transport`, then build the transport via the factory.
+
+**`closeTab(state_topic)`** — reset `entry->transport` (destroying the
+subscription/publisher), `removeTab`, delete the widget, erase the entry.
+
+**`applySet(topic, set)`** (GUI thread) — look the entry up by topic (a closed tab is a
+safe no-op); `entry->widget->apply(set)`; on the first set carrying a non-empty
+`device_name`, replace the tab title with it.
+
+**Threading model (resolves Plan Review suggestion).** `TabManager`'s map is touched
+**only on the GUI thread**, so no `tabs_mutex_`/`latest_mutex_` is needed. The single
+cross-thread point is `RclcppTabTransport`'s ROS callback, which captures only
+self-contained copies (the delivery `std::function` + a stable QObject* marshalling
+target — never a `TabManager`/`TabEntry` pointer) and the queued GUI lambda captures
+only a message snapshot, so a concurrent tab close cannot dangle the delivery. Mirrors
+the #78-proven marshal-to-a-stable-QObject pattern.
 
 **Coexistence design** — bridge connect → `openTab(state_topic)` (drops the old
 `selectTopic()` call); bridge disconnect → `closeTab(state_topic)`. Manual
 `topic_combo_` selection → `openTab(topic)` and update `manual_topic_`; if the
-manually chosen topic already has a tab (e.g. a bridge tab), activate it. Clearing
-the combo closes the manual tab. `tabCloseRequested(index)` → if the tab's topic
-matches a connected bridge device, disconnect it; if it matches `manual_topic_`,
-clear `topic_combo_`; then `closeTab(topic)`.
+manually chosen topic already has a tab (e.g. a bridge tab), `openTab` activates it.
+Moving/clearing the combo closes the previous manual tab **unless** it is also a
+connected bridge device. `tabCloseRequested(index)` → if the tab's topic matches a
+connected bridge device, `disconnect()` it (operator decision: tab = device
+presence); if it matches `manual_topic_`, clear the combo bookkeeping; then
+`closeTab(topic)`.
 
-**Settings** — `saveSettings()` persists only `topic_combo_->currentText()` (bridge
-tabs are transient; they reopen on the next bridge connect). `restoreSettings()` is
-unchanged.
+**Settings (operator decision: ACTIVE tab only).** `saveSettings()` persists only the
+**active tab's** state topic (`tab_manager_->topicForIndex(currentIndex())`) — a
+minimal extension of today's single-`topic` persistence. This intentionally narrows
+review-issue's "persist multi-tab state" note: bridge tabs are transient and reopen on
+the next bridge connect, so full multi-tab restore is out of scope. `restoreSettings()`
+reopens that one topic as a manual tab (unchanged `selectTopic` path). Documented in a
+code comment in `saveSettings()`.
 
-**`shutdownPlugin()`** — iterate `tabs_`, reset all `state_sub`/`change_pub`, clear
-`tabs_`, then reset `bridge_client_` as before.
+**`shutdownPlugin()`** — `tab_manager_->clear()` (resets every tab's transport, no
+leaked subs), then reset `bridge_client_` as before.
 
 ### 4. Tests
 
-In `test_control_set_widget.cpp`:
+In `test_control_set_widget.cpp` (grouping + range hints):
 - `GroupedItemsRenderInSections` — apply a ControlSet with items in two named groups;
   verify `sectionCount() == 2`, both items accessible via `inputFor()`.
 - `UngroupedItemsGoToDefaultSection` — apply items with empty `group`; verify
-  `sectionCount() == 1`.
-- `GroupsPreserveFirstSeenOrder` — items in order A, B, A, B → two sections, A first.
-- `RangeHintAppearsForBoundedFloat` — FLOAT item with `min_value=0, max_value=10,
-  units="m"`; verify the range hint tooltip on the spinbox contains "0" and "10".
+  `sectionCount() == 1` and the default ("") section.
+- `GroupsPreserveFirstSeenOrder` — items in order A, B, A, B → two sections, A first
+  (via `sectionOrder()`).
+- `RangeHintAppearsForBoundedFloat` — bounded FLOAT (`min=0, max=10, units="m"`) yields
+  a `rangeHintText()` containing "0", "10", "m"; an unbounded FLOAT yields empty.
 
-Tab teardown is not unit-testable without a full rqt node; the teardown correctness is
-enforced by `state_sub_.reset()` (which calls `rclcpp`'s unsubscribe path) and the
-`QTabWidget`'s `removeTab` + widget deletion. Note this in a follow-up test issue if
-further coverage is needed.
+In `test_tab_manager.cpp` (node-free tab lifecycle, resolves the must-fix). A counting
+`FakeTransport`/`Registry` is injected via `TabTransportFactory`, so the lifecycle runs
+with no ROS node:
+- `OpeningTabsCreatesOneSubscriptionEach` — N tabs → N transports created, all alive.
+- `ReopeningSameTopicReusesTabAndSubscription` — same topic → focus, no second sub.
+- `ClosingTabDestroysOnlyItsSubscription` — close A → A's transport destroyed (no
+  leak), B's still alive; `hasTab`/`tabCount` reflect it.
+- `ClearDestroysAllSubscriptions` — `clear()` destroys every transport.
+- `EditPublishesOnlyToThatTabsTransport` — toggling tab A's control publishes to A's
+  transport only; B's publish log stays empty (no cross-talk).
+- `DeliveredSetRendersAndTitlesTabWithDeviceName` — `on_set` renders the widget and
+  retitles the tab from the topic string to `device_name`.
 
 ## Files to Change
 
 | File | Change |
 |------|--------|
-| `marine_control_widgets/include/marine_control_widgets/control_set_widget.hpp` | Add `GroupSection`, `range_hint` in `Row`, `vbox_`/`sections_`/`section_order_`; add `sectionCount()` |
-| `marine_control_widgets/src/control_set_widget.cpp` | Per-group sections, range hint labels + tooltips, `sectionCount()` |
+| `marine_control_widgets/include/marine_control_widgets/control_set_widget.hpp` | Add `GroupSection`, `range_hint` in `Row`, `vbox_`/`sections_`/`section_order_`; add `sectionCount()`, `sectionOrder()`, `rangeHintText()` |
+| `marine_control_widgets/src/control_set_widget.cpp` | Per-group sections, range hint labels + spinbox tooltips, introspection accessors |
 | `marine_control_widgets/test/test_control_set_widget.cpp` | 4 new grouping/range-hint tests |
-| `rqt_marine_control/include/rqt_marine_control/marine_control_plugin.hpp` | Add `TabEntry`, `tab_widget_`, `tabs_`, `tabs_mutex_`, `manual_topic_`; remove single-widget fields |
-| `rqt_marine_control/src/marine_control_plugin.cpp` | Multi-tab lifecycle: `openTab()`, `closeTab()`, `applyLatest(topic)`, updated `onTopicChanged()`, `onConnectClicked()`, `shutdownPlugin()` |
+| `rqt_marine_control/include/rqt_marine_control/tab_manager.hpp` (new) | `TabTransport` iface, `TabTransportFactory`, `TabManager` (node-free seam) |
+| `rqt_marine_control/src/tab_manager.cpp` (new) | `TabManager` open/close/clear/applySet lifecycle |
+| `rqt_marine_control/test/test_tab_manager.cpp` (new) | 6 node-free tab-lifecycle tests |
+| `rqt_marine_control/include/rqt_marine_control/marine_control_plugin.hpp` | Add `tab_widget_`, `tab_manager_`, `manual_topic_`; remove single-widget/sub/pub/latch fields |
+| `rqt_marine_control/src/marine_control_plugin.cpp` | `RclcppTabTransport`, `makeTransportFactory()`, `connectedDeviceForTopic()`, multi-tab `onTopicChanged()`/`onConnectClicked()`/`onTabCloseRequested()`, active-tab `saveSettings()`, `shutdownPlugin()` |
+| `rqt_marine_control/CMakeLists.txt` | Add `tab_manager` source + `test_tab_manager` gtest |
 
 ## Principles Self-Check
 
@@ -130,12 +171,15 @@ further coverage is needed.
 | `ControlSetWidget` public API (new `sectionCount()`) | Only caller is `rqt_marine_control` + tests — no breakage | Yes |
 | `onConnectClicked()` to call `openTab()` | Remove the now-unused `selectTopic()` call from that path | Yes |
 | Tab teardown | `shutdownPlugin()` must iterate all tabs | Yes |
-| Settings | Only `topic_combo_` topic persists (bridge tabs are transient) | Yes |
+| Settings | Only the ACTIVE tab's topic persists (operator decision; bridge tabs are transient) | Yes |
 
-## Open Questions
+## Open Questions (resolved by operator)
 
-- [ ] On tab close by the user (close button): disconnect the bridge device, or only tear down the local subscription (leaving the bridge wired)? Plan proposes: disconnect the bridge (tab = device presence), consistent with bridge disconnect also closing the tab.
-- [ ] Manual tab title before first state message: topic string or "(manual)"? Plan proposes: topic string initially, replaced by `device_name` on first state message.
+- [x] On tab close by the user: **disconnect the bridge device** (tab = device
+  presence). `onTabCloseRequested` calls `bridge_client_->disconnect(device)` for a
+  connected bridge tab, then tears down the tab. Confirmed by the operator.
+- [x] Manual tab title before first state message: **topic string initially**, replaced
+  by `device_name` on the first `ControlSet`. Confirmed by the operator.
 
 ## Estimated Scope
 
