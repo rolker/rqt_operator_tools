@@ -113,7 +113,6 @@ private:
 
   void applySet(
     const std::string & state_topic, const marine_control_interfaces::msg::ControlSet & set);
-  int indexOf(const std::string & state_topic) const;
 
   QTabWidget * tabs_;
   TabTransportFactory factory_;

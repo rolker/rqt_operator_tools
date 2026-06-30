@@ -50,15 +50,6 @@ TabManager::~TabManager()
   clear();
 }
 
-int TabManager::indexOf(const std::string & state_topic) const
-{
-  auto it = entries_.find(state_topic);
-  if (it == entries_.end() || it->second->widget == nullptr) {
-    return -1;
-  }
-  return tabs_->indexOf(it->second->widget);
-}
-
 marine_control_widgets::ControlSetWidget * TabManager::openTab(const std::string & state_topic)
 {
   if (auto it = entries_.find(state_topic); it != entries_.end()) {
@@ -114,6 +105,10 @@ void TabManager::closeTab(const std::string & state_topic)
   if (idx >= 0) {
     tabs_->removeTab(idx);
   }
+  // The delivery dangle-safety contract (see openTab/applySet) assumes
+  // QWidget::~QWidget does not re-enter the Qt event loop here — true for normal
+  // teardown — so a queued ControlSet delivery cannot be dispatched into this
+  // half-destroyed tab while it is being deleted.
   delete entry->widget;       // also disconnects the publish lambda
   entry->widget = nullptr;
   entries_.erase(it);

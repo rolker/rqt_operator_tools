@@ -109,6 +109,11 @@ public:
   }
 
 private:
+  // Non-owning. The plugin owns the rclcpp::Node and destroys every tab/transport
+  // (TabManager::clear in shutdownPlugin, or closeTab) before the node is torn
+  // down, so this raw pointer — used by publishChange and the subscription — is
+  // never dereferenced after the node dies. Node-outlives-transport is the
+  // invariant; a weak/shared_ptr would also work but is unnecessary given it.
   rclcpp::Node * node_;
   rclcpp::Subscription<marine_control_interfaces::msg::ControlSet>::SharedPtr state_sub_;
   rclcpp::Publisher<marine_control_interfaces::msg::ControlValue>::SharedPtr change_pub_;
