@@ -88,3 +88,23 @@ context; issue #78 (deferred DDS queries) is existing behavior to preserve.
 ### Open questions
 - [ ] Tab close by user: disconnect bridge device or only tear down local subscription? Plan proposes disconnect (tab = device presence).
 - [ ] Manual tab title before first state: topic string or "(manual)"? Plan proposes topic string, replaced by device_name on first message.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-06-30 17:37 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Plan**: `.agent/work-plans/issue-92/plan.md` at `4851315`
+**PR**: PR-less (--issue mode)
+**Verdict**: changes-requested
+
+### Findings
+- [ ] (must-fix) review-issue's "not optional" tab-lifecycle tests (no leaked subs / no cross-talk) are downgraded to a follow-up issue without reconciliation — add a node-free test seam (testable topic-keyed tab map, or injectable subscription factory counting create/destroy) or document a waiver in the plan — `plan.md:93`
+- [ ] (suggestion) Settings persist only `topic_combo_` text and `manual_topic_` is a single string, so only one manual tab is restorable — confirm this matches issue intent vs review-issue's "persist multi-tab state" note — `plan.md:74-77`
+- [ ] (suggestion) `tabs_mutex_` likely unnecessary if callbacks touch only `entry->latest` and `tabs_` stays GUI-thread-only; the real hazard is `closeTab()` resetting `state_sub` mid-callback — clarify callback captures `shared_ptr<TabEntry>` so it can't dangle — `plan.md:46,57`
+- [ ] (suggestion) Ensure `clear()` also deletes the new `Row::range_hint` label (current `clear()` deletes name/value/input only) to avoid a widget leak — `plan.md:31-32`
+
+### Notes
+- Verified: `ControlSetWidget` has exactly one external caller (`rqt_marine_control`); all referenced message fields (`group`, `device_name`, `min_value`/`max_value`/`step`/`units`) exist; existing test infra (`QApplication` fixture, `inputFor()` + `dynamic_cast`) supports the 4 planned grouping/range-hint tests.
+- Coexistence question from review-issue (manual topic vs bridge device tabs) is resolved by the plan's Coexistence design.
+- Independent review: fresh-context sub-agent on a different model (Opus) than the Sonnet plan author — not in-context self-review despite the shared agent name.
