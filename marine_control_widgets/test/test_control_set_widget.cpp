@@ -43,6 +43,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <marine_control_interfaces/msg/control_item.hpp>
 #include <marine_control_interfaces/msg/control_set.hpp>
@@ -225,5 +226,82 @@ TEST_F(ControlSetWidgetTest, ClearRemovesAllRows)
   ASSERT_EQ(w.rowCount(), 2);
   w.clear();
   EXPECT_EQ(w.rowCount(), 0);
+  EXPECT_EQ(w.sectionCount(), 0);
   EXPECT_EQ(w.inputFor("a"), nullptr);
+}
+
+namespace
+{
+// An item carrying a group, for the grouping tests.
+ControlItem grouped(const char * name, const char * group)
+{
+  ControlItem it = item(name, ControlItem::TYPE_FLOAT, "0.0");
+  it.group = group;
+  return it;
+}
+}  // namespace
+
+TEST_F(ControlSetWidgetTest, GroupedItemsRenderInSections)
+{
+  ControlSetWidget w;
+  ControlSet set;
+  set.items.push_back(grouped("gain", "Display"));
+  set.items.push_back(grouped("range", "Transmit"));
+  w.apply(set);
+
+  EXPECT_EQ(w.sectionCount(), 2);
+  EXPECT_EQ(w.rowCount(), 2);
+  // Both controls are still reachable regardless of which section they landed in.
+  EXPECT_NE(w.inputFor("gain"), nullptr);
+  EXPECT_NE(w.inputFor("range"), nullptr);
+}
+
+TEST_F(ControlSetWidgetTest, UngroupedItemsGoToDefaultSection)
+{
+  ControlSetWidget w;
+  ControlSet set;
+  set.items.push_back(item("gain", ControlItem::TYPE_FLOAT, "1.0"));   // no group
+  set.items.push_back(item("bins", ControlItem::TYPE_INT, "2"));       // no group
+  w.apply(set);
+
+  // Both fall into the single default section.
+  ASSERT_EQ(w.sectionCount(), 1);
+  EXPECT_EQ(w.sectionOrder().front(), std::string());   // "" == General
+}
+
+TEST_F(ControlSetWidgetTest, GroupsPreserveFirstSeenOrder)
+{
+  ControlSetWidget w;
+  ControlSet set;
+  set.items.push_back(grouped("a1", "Alpha"));
+  set.items.push_back(grouped("b1", "Beta"));
+  set.items.push_back(grouped("a2", "Alpha"));   // back to an existing group
+  set.items.push_back(grouped("b2", "Beta"));
+  w.apply(set);
+
+  ASSERT_EQ(w.sectionCount(), 2);
+  const std::vector<std::string> order = w.sectionOrder();
+  ASSERT_EQ(order.size(), 2u);
+  EXPECT_EQ(order[0], "Alpha");   // first seen leads
+  EXPECT_EQ(order[1], "Beta");
+}
+
+TEST_F(ControlSetWidgetTest, RangeHintAppearsForBoundedFloat)
+{
+  ControlSetWidget w;
+  ControlSet set;
+  auto bounded = item("speed", ControlItem::TYPE_FLOAT, "5.0");
+  bounded.min_value = 0.0;
+  bounded.max_value = 10.0;
+  bounded.units = "m";
+  set.items.push_back(bounded);
+  // An unbounded float (max == min) gets no hint.
+  set.items.push_back(item("trim", ControlItem::TYPE_FLOAT, "0.0"));
+  w.apply(set);
+
+  const QString hint = w.rangeHintText("speed");
+  EXPECT_TRUE(hint.contains("0"));
+  EXPECT_TRUE(hint.contains("10"));
+  EXPECT_TRUE(hint.contains("m"));
+  EXPECT_TRUE(w.rangeHintText("trim").isEmpty());
 }

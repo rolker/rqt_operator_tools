@@ -35,12 +35,14 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <vector>
 
 #include <marine_control_interfaces/msg/control_set.hpp>
 #include <marine_control_interfaces/msg/control_item.hpp>
 
 class QGridLayout;
 class QLabel;
+class QVBoxLayout;
 
 namespace marine_control_widgets
 {
@@ -59,6 +61,14 @@ namespace marine_control_widgets
 /// Editing a control emits controlChanged(name, value); the owner turns that
 /// into a ControlValue on the device's change topic. The widget does no ROS I/O,
 /// so it is unit-testable without a node.
+///
+/// Controls are grouped into labeled sections keyed by ControlItem.group; items
+/// with an empty group fall into a "General" section. Sections appear in
+/// first-seen order. When no item sets a group the single section's header is
+/// hidden, so an ungrouped set renders as a flat grid (layout unchanged from
+/// before grouping existed). FLOAT/INT controls with meaningful bounds
+/// (max_value > min_value) also show a compact "[min – max units]" range hint
+/// next to the input.
 class ControlSetWidget : public QWidget
 {
   Q_OBJECT
@@ -75,8 +85,15 @@ public:
 
   // --- introspection (for tests) ---
   int rowCount() const;
+  int sectionCount() const;
+  /// Section group keys in first-seen (layout) order; "" denotes the default
+  /// "General" section.
+  std::vector<std::string> sectionOrder() const;
   QString valueText(const std::string & name) const;
   QWidget * inputFor(const std::string & name) const;
+  /// The compact "[min – max units]" hint text for a control, or empty if the
+  /// control has no visible bounds.
+  QString rangeHintText(const std::string & name) const;
 
 signals:
   void controlChanged(const QString & name, const QString & value);
@@ -87,15 +104,30 @@ private:
     QLabel * name = nullptr;
     QLabel * value = nullptr;
     QWidget * input = nullptr;     // nullptr for read-only / unknown-type rows
+    QLabel * range_hint = nullptr;  // nullptr unless the control has visible bounds
     // Refreshes the input widget from a device value, skipping when the widget
     // is focused so an in-progress edit is never stomped. Unset for read-only.
     std::function<void(const std::string &)> set_value;
   };
 
+  // One labeled section per ControlItem.group. The header is hidden while only
+  // one section exists, so an ungrouped set looks like the old flat grid.
+  struct GroupSection
+  {
+    QLabel * header = nullptr;
+    QGridLayout * grid = nullptr;
+    int row_count = 0;     // next free row in this section's grid
+  };
+
   void makeInput(const marine_control_interfaces::msg::ControlItem & item, Row & row);
+  static QLabel * makeRangeHint(const marine_control_interfaces::msg::ControlItem & item);
+  GroupSection & sectionFor(const std::string & group);
   static QString displayValue(const marine_control_interfaces::msg::ControlItem & item);
 
-  QGridLayout * grid_;
+  QVBoxLayout * vbox_;
+  // Sections keyed by the raw group string ("" -> the "General" section).
+  std::map<std::string, GroupSection> sections_;
+  std::vector<std::string> section_order_;   // first-seen order, drives layout order
   std::map<std::string, Row> rows_;
 };
 

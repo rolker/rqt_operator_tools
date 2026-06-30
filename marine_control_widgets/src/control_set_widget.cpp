@@ -31,12 +31,14 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFont>
 #include <QGridLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QString>
+#include <QVBoxLayout>
 
 #include <algorithm>
 #include <cmath>
@@ -44,6 +46,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace marine_control_widgets
 {
@@ -84,13 +87,81 @@ int toIntBound(double v)
   const double hi = static_cast<double>(std::numeric_limits<int>::max());
   return static_cast<int>(std::clamp(v, lo, hi));
 }
+
+// The "group" a control belongs to, with empty mapped to the default section.
+const char * const kDefaultGroup = "General";
+
+// Bounds are meaningful (worth showing) only for numeric controls whose advertised
+// max exceeds min; an unbounded control leaves these unset.
+bool hasMeaningfulBounds(const Item & item)
+{
+  return (item.type == Item::TYPE_FLOAT || item.type == Item::TYPE_INT) &&
+         item.max_value > item.min_value;
+}
+
+// Format min/max (and step) using the control's natural precision: integers for
+// INT, decimalsFor() places for FLOAT.
+void formatBounds(const Item & item, QString & lo, QString & hi, QString & step)
+{
+  if (item.type == Item::TYPE_INT) {
+    lo = QString::number(toIntBound(item.min_value));
+    hi = QString::number(toIntBound(item.max_value));
+    step = item.step > 0.0 ? QString::number(toIntBound(item.step)) : QString();
+  } else {
+    const int dec = decimalsFor(item);
+    lo = QString::number(item.min_value, 'f', dec);
+    hi = QString::number(item.max_value, 'f', dec);
+    step = item.step > 0.0 ? QString::number(item.step, 'f', dec) : QString();
+  }
+}
+
+// Compact inline hint, e.g. "[0.0 – 100.0 m]". Empty when bounds aren't meaningful.
+QString rangeLabelText(const Item & item)
+{
+  if (!hasMeaningfulBounds(item)) {
+    return QString();
+  }
+  QString lo, hi, step;
+  formatBounds(item, lo, hi, step);
+  const QChar dash(0x2013);   // en dash; kept out of the source as a literal
+  QString text = QStringLiteral("[") + lo + QStringLiteral(" ") + dash +
+    QStringLiteral(" ") + hi;
+  if (!item.units.empty()) {
+    text += QStringLiteral(" ") + QString::fromStdString(item.units);
+  }
+  return text + QStringLiteral("]");
+}
+
+// Full detail for a tooltip, e.g. "Range: 0.0 – 100.0 m, step 0.5". Empty when
+// bounds aren't meaningful.
+QString rangeDetailText(const Item & item)
+{
+  if (!hasMeaningfulBounds(item)) {
+    return QString();
+  }
+  QString lo, hi, step;
+  formatBounds(item, lo, hi, step);
+  const QChar dash(0x2013);
+  QString text = QStringLiteral("Range: ") + lo + QStringLiteral(" ") + dash +
+    QStringLiteral(" ") + hi;
+  if (!item.units.empty()) {
+    text += QStringLiteral(" ") + QString::fromStdString(item.units);
+  }
+  if (!step.isEmpty()) {
+    text += QStringLiteral(", step ") + step;
+  }
+  return text;
+}
 }  // namespace
 
 ControlSetWidget::ControlSetWidget(QWidget * parent)
 : QWidget(parent)
 {
-  grid_ = new QGridLayout(this);
-  grid_->setContentsMargins(4, 2, 4, 2);
+  vbox_ = new QVBoxLayout(this);
+  vbox_->setContentsMargins(4, 2, 4, 2);
+  // Sections stack from the top; the trailing stretch keeps them packed up so a
+  // device with few controls doesn't spread its rows down a tall dock.
+  vbox_->addStretch(1);
 }
 
 ControlSetWidget::~ControlSetWidget() = default;
@@ -134,6 +205,9 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
           spin->setSuffix(QStringLiteral(" ") + QString::fromStdString(item.units));
         }
         spin->setKeyboardTracking(false);   // emit only on commit, not each digit
+        if (const QString tip = rangeDetailText(item); !tip.isEmpty()) {
+          spin->setToolTip(tip);
+        }
         spin->setValue(QString::fromStdString(item.value).toDouble());
         connect(
           spin, &QAbstractSpinBox::editingFinished, this,
@@ -163,6 +237,9 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
           spin->setSuffix(QStringLiteral(" ") + QString::fromStdString(item.units));
         }
         spin->setKeyboardTracking(false);
+        if (const QString tip = rangeDetailText(item); !tip.isEmpty()) {
+          spin->setToolTip(tip);
+        }
         spin->setValue(QString::fromStdString(item.value).toInt());
         connect(
           spin, &QAbstractSpinBox::editingFinished, this,
@@ -254,6 +331,44 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
   }
 }
 
+QLabel * ControlSetWidget::makeRangeHint(const Item & item)
+{
+  const QString text = rangeLabelText(item);
+  if (text.isEmpty()) {
+    return nullptr;     // unbounded control: no hint
+  }
+  auto * hint = new QLabel(text);
+  if (const QString tip = rangeDetailText(item); !tip.isEmpty()) {
+    hint->setToolTip(tip);   // full detail (incl. step) on hover
+  }
+  return hint;
+}
+
+ControlSetWidget::GroupSection & ControlSetWidget::sectionFor(const std::string & group)
+{
+  auto it = sections_.find(group);
+  if (it != sections_.end()) {
+    return it->second;
+  }
+  GroupSection section;
+  const QString title =
+    QString::fromStdString(group.empty() ? std::string(kDefaultGroup) : group);
+  section.header = new QLabel(title);
+  QFont f = section.header->font();
+  f.setBold(true);
+  section.header->setFont(f);
+  section.grid = new QGridLayout();
+  section.grid->setContentsMargins(0, 0, 0, 0);
+  // Insert before the trailing stretch so sections stay packed at the top in
+  // first-seen order.
+  vbox_->insertWidget(vbox_->count() - 1, section.header);
+  vbox_->insertLayout(vbox_->count() - 1, section.grid);
+  section_order_.push_back(group);
+  auto [pos, inserted] = sections_.emplace(group, section);
+  (void)inserted;
+  return pos->second;
+}
+
 void ControlSetWidget::apply(const marine_control_interfaces::msg::ControlSet & set)
 {
   for (const auto & item : set.items) {
@@ -274,14 +389,27 @@ void ControlSetWidget::apply(const marine_control_interfaces::msg::ControlSet & 
     }
     row.value = new QLabel(displayValue(item));
     makeInput(item, row);
-    // Rows are only appended (or cleared wholesale), so size == next free row.
-    const int r = static_cast<int>(rows_.size());
-    grid_->addWidget(row.name, r, 0);
-    grid_->addWidget(row.value, r, 1);
+    row.range_hint = makeRangeHint(item);
+
+    GroupSection & section = sectionFor(item.group);
+    const int r = section.row_count++;
+    section.grid->addWidget(row.name, r, 0);
+    section.grid->addWidget(row.value, r, 1);
     if (row.input) {
-      grid_->addWidget(row.input, r, 2);
+      section.grid->addWidget(row.input, r, 2);
+    }
+    if (row.range_hint) {
+      section.grid->addWidget(row.range_hint, r, 3);
     }
     rows_[item.name] = row;
+  }
+
+  // Hide the header while only one section exists, so an ungrouped set renders
+  // as a flat grid (unchanged from before grouping). Reveal all headers — incl.
+  // "General" — as soon as a second, named section appears.
+  const bool show_headers = sections_.size() > 1;
+  for (auto & [group, section] : sections_) {
+    section.header->setVisible(show_headers);
   }
 }
 
@@ -291,13 +419,39 @@ void ControlSetWidget::clear()
     delete row.name;
     delete row.value;
     delete row.input;
+    delete row.range_hint;
   }
   rows_.clear();
+  for (auto & [group, section] : sections_) {
+    delete section.header;
+    delete section.grid;
+  }
+  sections_.clear();
+  section_order_.clear();
 }
 
 int ControlSetWidget::rowCount() const
 {
   return static_cast<int>(rows_.size());
+}
+
+int ControlSetWidget::sectionCount() const
+{
+  return static_cast<int>(sections_.size());
+}
+
+std::vector<std::string> ControlSetWidget::sectionOrder() const
+{
+  return section_order_;
+}
+
+QString ControlSetWidget::rangeHintText(const std::string & name) const
+{
+  auto it = rows_.find(name);
+  if (it == rows_.end() || it->second.range_hint == nullptr) {
+    return QString();
+  }
+  return it->second.range_hint->text();
 }
 
 QString ControlSetWidget::valueText(const std::string & name) const
