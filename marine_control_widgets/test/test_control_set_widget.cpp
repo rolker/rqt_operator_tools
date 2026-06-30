@@ -286,6 +286,32 @@ TEST_F(ControlSetWidgetTest, GroupsPreserveFirstSeenOrder)
   EXPECT_EQ(order[1], "Beta");
 }
 
+TEST_F(ControlSetWidgetTest, ApplyReconcilesDroppedControlsAndEmptySections)
+{
+  // A control dropped from a later heartbeat must not linger as a stale row, and
+  // a group emptied by that removal must not leave an orphaned section header.
+  ControlSetWidget w;
+  ControlSet first;
+  first.items.push_back(grouped("gain", "Display"));
+  first.items.push_back(grouped("range", "Transmit"));
+  w.apply(first);
+  ASSERT_EQ(w.rowCount(), 2);
+  ASSERT_EQ(w.sectionCount(), 2);
+
+  // The next set drops "range" (and with it the whole "Transmit" group).
+  ControlSet smaller;
+  smaller.items.push_back(grouped("gain", "Display"));
+  w.apply(smaller);
+
+  EXPECT_EQ(w.rowCount(), 1);
+  EXPECT_EQ(w.inputFor("range"), nullptr);            // dropped row is gone
+  EXPECT_NE(w.inputFor("gain"), nullptr);             // surviving row stays
+  ASSERT_EQ(w.sectionCount(), 1);                     // empty "Transmit" removed
+  const std::vector<std::string> order = w.sectionOrder();
+  ASSERT_EQ(order.size(), 1u);
+  EXPECT_EQ(order.front(), "Display");
+}
+
 TEST_F(ControlSetWidgetTest, RangeHintAppearsForBoundedFloat)
 {
   ControlSetWidget w;

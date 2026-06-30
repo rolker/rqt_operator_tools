@@ -105,6 +105,7 @@ private:
     QLabel * value = nullptr;
     QWidget * input = nullptr;     // nullptr for read-only / unknown-type rows
     QLabel * range_hint = nullptr;  // nullptr unless the control has visible bounds
+    std::string group;             // the section this row lives in (raw group key)
     // Refreshes the input widget from a device value, skipping when the widget
     // is focused so an in-progress edit is never stomped. Unset for read-only.
     std::function<void(const std::string &)> set_value;

@@ -45,6 +45,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -391,6 +392,7 @@ void ControlSetWidget::apply(const marine_control_interfaces::msg::ControlSet & 
     makeInput(item, row);
     row.range_hint = makeRangeHint(item);
 
+    row.group = item.group;
     GroupSection & section = sectionFor(item.group);
     const int r = section.row_count++;
     section.grid->addWidget(row.name, r, 0);
@@ -402,6 +404,46 @@ void ControlSetWidget::apply(const marine_control_interfaces::msg::ControlSet & 
       section.grid->addWidget(row.range_hint, r, 3);
     }
     rows_[item.name] = row;
+  }
+
+  // Reconcile: a control dropped from this heartbeat must not linger as a stale
+  // row. Delete any row whose name is absent from the incoming set (same widget
+  // teardown as clear()); deleting a widget removes it from its grid, and an
+  // emptied grid row collapses to zero height so surviving rows stay packed in
+  // their original order.
+  std::set<std::string> incoming;
+  for (const auto & item : set.items) {
+    incoming.insert(item.name);
+  }
+  for (auto it = rows_.begin(); it != rows_.end(); ) {
+    if (incoming.count(it->first) == 0) {
+      delete it->second.name;
+      delete it->second.value;
+      delete it->second.input;
+      delete it->second.range_hint;
+      it = rows_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+
+  // Drop any section left with no rows so a removed group doesn't leave an
+  // orphaned header (and the single-section header rule below stays correct).
+  std::set<std::string> live_groups;
+  for (const auto & [name, row] : rows_) {
+    live_groups.insert(row.group);
+  }
+  for (auto it = sections_.begin(); it != sections_.end(); ) {
+    if (live_groups.count(it->first) == 0) {
+      delete it->second.header;
+      delete it->second.grid;
+      section_order_.erase(
+        std::remove(section_order_.begin(), section_order_.end(), it->first),
+        section_order_.end());
+      it = sections_.erase(it);
+    } else {
+      ++it;
+    }
   }
 
   // Hide the header while only one section exists, so an ungrouped set renders
