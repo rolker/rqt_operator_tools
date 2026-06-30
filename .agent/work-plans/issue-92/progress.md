@@ -75,3 +75,16 @@ context; issue #78 (deferred DDS queries) is existing behavior to preserve.
 - [ ] Require tests for tab subscription lifecycle (no leaked subs, no cross-talk) — not optional.
 - [ ] Plan must document the per-tab subscription map lifecycle design (create/destroy semantics, settings persistence for multi-tab state).
 - [ ] Verify no other callers of `ControlSetWidget` public API exist that would break if the constructor/API changes.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-06-30 17:30 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-92/plan.md` at `4851315`
+**Branch**: feature/issue-92 at `4851315`
+**Phases**: single
+
+### Open questions
+- [ ] Tab close by user: disconnect bridge device or only tear down local subscription? Plan proposes disconnect (tab = device presence).
+- [ ] Manual tab title before first state: topic string or "(manual)"? Plan proposes topic string, replaced by device_name on first message.
