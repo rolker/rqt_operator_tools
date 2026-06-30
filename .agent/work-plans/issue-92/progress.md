@@ -444,3 +444,29 @@ built in `core_ws` first (colcon, 2 packages). Then from the worktree root:
   (cpplint + uncrustify) on all changed files: 0 failures / 0 errors.
 
 Not pushed; no PR opened (host re-reviews and publishes).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-30 19:28 +00:00
+**By**: Claude Code Agent (Claude Opus 4.6)
+**Verdict**: approved
+
+**Branch**: feature/issue-92 at `b9b95eb`
+**Mode**: pre-push
+**Depth**: Deep (reason: 200+ changed lines & 11 files; per-tab subscription lifecycle + executor↔GUI marshalling)
+**Must-fix**: 0 | **Suggestions**: 4
+**Round**: 3 | **Ship**: recommended — must-fix has been 0 across all 3 rounds; suggestion count flat-to-declining (4→5→4) with each round's items resolved; remaining items are minor/edge/cosmetic/pre-existing; loop has converged.
+
+### Findings
+- [ ] (suggestion) `apply()` reconciliation deletes a dropped control's input even when it has keyboard focus / is mid-edit, discarding the operator's in-progress value (inconsistent with the `hasFocus()` guard in `set_value`); new in this PR — `marine_control_widgets/src/control_set_widget.cpp:440`
+- [ ] (suggestion) A control that changes its `group` between heartbeats isn't re-homed (existing-row branch updates value/input only, leaves `row.group`/placement stale); cosmetic, groups are normally static — `marine_control_widgets/src/control_set_widget.cpp:397`
+- [ ] (suggestion) `tab_manager.hpp` threading note says the marshalled delivery captures "never a TabManager/entry pointer" but `on_set` captures `TabManager* this`; safe only via shared plugin lifetime — tighten the comment — `rqt_marine_control/include/rqt_marine_control/tab_manager.hpp:76`
+- [ ] (suggestion) ENUM `set_value` appends each distinct out-of-enum echoed value and never prunes, so a churning out-of-enum value grows the combo; pre-existing pattern, minor — `marine_control_widgets/src/control_set_widget.cpp:302`
+
+### Specialists
+- Static analysis: ament_cpplint + ament_uncrustify + ament_cppcheck (slow-version override) on all 8 changed C++ files — **0 problems**.
+- Governance: principles Pass (human control/transparency, consequences, test-what-breaks, only-what's-needed); ADR-0003 D5 QoS byte-identical to base (`rclcpp::QoS(10)` RELIABLE+VOLATILE depth-10, no regression), ADR-0008 clean sub/pub teardown, ADR-0013 vocabulary; consequences map satisfied; no other `ControlSetWidget` callers (re-verified).
+- Plan drift: matches plan.md "Files to Change" exactly; all Plan-Review + Round-1 (4) + Round-2 (5) suggestions resolved across `a00f563`,`2e8ca8c`,`1d3e3b5`,`e7ec37b`. No scope creep.
+- Claude Adversarial (2 disjoint lenses, Deep): Lens A (logic) + Lens B (systemic/safety) both found 0 must-fix. Both independently re-confirmed the core threading/lifecycle model (no mutex needed, no queued-delivery dangle, node-outlives-transport holds). Rejected on inspection: an alleged `sections_.at()` crash (a row's group always matches a live section while the row exists), a "wrong device button refresh" in `onTabCloseRequested` (the single combo-driven connect button is always live-refreshed, no staleness), and an "implicit QoS" regression (unchanged from base).
+
+Tests not re-run in this offline review (lower layers unbuilt); the Implementation entry above documents 93 tests / 0 failures at this same HEAD.
