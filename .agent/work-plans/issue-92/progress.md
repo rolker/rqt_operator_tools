@@ -301,3 +301,30 @@ built in `core_ws` first. Then from the worktree root:
   test adds 1). `ControlSetWidgetTest` now 14/14 incl. the new case; `TabManagerTest` 6/6.
 
 Not pushed; no PR opened (host re-reviews and publishes).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-30 18:42 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-92 at `7904809`
+**Mode**: pre-push
+**Depth**: Deep (reason: ~1100 LOC C++, per-tab subscription lifecycle + cross-thread executor↔GUI marshalling)
+**Must-fix**: 0 | **Suggestions**: 5
+**Round**: 2 | **Ship**: recommended — no must-fix; all 4 Round-1 suggestions resolved (`a00f563`, `2e8ca8c`); both adversarial passes reconfirm the no-mutex/no-dangle threading claim holds; static analysis clean.
+
+### Findings
+- [ ] (suggestion) `section.row_count` is monotonic — a control that drops then re-appears in a surviving section consumes a fresh grid row each cycle (collapsed empty rows accumulate; cosmetic, only under sustained flapping) — `marine_control_widgets/src/control_set_widget.cpp:397`
+- [ ] (suggestion) `TabManager::indexOf` private method is dead code (all call sites use `QTabWidget::indexOf`) — remove it + decl at `tab_manager.hpp:116` — `rqt_marine_control/src/tab_manager.cpp:53`
+- [ ] (suggestion) A group emptied then reappearing re-inserts at the end, so a once-first group can land last — contradicts the "first-seen order" doc — `marine_control_widgets/src/control_set_widget.cpp:348`
+- [ ] (suggestion) `RclcppTabTransport` holds a non-owning raw `rclcpp::Node*` used by `publishChange`; safe today but the node-outlives-transport invariant is implicit — document it or hold a weak/shared ptr — `rqt_marine_control/src/marine_control_plugin.cpp:112`
+- [ ] (suggestion) Delivery dangle-safety relies on `QWidget::~QWidget` not re-entering the event loop during `closeTab`/`clear` — true for normal teardown; a one-line note would harden the documented contract — `rqt_marine_control/src/tab_manager.cpp:117`
+
+### Specialists
+- Static analysis: ament_cpplint + ament_uncrustify on all 8 changed C++ files — no problems found. ament_cppcheck skipped by ament's own v2.13.0 perf guard (environmental).
+- Governance: principles Pass (human control/transparency, consequences, test-what-breaks); ADR-0003 D5 QoS preserved (RELIABLE+VOLATILE depth-10, no regression), ADR-0008 clean sub/pub teardown, ADR-0013 vocabulary; consequences map satisfied; no other `ControlSetWidget` callers (re-verified).
+- Plan drift: matches plan.md "Files to Change" exactly; the `apply()` reconciliation + `manual_topic_` settings/disconnect fixes are Round-1 review suggestions the operator chose to fix (tracked, not scope creep), with a new reconciliation test.
+- Claude Adversarial (2 disjoint lenses, Deep): Lens A (logic) and Lens B (systemic/safety) both found 0 must-fix. Lens B traced the executor↔GUI marshalling, the transport-destruction window, and the TabManager-`this` capture lifetime and confirmed no mutex and no QPointer guard are needed.
+
+Tests not re-run in this offline review (lower layers unbuilt); the Implementation entry above documents 91 tests / 0 failures at this same HEAD (`7904809`).
