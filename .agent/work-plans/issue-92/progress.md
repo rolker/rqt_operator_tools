@@ -206,3 +206,98 @@ Not pushed; no PR opened (host re-reviews and publishes).
 - Governance: principles Pass; ADR-0003 / 0008 / 0013 compliant; consequences map satisfied; all three review-issue action items resolved (lifecycle tests delivered via node-free TabTransportFactory seam, plan documents lifecycle, no other ControlSetWidget callers — re-verified).
 - Plan drift: implementation matches plan.md "Files to Change" exactly; Plan Review must-fix + 3 suggestions all resolved. No scope creep.
 - Claude Adversarial (2 disjoint lenses, Deep): Lens A (logic) and Lens B (systemic/safety) both found no must-fix; Lens B independently verified the no-mutex threading claim and no-leaked-subscription guarantee hold.
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-30 18:30 +00:00
+**By**: Claude Opus
+
+**Branch**: feature/issue-92
+**Commits**:
+- `a00f563` fix(marine_control_widgets): reconcile dropped controls in apply()
+- `2e8ca8c` fix(rqt_marine_control): persist manual tab, clear stale manual state on disconnect
+- (this entry) progress: pre-push review fixes for #92
+
+Operator chose to fix **all four** pre-push review suggestions. Each is resolved below.
+
+### Finding 1 — `saveSettings` persisted a bridge-only tab (`marine_control_plugin.cpp:223`)
+`saveSettings()` no longer reads the active tab; it persists the manual tab's topic
+directly, since `restoreSettings` always reopens the saved topic as a *manual* tab and a
+bridge-only tab cannot be restored (nothing reopens the bridge connection). The active-tab
+nuance is moot — there is exactly one manual tab, and it coincides with the active tab when
+the operator's manual selection is focused. New line:
+```cpp
+instance_settings.setValue("topic", QString::fromStdString(manual_topic_));
+```
+with an updated comment explaining the bridge-only-tab hazard and why manual_topic_ is the
+only restorable choice.
+
+### Finding 2 — stale `manual_topic_` on Connect-button disconnect (`marine_control_plugin.cpp:450`)
+`onConnectClicked()`'s disconnect branch now clears the manual bookkeeping immediately,
+mirroring `onTabCloseRequested` (signal-blocked combo reset so it doesn't reopen a tab):
+```cpp
+if (manual_topic_ == device.state_topic) {
+  manual_topic_.clear();
+  const QSignalBlocker blocker(topic_combo_);
+  const int empty_index = topic_combo_->findText("");
+  topic_combo_->setCurrentIndex(empty_index >= 0 ? empty_index : -1);
+}
+tab_manager_->closeTab(device.state_topic);
+```
+The manual-tab/combo state is now consistent at disconnect, not deferred to the next
+selection change.
+
+### Finding 3 — `apply()` was append-only (`control_set_widget.cpp:372`)
+`apply()` now reconciles after upserting the incoming items. `Row` gained a `group` field
+(its raw section key). The reconciliation:
+```cpp
+std::set<std::string> incoming;
+for (const auto & item : set.items) { incoming.insert(item.name); }
+for (auto it = rows_.begin(); it != rows_.end(); ) {
+  if (incoming.count(it->first) == 0) {
+    delete it->second.name; delete it->second.value;
+    delete it->second.input; delete it->second.range_hint;   // matches clear()
+    it = rows_.erase(it);
+  } else { ++it; }
+}
+// drop sections left with zero rows so no orphaned header remains
+std::set<std::string> live_groups;
+for (const auto & [name, row] : rows_) { live_groups.insert(row.group); }
+for (auto it = sections_.begin(); it != sections_.end(); ) {
+  if (live_groups.count(it->first) == 0) {
+    delete it->second.header; delete it->second.grid;
+    section_order_.erase(std::remove(section_order_.begin(), section_order_.end(),
+      it->first), section_order_.end());
+    it = sections_.erase(it);
+  } else { ++it; }
+}
+```
+The single-section header-hide rule runs after removal, so it stays correct once a section
+is dropped. Surviving rows keep their order: deleting a widget removes it from its grid and
+the emptied grid row collapses to zero height, so no re-packing is needed and updated/
+unchanged rows keep their no-op-edit suppression, signal-blocked refresh, focus, and
+read-only handling (their widgets are never recreated).
+
+New test `ApplyReconcilesDroppedControlsAndEmptySections` (mirrors the existing grouping
+tests): applies `{gain@Display, range@Transmit}` (2 rows / 2 sections), then `{gain@Display}`,
+and asserts `rowCount()==1`, `inputFor("range")==nullptr`, `inputFor("gain")!=nullptr`,
+`sectionCount()==1`, and `sectionOrder()=={"Display"}` (the emptied "Transmit" header is gone).
+
+### Finding 4 — document the dangle-safety invariant (`marine_control_plugin.cpp:62`, doc-only)
+Added a comment at the subscription callback's `QMetaObject::invokeMethod` explaining why no
+QPointer guard on the plugin QObject (`gui_target`) is needed: Qt flushes/discards queued
+events targeting a QObject when it is destroyed (so a delivery queued just before plugin
+teardown is dropped, never invoked on freed memory), and `TabManager::applySet`'s topic
+lookup is a no-op when the tab has already closed (so a late message for a closed tab is
+harmlessly discarded). No behavior change.
+
+### Build & test
+Lower layers were unbuilt, so `marine_control_interfaces` + `udp_bridge_interfaces` were
+built in `core_ws` first. Then from the worktree root:
+- Build: `./ui_ws/build.sh marine_control_widgets rqt_marine_control` — both packages
+  finished, no errors/warnings.
+- Test: `./ui_ws/test.sh rqt_marine_control marine_control_widgets` — **91 tests, 0 errors,
+  0 failures, 11 skipped** (lint/copyright skips; was 90 before — the new reconciliation
+  test adds 1). `ControlSetWidgetTest` now 14/14 incl. the new case; `TabManagerTest` 6/6.
+
+Not pushed; no PR opened (host re-reviews and publishes).
