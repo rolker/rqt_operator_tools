@@ -182,3 +182,27 @@ This environment had no lower layers built, so `marine_control_interfaces` +
 - Test: `./ui_ws/test.sh rqt_marine_control marine_control_widgets` — **90 tests, 0 errors, 0 failures, 11 skipped** (lint/copyright skips). New suites: `TabManagerTest` 6/6 pass; `ControlSetWidgetTest` incl. the 4 new grouping/range-hint cases pass.
 
 Not pushed; no PR opened (host re-reviews and publishes).
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-06-30 18:17 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-92 at `769742e`
+**Mode**: pre-push
+**Depth**: Deep (reason: ~1100 LOC C++, subscription lifecycle + cross-thread executor↔GUI marshalling)
+**Must-fix**: 0 | **Suggestions**: 4
+**Round**: 1 | **Ship**: recommended — no must-fix findings; both adversarial passes confirm no correctness/lifecycle bugs and the "no mutex" threading claim holds; static analysis clean.
+
+### Findings
+- [ ] (suggestion) `saveSettings` persists the active tab's topic, which may be a bridge-only tab and restores as a node-less empty manual tab — persist `manual_topic_` or skip bridge-only — `rqt_marine_control/src/marine_control_plugin.cpp:223`
+- [ ] (suggestion) Disconnecting (Connect button) a topic that is also the manual tab leaves `manual_topic_` stale + combo pointing at a closed tab until selection changes — `rqt_marine_control/src/marine_control_plugin.cpp:450`
+- [ ] (suggestion) `apply()` is append-only: a control dropped from a later heartbeat leaves a stale row / orphaned section header (pre-existing, more visible with sections) — `marine_control_widgets/src/control_set_widget.cpp:372`
+- [ ] (suggestion) Document the queued-delivery dangle-safety invariant (Qt flushes queued events on plugin-QObject destruction + applySet topic-lookup no-op; not a QPointer guard) at the subscription callback — `rqt_marine_control/src/marine_control_plugin.cpp:62`
+
+### Specialists
+- Static analysis: ament_cpplint / ament_uncrustify / ament_cppcheck on all changed C++ — no problems found.
+- Governance: principles Pass; ADR-0003 / 0008 / 0013 compliant; consequences map satisfied; all three review-issue action items resolved (lifecycle tests delivered via node-free TabTransportFactory seam, plan documents lifecycle, no other ControlSetWidget callers — re-verified).
+- Plan drift: implementation matches plan.md "Files to Change" exactly; Plan Review must-fix + 3 suggestions all resolved. No scope creep.
+- Claude Adversarial (2 disjoint lenses, Deep): Lens A (logic) and Lens B (systemic/safety) both found no must-fix; Lens B independently verified the no-mutex threading claim and no-leaked-subscription guarantee hold.
