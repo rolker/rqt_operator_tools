@@ -47,6 +47,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace marine_control_widgets
@@ -360,11 +361,32 @@ ControlSetWidget::GroupSection & ControlSetWidget::sectionFor(const std::string 
   section.header->setFont(f);
   section.grid = new QGridLayout();
   section.grid->setContentsMargins(0, 0, 0, 0);
-  // Insert before the trailing stretch so sections stay packed at the top in
-  // first-seen order.
-  vbox_->insertWidget(vbox_->count() - 1, section.header);
-  vbox_->insertLayout(vbox_->count() - 1, section.grid);
-  section_order_.push_back(group);
+
+  // Record the group in persistent first-seen order the first time it is ever
+  // seen; it is never removed until clear(), so a group that empties and later
+  // reappears keeps its original slot.
+  if (std::find(group_first_seen_.begin(), group_first_seen_.end(), group) ==
+    group_first_seen_.end())
+  {
+    group_first_seen_.push_back(group);
+  }
+  // Insert this section's header/grid pair at the layout slot dictated by the
+  // persistent order: after every live section that precedes it in first-seen
+  // order. Each live section contributes two layout items (header + grid); the
+  // trailing stretch stays last. This is what keeps a re-created section from
+  // landing at the end.
+  int preceding = 0;
+  for (const auto & g : group_first_seen_) {
+    if (g == group) {
+      break;
+    }
+    if (sections_.count(g) != 0) {
+      ++preceding;
+    }
+  }
+  const int slot = preceding * 2;
+  vbox_->insertWidget(slot, section.header);
+  vbox_->insertLayout(slot + 1, section.grid);
   auto [pos, inserted] = sections_.emplace(group, section);
   (void)inserted;
   return pos->second;
@@ -395,6 +417,7 @@ void ControlSetWidget::apply(const marine_control_interfaces::msg::ControlSet & 
     row.group = item.group;
     GroupSection & section = sectionFor(item.group);
     const int r = section.row_count++;
+    row.grid_row = r;
     section.grid->addWidget(row.name, r, 0);
     section.grid->addWidget(row.value, r, 1);
     if (row.input) {
@@ -408,13 +431,12 @@ void ControlSetWidget::apply(const marine_control_interfaces::msg::ControlSet & 
 
   // Reconcile: a control dropped from this heartbeat must not linger as a stale
   // row. Delete any row whose name is absent from the incoming set (same widget
-  // teardown as clear()); deleting a widget removes it from its grid, and an
-  // emptied grid row collapses to zero height so surviving rows stay packed in
-  // their original order.
+  // teardown as clear()).
   std::set<std::string> incoming;
   for (const auto & item : set.items) {
     incoming.insert(item.name);
   }
+  bool removed_any = false;
   for (auto it = rows_.begin(); it != rows_.end(); ) {
     if (incoming.count(it->first) == 0) {
       delete it->second.name;
@@ -422,27 +444,63 @@ void ControlSetWidget::apply(const marine_control_interfaces::msg::ControlSet & 
       delete it->second.input;
       delete it->second.range_hint;
       it = rows_.erase(it);
+      removed_any = true;
     } else {
       ++it;
     }
   }
 
-  // Drop any section left with no rows so a removed group doesn't leave an
-  // orphaned header (and the single-section header rule below stays correct).
-  std::set<std::string> live_groups;
-  for (const auto & [name, row] : rows_) {
-    live_groups.insert(row.group);
-  }
-  for (auto it = sections_.begin(); it != sections_.end(); ) {
-    if (live_groups.count(it->first) == 0) {
-      delete it->second.header;
-      delete it->second.grid;
-      section_order_.erase(
-        std::remove(section_order_.begin(), section_order_.end(), it->first),
-        section_order_.end());
-      it = sections_.erase(it);
-    } else {
-      ++it;
+  if (removed_any) {
+    // Re-pack each surviving section so freed grid rows are reclaimed: the
+    // per-section row count then tracks the live row count instead of growing
+    // monotonically, so a control that repeatedly drops and re-appears can't grow
+    // the grid without bound. Surviving rows are gathered in their current grid
+    // order and moved (never recreated) into consecutive rows 0..n-1, preserving
+    // their relative order and keeping no-op-edit suppression / focus / read-only
+    // state intact. A re-added control was appended at the bottom above, so it
+    // sorts last and stays below the rows that survived.
+    std::map<std::string, std::vector<std::pair<int, std::string>>> by_section;
+    for (const auto & [name, row] : rows_) {
+      by_section[row.group].push_back({row.grid_row, name});
+    }
+    for (auto & [group, ordered] : by_section) {
+      std::sort(ordered.begin(), ordered.end());
+      GroupSection & section = sections_.at(group);
+      int r = 0;
+      for (const auto & [old_row, name] : ordered) {
+        Row & row = rows_.at(name);
+        if (row.grid_row != r) {
+          section.grid->addWidget(row.name, r, 0);
+          section.grid->addWidget(row.value, r, 1);
+          if (row.input) {
+            section.grid->addWidget(row.input, r, 2);
+          }
+          if (row.range_hint) {
+            section.grid->addWidget(row.range_hint, r, 3);
+          }
+          row.grid_row = r;
+        }
+        ++r;
+      }
+      section.row_count = r;
+    }
+
+    // Drop any section left with no rows so a removed group doesn't leave an
+    // orphaned header (and the single-section header rule below stays correct).
+    // group_first_seen_ is NOT touched — it persists so the group returns to its
+    // original slot if it reappears.
+    std::set<std::string> live_groups;
+    for (const auto & [name, row] : rows_) {
+      live_groups.insert(row.group);
+    }
+    for (auto it = sections_.begin(); it != sections_.end(); ) {
+      if (live_groups.count(it->first) == 0) {
+        delete it->second.header;
+        delete it->second.grid;
+        it = sections_.erase(it);
+      } else {
+        ++it;
+      }
     }
   }
 
@@ -469,7 +527,7 @@ void ControlSetWidget::clear()
     delete section.grid;
   }
   sections_.clear();
-  section_order_.clear();
+  group_first_seen_.clear();
 }
 
 int ControlSetWidget::rowCount() const
@@ -484,7 +542,43 @@ int ControlSetWidget::sectionCount() const
 
 std::vector<std::string> ControlSetWidget::sectionOrder() const
 {
-  return section_order_;
+  // Live sections only, in persistent first-seen order. A group that emptied is
+  // absent from sections_ and so drops out here, but keeps its slot in
+  // group_first_seen_ for when it reappears.
+  std::vector<std::string> order;
+  for (const auto & group : group_first_seen_) {
+    if (sections_.count(group) != 0) {
+      order.push_back(group);
+    }
+  }
+  return order;
+}
+
+int ControlSetWidget::sectionRowCount(const std::string & group) const
+{
+  auto it = sections_.find(group);
+  return it == sections_.end() ? 0 : it->second.row_count;
+}
+
+int ControlSetWidget::gridRowOf(const std::string & name) const
+{
+  auto rit = rows_.find(name);
+  if (rit == rows_.end()) {
+    return -1;
+  }
+  auto sit = sections_.find(rit->second.group);
+  if (sit == sections_.end()) {
+    return -1;
+  }
+  // Read the actual grid position of the row's name label, so a test sees the
+  // real Qt layout (the genuine proof rows stay packed), not just our bookkeeping.
+  const int idx = sit->second.grid->indexOf(rit->second.name);
+  if (idx < 0) {
+    return -1;
+  }
+  int row = -1, col = 0, row_span = 0, col_span = 0;
+  sit->second.grid->getItemPosition(idx, &row, &col, &row_span, &col_span);
+  return row;
 }
 
 QString ControlSetWidget::rangeHintText(const std::string & name) const

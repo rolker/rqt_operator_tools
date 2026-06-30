@@ -19,16 +19,26 @@ for one topic at a time; `ControlSet.device_name` is never displayed; numeric bo
 Replace `QGridLayout * grid_` with a `QVBoxLayout * vbox_` inside the widget. Each
 group gets a bold `QLabel` section header followed by an inner `QGridLayout` with four
 columns: name | value | input | range_hint. Items with `group == ""` go in a "General"
-section at the top. Groups are created in first-seen order (`std::vector<std::string>
-section_order_` + `std::map<std::string, GroupSection> sections_`).
+section at the top. Groups are created in first-seen order, recorded in a
+*persistent* `std::vector<std::string> group_first_seen_` (only `clear()` resets it)
+alongside the live `std::map<std::string, GroupSection> sections_`. The persistent
+vector means a group whose section empties (and is removed so no orphaned header
+lingers) returns to its original slot if it reappears, rather than landing at the end
+— a re-created section is inserted at the layout slot dictated by the persistent
+order. `sectionOrder()` is derived as `group_first_seen_` filtered to live sections.
 
-`GroupSection` holds the header widget, the inner grid, and a running row count so
-`apply()` can append into the right section. The `rows_` map (`std::map<std::string,
-Row>`) is unchanged; `apply()`, `clear()`, `rowCount()`, `valueText()`, `inputFor()`
-keep their existing semantics. Add `sectionCount() const` for test introspection.
+`GroupSection` holds the header widget, the inner grid, and a row count. `apply()`
+upserts incoming items then reconciles: rows absent from the incoming set are deleted,
+each surviving section is re-packed so freed grid rows are reclaimed (the row count
+tracks the live row count instead of growing monotonically, so a flapping control
+can't grow the grid without bound), and emptied sections are removed. Surviving rows
+are moved, never recreated, so no-op-edit suppression / focus / read-only state are
+preserved. `rowCount()`, `valueText()`, `inputFor()` keep their existing semantics;
+`sectionCount()`, `sectionRowCount()`, and `gridRowOf()` are added for test
+introspection.
 
 `clear()` deletes the header widgets and inner grids, resets `sections_` and
-`section_order_`, and clears `rows_` (as before). It also deletes the new
+`group_first_seen_`, and clears `rows_` (as before). It also deletes the new
 `Row::range_hint` label so no hint widget is leaked (resolves Plan Review
 suggestion).
 
