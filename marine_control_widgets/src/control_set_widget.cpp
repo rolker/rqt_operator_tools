@@ -31,19 +31,24 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFont>
 #include <QGridLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QString>
+#include <QVBoxLayout>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace marine_control_widgets
 {
@@ -84,13 +89,81 @@ int toIntBound(double v)
   const double hi = static_cast<double>(std::numeric_limits<int>::max());
   return static_cast<int>(std::clamp(v, lo, hi));
 }
+
+// The "group" a control belongs to, with empty mapped to the default section.
+const char * const kDefaultGroup = "General";
+
+// Bounds are meaningful (worth showing) only for numeric controls whose advertised
+// max exceeds min; an unbounded control leaves these unset.
+bool hasMeaningfulBounds(const Item & item)
+{
+  return (item.type == Item::TYPE_FLOAT || item.type == Item::TYPE_INT) &&
+         item.max_value > item.min_value;
+}
+
+// Format min/max (and step) using the control's natural precision: integers for
+// INT, decimalsFor() places for FLOAT.
+void formatBounds(const Item & item, QString & lo, QString & hi, QString & step)
+{
+  if (item.type == Item::TYPE_INT) {
+    lo = QString::number(toIntBound(item.min_value));
+    hi = QString::number(toIntBound(item.max_value));
+    step = item.step > 0.0 ? QString::number(toIntBound(item.step)) : QString();
+  } else {
+    const int dec = decimalsFor(item);
+    lo = QString::number(item.min_value, 'f', dec);
+    hi = QString::number(item.max_value, 'f', dec);
+    step = item.step > 0.0 ? QString::number(item.step, 'f', dec) : QString();
+  }
+}
+
+// Compact inline hint, e.g. "[0.0 – 100.0 m]". Empty when bounds aren't meaningful.
+QString rangeLabelText(const Item & item)
+{
+  if (!hasMeaningfulBounds(item)) {
+    return QString();
+  }
+  QString lo, hi, step;
+  formatBounds(item, lo, hi, step);
+  const QChar dash(0x2013);   // en dash; kept out of the source as a literal
+  QString text = QStringLiteral("[") + lo + QStringLiteral(" ") + dash +
+    QStringLiteral(" ") + hi;
+  if (!item.units.empty()) {
+    text += QStringLiteral(" ") + QString::fromStdString(item.units);
+  }
+  return text + QStringLiteral("]");
+}
+
+// Full detail for a tooltip, e.g. "Range: 0.0 – 100.0 m, step 0.5". Empty when
+// bounds aren't meaningful.
+QString rangeDetailText(const Item & item)
+{
+  if (!hasMeaningfulBounds(item)) {
+    return QString();
+  }
+  QString lo, hi, step;
+  formatBounds(item, lo, hi, step);
+  const QChar dash(0x2013);
+  QString text = QStringLiteral("Range: ") + lo + QStringLiteral(" ") + dash +
+    QStringLiteral(" ") + hi;
+  if (!item.units.empty()) {
+    text += QStringLiteral(" ") + QString::fromStdString(item.units);
+  }
+  if (!step.isEmpty()) {
+    text += QStringLiteral(", step ") + step;
+  }
+  return text;
+}
 }  // namespace
 
 ControlSetWidget::ControlSetWidget(QWidget * parent)
 : QWidget(parent)
 {
-  grid_ = new QGridLayout(this);
-  grid_->setContentsMargins(4, 2, 4, 2);
+  vbox_ = new QVBoxLayout(this);
+  vbox_->setContentsMargins(4, 2, 4, 2);
+  // Sections stack from the top; the trailing stretch keeps them packed up so a
+  // device with few controls doesn't spread its rows down a tall dock.
+  vbox_->addStretch(1);
 }
 
 ControlSetWidget::~ControlSetWidget() = default;
@@ -134,6 +207,9 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
           spin->setSuffix(QStringLiteral(" ") + QString::fromStdString(item.units));
         }
         spin->setKeyboardTracking(false);   // emit only on commit, not each digit
+        if (const QString tip = rangeDetailText(item); !tip.isEmpty()) {
+          spin->setToolTip(tip);
+        }
         spin->setValue(QString::fromStdString(item.value).toDouble());
         connect(
           spin, &QAbstractSpinBox::editingFinished, this,
@@ -163,6 +239,9 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
           spin->setSuffix(QStringLiteral(" ") + QString::fromStdString(item.units));
         }
         spin->setKeyboardTracking(false);
+        if (const QString tip = rangeDetailText(item); !tip.isEmpty()) {
+          spin->setToolTip(tip);
+        }
         spin->setValue(QString::fromStdString(item.value).toInt());
         connect(
           spin, &QAbstractSpinBox::editingFinished, this,
@@ -254,6 +333,65 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
   }
 }
 
+QLabel * ControlSetWidget::makeRangeHint(const Item & item)
+{
+  const QString text = rangeLabelText(item);
+  if (text.isEmpty()) {
+    return nullptr;     // unbounded control: no hint
+  }
+  auto * hint = new QLabel(text);
+  if (const QString tip = rangeDetailText(item); !tip.isEmpty()) {
+    hint->setToolTip(tip);   // full detail (incl. step) on hover
+  }
+  return hint;
+}
+
+ControlSetWidget::GroupSection & ControlSetWidget::sectionFor(const std::string & group)
+{
+  auto it = sections_.find(group);
+  if (it != sections_.end()) {
+    return it->second;
+  }
+  GroupSection section;
+  const QString title =
+    QString::fromStdString(group.empty() ? std::string(kDefaultGroup) : group);
+  section.header = new QLabel(title);
+  QFont f = section.header->font();
+  f.setBold(true);
+  section.header->setFont(f);
+  section.grid = new QGridLayout();
+  section.grid->setContentsMargins(0, 0, 0, 0);
+
+  // Record the group in persistent first-seen order the first time it is ever
+  // seen; it is never removed until clear(), so a group that empties and later
+  // reappears keeps its original slot.
+  if (std::find(group_first_seen_.begin(), group_first_seen_.end(), group) ==
+    group_first_seen_.end())
+  {
+    group_first_seen_.push_back(group);
+  }
+  // Insert this section's header/grid pair at the layout slot dictated by the
+  // persistent order: after every live section that precedes it in first-seen
+  // order. Each live section contributes two layout items (header + grid); the
+  // trailing stretch stays last. This is what keeps a re-created section from
+  // landing at the end.
+  int preceding = 0;
+  for (const auto & g : group_first_seen_) {
+    if (g == group) {
+      break;
+    }
+    if (sections_.count(g) != 0) {
+      ++preceding;
+    }
+  }
+  const int slot = preceding * 2;
+  vbox_->insertWidget(slot, section.header);
+  vbox_->insertLayout(slot + 1, section.grid);
+  auto [pos, inserted] = sections_.emplace(group, section);
+  (void)inserted;
+  return pos->second;
+}
+
 void ControlSetWidget::apply(const marine_control_interfaces::msg::ControlSet & set)
 {
   for (const auto & item : set.items) {
@@ -274,14 +412,104 @@ void ControlSetWidget::apply(const marine_control_interfaces::msg::ControlSet & 
     }
     row.value = new QLabel(displayValue(item));
     makeInput(item, row);
-    // Rows are only appended (or cleared wholesale), so size == next free row.
-    const int r = static_cast<int>(rows_.size());
-    grid_->addWidget(row.name, r, 0);
-    grid_->addWidget(row.value, r, 1);
+    row.range_hint = makeRangeHint(item);
+
+    row.group = item.group;
+    GroupSection & section = sectionFor(item.group);
+    const int r = section.row_count++;
+    row.grid_row = r;
+    section.grid->addWidget(row.name, r, 0);
+    section.grid->addWidget(row.value, r, 1);
     if (row.input) {
-      grid_->addWidget(row.input, r, 2);
+      section.grid->addWidget(row.input, r, 2);
+    }
+    if (row.range_hint) {
+      section.grid->addWidget(row.range_hint, r, 3);
     }
     rows_[item.name] = row;
+  }
+
+  // Reconcile: a control dropped from this heartbeat must not linger as a stale
+  // row. Delete any row whose name is absent from the incoming set (same widget
+  // teardown as clear()).
+  std::set<std::string> incoming;
+  for (const auto & item : set.items) {
+    incoming.insert(item.name);
+  }
+  bool removed_any = false;
+  for (auto it = rows_.begin(); it != rows_.end(); ) {
+    if (incoming.count(it->first) == 0) {
+      delete it->second.name;
+      delete it->second.value;
+      delete it->second.input;
+      delete it->second.range_hint;
+      it = rows_.erase(it);
+      removed_any = true;
+    } else {
+      ++it;
+    }
+  }
+
+  if (removed_any) {
+    // Re-pack each surviving section so freed grid rows are reclaimed: the
+    // per-section row count then tracks the live row count instead of growing
+    // monotonically, so a control that repeatedly drops and re-appears can't grow
+    // the grid without bound. Surviving rows are gathered in their current grid
+    // order and moved (never recreated) into consecutive rows 0..n-1, preserving
+    // their relative order and keeping no-op-edit suppression / focus / read-only
+    // state intact. A re-added control was appended at the bottom above, so it
+    // sorts last and stays below the rows that survived.
+    std::map<std::string, std::vector<std::pair<int, std::string>>> by_section;
+    for (const auto & [name, row] : rows_) {
+      by_section[row.group].push_back({row.grid_row, name});
+    }
+    for (auto & [group, ordered] : by_section) {
+      std::sort(ordered.begin(), ordered.end());
+      GroupSection & section = sections_.at(group);
+      int r = 0;
+      for (const auto & [old_row, name] : ordered) {
+        Row & row = rows_.at(name);
+        if (row.grid_row != r) {
+          section.grid->addWidget(row.name, r, 0);
+          section.grid->addWidget(row.value, r, 1);
+          if (row.input) {
+            section.grid->addWidget(row.input, r, 2);
+          }
+          if (row.range_hint) {
+            section.grid->addWidget(row.range_hint, r, 3);
+          }
+          row.grid_row = r;
+        }
+        ++r;
+      }
+      section.row_count = r;
+    }
+
+    // Drop any section left with no rows so a removed group doesn't leave an
+    // orphaned header (and the single-section header rule below stays correct).
+    // group_first_seen_ is NOT touched — it persists so the group returns to its
+    // original slot if it reappears.
+    std::set<std::string> live_groups;
+    for (const auto & [name, row] : rows_) {
+      live_groups.insert(row.group);
+    }
+    for (auto it = sections_.begin(); it != sections_.end(); ) {
+      if (live_groups.count(it->first) == 0) {
+        delete it->second.header;
+        delete it->second.grid;
+        it = sections_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  // Hide the header while only one section exists, so an ungrouped set renders
+  // as a flat grid (unchanged from before grouping). Reveal all headers — incl.
+  // "General" — as soon as a second, named section appears.
+  const bool show_headers = sections_.size() > 1;
+  for (auto & [group, section] : sections_) {
+    section.header->setVisible(show_headers);
   }
 }
 
@@ -291,13 +519,75 @@ void ControlSetWidget::clear()
     delete row.name;
     delete row.value;
     delete row.input;
+    delete row.range_hint;
   }
   rows_.clear();
+  for (auto & [group, section] : sections_) {
+    delete section.header;
+    delete section.grid;
+  }
+  sections_.clear();
+  group_first_seen_.clear();
 }
 
 int ControlSetWidget::rowCount() const
 {
   return static_cast<int>(rows_.size());
+}
+
+int ControlSetWidget::sectionCount() const
+{
+  return static_cast<int>(sections_.size());
+}
+
+std::vector<std::string> ControlSetWidget::sectionOrder() const
+{
+  // Live sections only, in persistent first-seen order. A group that emptied is
+  // absent from sections_ and so drops out here, but keeps its slot in
+  // group_first_seen_ for when it reappears.
+  std::vector<std::string> order;
+  for (const auto & group : group_first_seen_) {
+    if (sections_.count(group) != 0) {
+      order.push_back(group);
+    }
+  }
+  return order;
+}
+
+int ControlSetWidget::sectionRowCount(const std::string & group) const
+{
+  auto it = sections_.find(group);
+  return it == sections_.end() ? 0 : it->second.row_count;
+}
+
+int ControlSetWidget::gridRowOf(const std::string & name) const
+{
+  auto rit = rows_.find(name);
+  if (rit == rows_.end()) {
+    return -1;
+  }
+  auto sit = sections_.find(rit->second.group);
+  if (sit == sections_.end()) {
+    return -1;
+  }
+  // Read the actual grid position of the row's name label, so a test sees the
+  // real Qt layout (the genuine proof rows stay packed), not just our bookkeeping.
+  const int idx = sit->second.grid->indexOf(rit->second.name);
+  if (idx < 0) {
+    return -1;
+  }
+  int row = -1, col = 0, row_span = 0, col_span = 0;
+  sit->second.grid->getItemPosition(idx, &row, &col, &row_span, &col_span);
+  return row;
+}
+
+QString ControlSetWidget::rangeHintText(const std::string & name) const
+{
+  auto it = rows_.find(name);
+  if (it == rows_.end() || it->second.range_hint == nullptr) {
+    return QString();
+  }
+  return it->second.range_hint->text();
 }
 
 QString ControlSetWidget::valueText(const std::string & name) const

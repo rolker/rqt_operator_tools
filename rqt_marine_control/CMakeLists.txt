@@ -22,10 +22,12 @@ set(CMAKE_AUTOMOC ON)
 
 set(${PROJECT_NAME}_HEADERS
   include/${PROJECT_NAME}/marine_control_plugin.hpp
+  include/${PROJECT_NAME}/tab_manager.hpp
   include/${PROJECT_NAME}/topic_filter.hpp
 )
 set(${PROJECT_NAME}_SOURCES
   src/marine_control_plugin.cpp
+  src/tab_manager.cpp
   src/topic_filter.cpp
 )
 
@@ -72,6 +74,21 @@ if(BUILD_TESTING)
     src/topic_filter.cpp
   )
   target_include_directories(test_topic_filter PRIVATE include)
+
+  # Node-free tab-lifecycle tests: TabManager drives subscriptions through an
+  # injected transport factory, so a counting fake exercises open/close/no-leak/
+  # no-cross-talk without a live ROS node.
+  ament_add_gtest(test_tab_manager
+    test/test_tab_manager.cpp
+    src/tab_manager.cpp
+  )
+  target_include_directories(test_tab_manager PRIVATE include)
+  target_link_libraries(test_tab_manager Qt5::Widgets)
+  ament_target_dependencies(test_tab_manager
+    marine_control_interfaces marine_control_widgets)
+  # The widgets render on the CPU; run headless.
+  set_tests_properties(test_tab_manager PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
   ament_lint_auto_find_test_dependencies()
 endif()

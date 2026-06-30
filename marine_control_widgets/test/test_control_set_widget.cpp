@@ -43,6 +43,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <marine_control_interfaces/msg/control_item.hpp>
 #include <marine_control_interfaces/msg/control_set.hpp>
@@ -225,5 +226,167 @@ TEST_F(ControlSetWidgetTest, ClearRemovesAllRows)
   ASSERT_EQ(w.rowCount(), 2);
   w.clear();
   EXPECT_EQ(w.rowCount(), 0);
+  EXPECT_EQ(w.sectionCount(), 0);
   EXPECT_EQ(w.inputFor("a"), nullptr);
+}
+
+namespace
+{
+// An item carrying a group, for the grouping tests.
+ControlItem grouped(const char * name, const char * group)
+{
+  ControlItem it = item(name, ControlItem::TYPE_FLOAT, "0.0");
+  it.group = group;
+  return it;
+}
+}  // namespace
+
+TEST_F(ControlSetWidgetTest, GroupedItemsRenderInSections)
+{
+  ControlSetWidget w;
+  ControlSet set;
+  set.items.push_back(grouped("gain", "Display"));
+  set.items.push_back(grouped("range", "Transmit"));
+  w.apply(set);
+
+  EXPECT_EQ(w.sectionCount(), 2);
+  EXPECT_EQ(w.rowCount(), 2);
+  // Both controls are still reachable regardless of which section they landed in.
+  EXPECT_NE(w.inputFor("gain"), nullptr);
+  EXPECT_NE(w.inputFor("range"), nullptr);
+}
+
+TEST_F(ControlSetWidgetTest, UngroupedItemsGoToDefaultSection)
+{
+  ControlSetWidget w;
+  ControlSet set;
+  set.items.push_back(item("gain", ControlItem::TYPE_FLOAT, "1.0"));   // no group
+  set.items.push_back(item("bins", ControlItem::TYPE_INT, "2"));       // no group
+  w.apply(set);
+
+  // Both fall into the single default section.
+  ASSERT_EQ(w.sectionCount(), 1);
+  EXPECT_EQ(w.sectionOrder().front(), std::string());   // "" == General
+}
+
+TEST_F(ControlSetWidgetTest, GroupsPreserveFirstSeenOrder)
+{
+  ControlSetWidget w;
+  ControlSet set;
+  set.items.push_back(grouped("a1", "Alpha"));
+  set.items.push_back(grouped("b1", "Beta"));
+  set.items.push_back(grouped("a2", "Alpha"));   // back to an existing group
+  set.items.push_back(grouped("b2", "Beta"));
+  w.apply(set);
+
+  ASSERT_EQ(w.sectionCount(), 2);
+  const std::vector<std::string> order = w.sectionOrder();
+  ASSERT_EQ(order.size(), 2u);
+  EXPECT_EQ(order[0], "Alpha");   // first seen leads
+  EXPECT_EQ(order[1], "Beta");
+}
+
+TEST_F(ControlSetWidgetTest, ApplyReconcilesDroppedControlsAndEmptySections)
+{
+  // A control dropped from a later heartbeat must not linger as a stale row, and
+  // a group emptied by that removal must not leave an orphaned section header.
+  ControlSetWidget w;
+  ControlSet first;
+  first.items.push_back(grouped("gain", "Display"));
+  first.items.push_back(grouped("range", "Transmit"));
+  w.apply(first);
+  ASSERT_EQ(w.rowCount(), 2);
+  ASSERT_EQ(w.sectionCount(), 2);
+
+  // The next set drops "range" (and with it the whole "Transmit" group).
+  ControlSet smaller;
+  smaller.items.push_back(grouped("gain", "Display"));
+  w.apply(smaller);
+
+  EXPECT_EQ(w.rowCount(), 1);
+  EXPECT_EQ(w.inputFor("range"), nullptr);            // dropped row is gone
+  EXPECT_NE(w.inputFor("gain"), nullptr);             // surviving row stays
+  ASSERT_EQ(w.sectionCount(), 1);                     // empty "Transmit" removed
+  const std::vector<std::string> order = w.sectionOrder();
+  ASSERT_EQ(order.size(), 1u);
+  EXPECT_EQ(order.front(), "Display");
+}
+
+TEST_F(ControlSetWidgetTest, ReAddedGroupReturnsToFirstSeenSlot)
+{
+  // A group emptied by reconciliation and later re-added must come back to its
+  // original first-seen slot, not land at the end (persistent first-seen order).
+  ControlSetWidget w;
+  ControlSet both;
+  both.items.push_back(grouped("a1", "Alpha"));
+  both.items.push_back(grouped("b1", "Beta"));
+  w.apply(both);
+  ASSERT_EQ(w.sectionOrder(), (std::vector<std::string>{"Alpha", "Beta"}));
+
+  // Drop everything in Alpha -> the whole "Alpha" section is removed.
+  ControlSet only_beta;
+  only_beta.items.push_back(grouped("b1", "Beta"));
+  w.apply(only_beta);
+  ASSERT_EQ(w.sectionCount(), 1);
+  ASSERT_EQ(w.sectionOrder(), (std::vector<std::string>{"Beta"}));
+
+  // Alpha reappears; it must return ahead of Beta (its first-seen slot), not after.
+  w.apply(both);
+  EXPECT_EQ(w.sectionOrder(), (std::vector<std::string>{"Alpha", "Beta"}));
+}
+
+TEST_F(ControlSetWidgetTest, FlappingControlReclaimsGridRowsAndKeepsOrder)
+{
+  // A control that repeatedly drops then re-appears in a SURVIVING section must
+  // not accumulate blank grid rows: the section's row count tracks the live row
+  // count (freed rows reclaimed) and surviving rows keep their order.
+  ControlSetWidget w;
+  ControlSet both;
+  both.items.push_back(grouped("alpha", "Shared"));
+  both.items.push_back(grouped("beta", "Shared"));
+  ControlSet only_beta;
+  only_beta.items.push_back(grouped("beta", "Shared"));
+
+  w.apply(both);
+  ASSERT_EQ(w.rowCount(), 2);
+  ASSERT_EQ(w.sectionCount(), 1);
+  ASSERT_EQ(w.sectionRowCount("Shared"), 2);
+
+  for (int cycle = 0; cycle < 5; ++cycle) {
+    w.apply(only_beta);                             // alpha drops
+    EXPECT_EQ(w.rowCount(), 1);
+    EXPECT_EQ(w.sectionRowCount("Shared"), 1);      // freed row reclaimed, not monotonic
+    EXPECT_EQ(w.inputFor("alpha"), nullptr);
+    EXPECT_EQ(w.gridRowOf("beta"), 0);              // survivor packed to the top
+
+    w.apply(both);                                  // alpha re-appears
+    EXPECT_EQ(w.rowCount(), 2);
+    EXPECT_EQ(w.sectionRowCount("Shared"), 2);      // bounded: never grows past 2
+  }
+
+  // After all the flapping the grid is packed into exactly rows 0 and 1 (no blank
+  // rows piled up). The survivor (beta) keeps the top slot; re-added alpha appends
+  // below it.
+  EXPECT_EQ(w.gridRowOf("beta"), 0);
+  EXPECT_EQ(w.gridRowOf("alpha"), 1);
+}
+
+TEST_F(ControlSetWidgetTest, RangeHintAppearsForBoundedFloat)
+{
+  ControlSetWidget w;
+  ControlSet set;
+  auto bounded = item("speed", ControlItem::TYPE_FLOAT, "5.0");
+  bounded.min_value = 0.0;
+  bounded.max_value = 10.0;
+  bounded.units = "m";
+  set.items.push_back(bounded);
+  // An unbounded float (max == min) gets no hint.
+  set.items.push_back(item("trim", ControlItem::TYPE_FLOAT, "0.0"));
+  w.apply(set);
+
+  const QString hint = w.rangeHintText("speed");
+  EXPECT_TRUE(hint.contains("0"));
+  EXPECT_TRUE(hint.contains("10"));
+  EXPECT_TRUE(hint.contains("m"));
+  EXPECT_TRUE(w.rangeHintText("trim").isEmpty());
 }
