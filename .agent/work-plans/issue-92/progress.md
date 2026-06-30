@@ -328,3 +328,119 @@ Not pushed; no PR opened (host re-reviews and publishes).
 - Claude Adversarial (2 disjoint lenses, Deep): Lens A (logic) and Lens B (systemic/safety) both found 0 must-fix. Lens B traced the executor↔GUI marshalling, the transport-destruction window, and the TabManager-`this` capture lifetime and confirmed no mutex and no QPointer guard are needed.
 
 Tests not re-run in this offline review (lower layers unbuilt); the Implementation entry above documents 91 tests / 0 failures at this same HEAD (`7904809`).
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-30 19:05 +00:00
+**By**: Claude Opus
+
+**Branch**: feature/issue-92
+**Commits**:
+- `1d3e3b5` refactor(rqt_marine_control): drop dead indexOf + document teardown/node invariants
+- `e7ec37b` fix(marine_control_widgets): persist first-seen group order + reclaim grid rows
+- (this entry) progress: round-2 review polish for #92
+
+Operator chose to fix **all five** Round-2 pre-push review suggestions. Each is resolved below.
+
+### Item 1 — dead code `TabManager::indexOf` (`tab_manager.cpp:53`, decl `tab_manager.hpp:116`)
+Removed the method and its declaration. All call sites already use `QTabWidget::indexOf`
+(`tabs_->indexOf(...)`); a post-removal grep confirms the only remaining `indexOf`
+references are `QTabWidget::indexOf` (4×) and the new `QGridLayout::indexOf` (in
+`gridRowOf`, below). No behavior change.
+
+### Item 2 — first-seen group ordering on re-add (`control_set_widget.cpp:348`)
+The live section list (`section_order_`) was both the layout order *and* erased when a
+section emptied, so a re-created section was `push_back`-ed to the end — a once-first
+group could land last. Fixed by introducing a **persistent** first-seen vector that
+only resets on `clear()`, separate from the live `sections_` map:
+
+```cpp
+std::vector<std::string> group_first_seen_;   // appended on first sight, never removed until clear()
+```
+
+`sectionFor()` records the group there once, then inserts the new header/grid pair at the
+slot dictated by that persistent order (after every *live* section that precedes it):
+```cpp
+int preceding = 0;
+for (const auto & g : group_first_seen_) {
+  if (g == group) { break; }
+  if (sections_.count(g) != 0) { ++preceding; }
+}
+const int slot = preceding * 2;            // each live section = header + grid
+vbox_->insertWidget(slot, section.header);
+vbox_->insertLayout(slot + 1, section.grid);
+```
+The empty-section removal no longer touches `group_first_seen_` (only deletes the visible
+header/grid and the `sections_` entry), so the group keeps its slot for when it reappears.
+`sectionOrder()` is now derived (`group_first_seen_` filtered to live sections). The class
+doc/comment was updated to state the persistent-first-seen guarantee. New test
+`ReAddedGroupReturnsToFirstSeenSlot` proves a group emptied then re-added returns *ahead*
+of a later group (`{"Alpha","Beta"}` → drop Alpha → `{"Beta"}` → re-add → `{"Alpha","Beta"}`).
+
+### Item 3 — monotonic section row counter (`control_set_widget.cpp:397`)
+`section.row_count` only incremented, so a control that dropped then re-appeared in a
+*surviving* section consumed a fresh grid row each cycle and collapsed empty rows piled up
+unbounded under flapping. Fixed by **re-packing each surviving section on removal**: rows
+gained a `grid_row` field, and after the row-removal pass (`removed_any`), surviving rows
+are gathered per section in their current grid order and moved into consecutive rows
+0..n-1, with `row_count` reset to the live count:
+
+```cpp
+std::map<std::string, std::vector<std::pair<int, std::string>>> by_section;
+for (const auto & [name, row] : rows_) { by_section[row.group].push_back({row.grid_row, name}); }
+for (auto & [group, ordered] : by_section) {
+  std::sort(ordered.begin(), ordered.end());           // by current grid_row -> preserves order
+  GroupSection & section = sections_.at(group);
+  int r = 0;
+  for (const auto & [old_row, name] : ordered) {
+    Row & row = rows_.at(name);
+    if (row.grid_row != r) {                            // move existing widgets, never recreate
+      section.grid->addWidget(row.name, r, 0);
+      section.grid->addWidget(row.value, r, 1);
+      if (row.input) { section.grid->addWidget(row.input, r, 2); }
+      if (row.range_hint) { section.grid->addWidget(row.range_hint, r, 3); }
+      row.grid_row = r;
+    }
+    ++r;
+  }
+  section.row_count = r;
+}
+```
+Widgets are *moved* (`addWidget` on a widget already in the grid repositions it), never
+recreated, so no-op-edit suppression / focus / read-only state are preserved; survivors
+keep their relative order (sort by current grid row) and a re-added control — appended at
+the bottom during the upsert pass — sorts last and stays below them.
+
+**Flapping test** `FlappingControlReclaimsGridRowsAndKeepsOrder`: controls `alpha`,`beta`
+share a section; 5× apply-without-alpha / apply-with-alpha cycles. Each cycle asserts
+`sectionRowCount("Shared")` stays bounded (1 with alpha gone, 2 with both — never grows),
+`gridRowOf("beta")==0` (survivor packed to the top), and after the loop the grid is packed
+into exactly rows 0/1 (`gridRowOf("beta")==0`, `gridRowOf("alpha")==1`). Two new
+introspection helpers back the assertions: `sectionRowCount(group)` and `gridRowOf(name)`
+(the latter reads the real Qt position via `QGridLayout::indexOf`/`getItemPosition`).
+
+### Item 4 — document the raw `Node*` invariant (`marine_control_plugin.cpp:112`, doc-only)
+Added a comment on `RclcppTabTransport::node_` stating the node-outlives-transport
+contract: the plugin owns the `rclcpp::Node` and destroys every tab/transport
+(`TabManager::clear` in `shutdownPlugin`, or `closeTab`) before the node is torn down, so
+the non-owning raw pointer (used by `publishChange` and the subscription) is never
+dereferenced after the node dies. No behavior change.
+
+### Item 5 — document the teardown re-entrancy assumption (`tab_manager.cpp:117`, doc-only)
+Added a one-line note at `delete entry->widget` in `closeTab`: the delivery dangle-safety
+contract assumes `QWidget::~QWidget` does not re-enter the Qt event loop during
+`closeTab`/`clear` (true for normal teardown), so a queued delivery cannot be dispatched
+into a half-destroyed tab. No behavior change.
+
+### Build & test
+Lower layers were unbuilt, so `marine_control_interfaces` + `udp_bridge_interfaces` were
+built in `core_ws` first (colcon, 2 packages). Then from the worktree root:
+- Build: `./ui_ws/build.sh marine_control_widgets rqt_marine_control` — both packages
+  finished, no errors/warnings.
+- Test: `./ui_ws/test.sh rqt_marine_control marine_control_widgets` — **93 tests, 0 errors,
+  0 failures, 11 skipped** (lint/copyright skips; was 91 before — the two new widget tests
+  add 2). `ControlSetWidgetTest` now 16/16 incl. `ReAddedGroupReturnsToFirstSeenSlot` and
+  `FlappingControlReclaimsGridRowsAndKeepsOrder`; `TabManagerTest` 6/6. Static analysis
+  (cpplint + uncrustify) on all changed files: 0 failures / 0 errors.
+
+Not pushed; no PR opened (host re-reviews and publishes).
