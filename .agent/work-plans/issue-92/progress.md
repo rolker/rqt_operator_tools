@@ -108,3 +108,77 @@ context; issue #78 (deferred DDS queries) is existing behavior to preserve.
 - Verified: `ControlSetWidget` has exactly one external caller (`rqt_marine_control`); all referenced message fields (`group`, `device_name`, `min_value`/`max_value`/`step`/`units`) exist; existing test infra (`QApplication` fixture, `inputFor()` + `dynamic_cast`) supports the 4 planned grouping/range-hint tests.
 - Coexistence question from review-issue (manual topic vs bridge device tabs) is resolved by the plan's Coexistence design.
 - Independent review: fresh-context sub-agent on a different model (Opus) than the Sonnet plan author — not in-context self-review despite the shared agent name.
+
+## Implementation
+**Status**: complete
+**When**: 2026-06-30 18:10 +00:00
+**By**: Claude Opus
+
+**Branch**: feature/issue-92
+**Commits**:
+- `5e7d1a4` feat(marine_control_widgets): group section headers + numeric range hints
+- `62dec60` feat(rqt_marine_control): multi-device tabs with per-tab subscription lifecycle
+- `79de708` docs(issue-92): sync plan with operator decisions and test seam
+- (this entry) progress: implementation complete for #92
+
+### Plan Review must-fix — resolved
+Added a **node-free test seam**: per-tab ROS I/O is created behind an injectable
+`TabTransportFactory` (returning a `TabTransport` whose destruction tears down the
+sub/pub). The lifecycle lives in a dedicated `TabManager` (`tab_manager.hpp/.cpp`) that
+needs no ROS node — only Qt + the message types. `test_tab_manager.cpp` injects a
+counting `FakeTransport`/`Registry` and proves: opening N tabs creates N transports
+(`OpeningTabsCreatesOneSubscriptionEach`); reopening a topic reuses the tab/sub
+(`ReopeningSameTopicReusesTabAndSubscription`); closing a tab destroys exactly its
+transport with the others alive (`ClosingTabDestroysOnlyItsSubscription`); `clear()`
+destroys all (`ClearDestroysAllSubscriptions`); an edit in tab A publishes only to A's
+transport (`EditPublishesOnlyToThatTabsTransport` — no cross-talk); and a delivered set
+renders + retitles the tab (`DeliveredSetRendersAndTitlesTabWithDeviceName`). The real
+`RclcppTabTransport` (in the plugin .cpp) is the only node-dependent piece and is not
+unit-tested, but it is a thin wrapper over `create_subscription`/`create_publisher`.
+
+### Plan Review suggestions — resolved
+- **range_hint leak**: `ControlSetWidget::clear()` now deletes `Row::range_hint` along
+  with name/value/input.
+- **Drop `tabs_mutex_`**: there is no `tabs_mutex_`/`latest_mutex_`. `TabManager`'s map
+  is touched only on the GUI thread; the only cross-thread point is the transport's ROS
+  callback, which captures self-contained copies (a `std::function` + a stable
+  QObject* target) and marshals a message snapshot to the GUI thread, so a concurrent
+  `closeTab()` can't dangle. The publish lambda captures `shared_ptr<TabEntry>`.
+  Threading model documented in `tab_manager.hpp` and the plugin's `RclcppTabTransport`.
+- **Settings scope**: confirmed as the operator's ACTIVE-tab-only decision (below).
+
+### How each feature was built
+- **Group section headers** (`ControlSetWidget`): `QVBoxLayout` of per-group sections
+  (`GroupSection` = header `QLabel` + inner `QGridLayout` + row count), keyed by
+  `ControlItem.group` ("" → "General"), inserted in first-seen order before a trailing
+  stretch. The header is hidden while only one section exists, so an ungrouped set keeps
+  the old flat-grid look. Existing no-op suppression, signal-blocking-on-refresh, and
+  read-only handling are untouched (the per-row `makeInput`/`set_value` logic is
+  unchanged).
+- **Device name + range hints**: `ControlSet.device_name` becomes the tab title on the
+  first message. Bounded FLOAT/INT controls get a compact `[min – max units]`
+  `range_hint` label (column 3) plus a `Range: … , step …` spinbox tooltip; unbounded
+  controls (`max_value <= min_value`) get neither.
+- **Multi-device tabs**: `QTabWidget` (closable) + `TabManager`. `openTab` creates a
+  tab/widget/transport (or focuses an existing one); `closeTab` resets the transport
+  then removes+deletes the widget; `clear()` (from `shutdownPlugin`) tears all down.
+  Bridge connect → `openTab`; bridge disconnect → `closeTab`; **tab close →
+  disconnect** the matching connected bridge device then close (operator decision). The
+  manual `topic_combo_` owns one tab tracked by `manual_topic_`. Preserves deferred DDS
+  queries (#78), signal-blocking on refresh, no-op suppression, and zero-tab graceful
+  behavior (empty tab bar, no crash).
+
+### Active-tab-only persistence (operator decision)
+`saveSettings()` persists only the active tab's state topic
+(`tab_manager_->topicForIndex(currentIndex())`) — a minimal extension of the prior
+single-`topic` persistence. Bridge tabs are transient and reopen on connect, so full
+multi-tab restore is intentionally out of scope. Documented in a `saveSettings()` code
+comment and in plan.md so it doesn't read as an unaddressed gap.
+
+### Build & test
+This environment had no lower layers built, so `marine_control_interfaces` +
+`udp_bridge_interfaces` were built in `core_ws` first. Then from the worktree root:
+- Build: `./ui_ws/build.sh marine_control_widgets marine_control_bridge_client rqt_marine_control` — all packages finished, no errors/warnings.
+- Test: `./ui_ws/test.sh rqt_marine_control marine_control_widgets` — **90 tests, 0 errors, 0 failures, 11 skipped** (lint/copyright skips). New suites: `TabManagerTest` 6/6 pass; `ControlSetWidgetTest` incl. the 4 new grouping/range-hint cases pass.
+
+Not pushed; no PR opened (host re-reviews and publishes).
