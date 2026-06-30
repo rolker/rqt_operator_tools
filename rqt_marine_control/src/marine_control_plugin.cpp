@@ -82,6 +82,13 @@ public:
       state_topic, rclcpp::QoS(10),
       [deliver, gui_target](marine_control_interfaces::msg::ControlSet::ConstSharedPtr msg) {
         // Render on the GUI thread. Capture only the snapshot + the delivery fn.
+        // No QPointer guard on gui_target is needed: Qt flushes/discards any
+        // queued events targeting a QObject when it is destroyed, so a delivery
+        // queued just before the plugin QObject dies is dropped, never invoked
+        // on freed memory. And if the plugin outlives the tab, deliver ->
+        // TabManager::applySet looks the tab up by topic and is a no-op when the
+        // tab has already closed — so a late message for a closed tab is
+        // harmlessly discarded.
         QMetaObject::invokeMethod(
           gui_target, [deliver, msg]() {deliver(*msg);}, Qt::QueuedConnection);
       });
@@ -225,15 +232,15 @@ void MarineControlPlugin::saveSettings(
   qt_gui_cpp::Settings & instance_settings) const
 {
   (void)plugin_settings;
-  // Persist only the ACTIVE tab's topic (operator decision for #92): a minimal
-  // extension of the prior single-"topic" persistence. Bridge tabs are transient
-  // and reopen on the next bridge connect, so full multi-tab restore is
-  // intentionally out of scope.
-  QString active;
-  if (tab_widget_ && tab_manager_) {
-    active = QString::fromStdString(tab_manager_->topicForIndex(tab_widget_->currentIndex()));
-  }
-  instance_settings.setValue("topic", active);
+  // Persist only the MANUAL tab's topic (operator decision for #92): a minimal
+  // extension of the prior single-"topic" persistence. restoreSettings reopens
+  // it as a manual tab, so we must not persist a bridge-only (auto-opened) tab —
+  // it would restore as an empty, node-less "manual" tab because nothing reopens
+  // the bridge connection. Bridge tabs are transient and reopen on the next
+  // bridge connect, so full multi-tab restore is intentionally out of scope.
+  // (manual_topic_ already coincides with the active tab when the operator's
+  // manual selection is the focused tab.)
+  instance_settings.setValue("topic", QString::fromStdString(manual_topic_));
 }
 
 void MarineControlPlugin::restoreSettings(
@@ -449,6 +456,16 @@ void MarineControlPlugin::onConnectClicked()
     tab_manager_->openTab(device.state_topic);
   } else {
     bridge_client_->disconnect(device);
+    // If this device's tab is also the current manual selection, clear that
+    // bookkeeping now (same signal-blocked reset as onTabCloseRequested) so
+    // manual_topic_ and topic_combo_ don't point at a tab we're about to close
+    // until the next selection change.
+    if (manual_topic_ == device.state_topic) {
+      manual_topic_.clear();
+      const QSignalBlocker blocker(topic_combo_);
+      const int empty_index = topic_combo_->findText("");
+      topic_combo_->setCurrentIndex(empty_index >= 0 ? empty_index : -1);
+    }
     tab_manager_->closeTab(device.state_topic);
   }
   // Re-sync the button text and status label through the single source of
