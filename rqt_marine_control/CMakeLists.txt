@@ -21,12 +21,16 @@ find_package(marine_control_bridge_client REQUIRED)
 set(CMAKE_AUTOMOC ON)
 
 set(${PROJECT_NAME}_HEADERS
+  include/${PROJECT_NAME}/connections_hub_widget.hpp
   include/${PROJECT_NAME}/marine_control_plugin.hpp
+  include/${PROJECT_NAME}/responsive_hub_layout.hpp
   include/${PROJECT_NAME}/tab_manager.hpp
   include/${PROJECT_NAME}/topic_filter.hpp
 )
 set(${PROJECT_NAME}_SOURCES
+  src/connections_hub_widget.cpp
   src/marine_control_plugin.cpp
+  src/responsive_hub_layout.cpp
   src/tab_manager.cpp
   src/topic_filter.cpp
 )
