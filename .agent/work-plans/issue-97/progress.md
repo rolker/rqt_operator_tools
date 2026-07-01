@@ -135,3 +135,30 @@ called backend APIs verified against the current source.
 The shared core layer had no build, so `marine_control_interfaces` and
 `udp_bridge_interfaces` were built once in `core_ws` to satisfy the ui-layer
 build; no core sources were modified.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-01 03:18 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-97 at `5bc0cfc`
+**Mode**: pre-push
+**Depth**: Deep (reason: 200+ lines and 10+ files; Qt reparent/callback-marshalling lifecycle surface)
+**Must-fix**: 1 | **Suggestions**: 5
+**Round**: 1 | **Ship**: continue — one genuine correctness concern (remote-keying) warrants a fix or an explicit scope call before push
+
+Specialists: static analysis (ament_uncrustify/ament_cpplint/cppcheck all clean),
+governance (dead-code removal grep-verified complete; consequences addressed),
+plan drift (all 9 files, deviations documented + sound), 2 Claude Adversarial
+passes (Lens A logic + Lens B systemic, Deep). Copilot off (default). Lens B
+independently verified the stable-QObject devices-changed marshalling survives
+bridge rebuild + reparent — the core safety property holds.
+
+### Findings
+- [ ] (must-fix) Hub keys remote devices by `state_topic` alone but `BridgeControlClient` distinguishes `(remote, state_topic)`; multi-remote same-topic → reconcile auto-connects the wrong remote, mis-checks its box, and `onTabClosed` disconnects the wrong remote. Re-key by `(remote, state_topic)` or record multi-remote-same-topic as out-of-scope — `connections_hub_widget.cpp:197,265,308`
+- [ ] (suggestion) Selected bridge vanishing from discovery resets the combo under QSignalBlocker, leaving a live client while UI shows "no bridge" (state/UI desync); restoreSettings conversely resurrects a phantom bridge — `connections_hub_widget.cpp:151`
+- [ ] (suggestion) Close teardown-ordering windows: reset `tab_manager_` in shutdownPlugin and guard the `hooks_` lambdas against plugin-freed-before-widget — `marine_control_plugin.cpp:175`
+- [ ] (suggestion) `bridge_client_.reset()` on GUI thread while executor spins may race in-flight bridge_info callbacks (pre-existing pattern; header calls out the contract) — `marine_control_plugin.cpp:175,279`
+- [ ] (suggestion) Command-line argv topic opens an orphan tab (no checkbox, no bridge connect if remote/unknown) — `marine_control_plugin.cpp:162`
+- [ ] (suggestion) Add a duplicate-topic-across-remotes test so the must-fix path is covered — `test/test_connections_hub.cpp`
