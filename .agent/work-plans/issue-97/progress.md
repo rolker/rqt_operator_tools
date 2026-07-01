@@ -275,3 +275,14 @@ Adversarial candidate must-fixes all dismissed on verification: two-remotes-same
 
 ### Findings
 - [ ] (suggestion) Null the hub's borrowed `tab_manager_` pointer (or add a hub-side liveness guard) in teardown so post-shutdown safety is local, not provider-gated — currently safe via `shutting_down_`/`alive_` guards; optional hardening — `src/marine_control_plugin.cpp:198`
+
+### Operator decision (2026-07-01, checkpoint on Round 2 review)
+Round 2 is **approved** (0 must-fix). Roland chose **"Harden first, then publish."**
+Apply the single optional suggestion now (do NOT defer it):
+
+- Null the hub's borrowed `tab_manager_` pointer (or add a hub-side liveness
+  guard) in teardown so post-shutdown safety is **local** to the hub, not
+  dependent on the provider's `shutting_down_`/`alive_` guards —
+  `src/marine_control_plugin.cpp:198`. Keep it minimal; the code is already safe,
+  this makes the safety self-contained. Re-run build + tests; write a
+  `## Implementation` entry for the re-review.
