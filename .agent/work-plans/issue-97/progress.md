@@ -326,3 +326,26 @@ Apply the single optional suggestion now (do NOT defer it):
 As in prior rounds, the shared core layer had no build in this fresh worktree, so
 `marine_control_interfaces` and `udp_bridge_interfaces` were built once in `core_ws`
 to satisfy the ui-layer build; no core sources were modified.
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-07-01 04:18 +00:00
+**By**: Claude Code Agent (Claude Opus)
+**Verdict**: approved
+
+**Branch**: feature/issue-97 at `85df1fe`
+**Mode**: pre-push
+**Depth**: Deep (reason: 2k+ lines, 2 new classes; Qt reparent + cross-thread callback-marshalling lifecycle surface)
+**Must-fix**: 0 | **Suggestions**: 1
+**Round**: 3 | **Ship**: recommended — round-2 hardening (detachTabManager self-contained post-shutdown safety) is correct and regression-tested; static clean; both Deep adversarial passes' candidate must-fixes dismissed on verification
+
+Specialists: static analysis (ament_uncrustify + ament_cpplint clean on all 8 changed C++ files; ament_cppcheck skipped by its 2.13.0 perf-policy, clean in prior rounds), governance (dead-code removal grep-verified complete; consequences addressed; ADR-0003 D5 QoS + ADR-0008 marshal-to-stable-QObject preserved — no docs/decisions in repo, read from header contract), plan drift (all 9 files, 3 documented+sound deviations + operator-directed detachTabManager addition, no scope creep), 2 Claude Adversarial passes (Lens A logic + Lens B systemic, Deep). Copilot off (default).
+
+Adversarial candidate must-fixes all dismissed on verification:
+- open_remote_tabs_ collision / de-dup hole for two remotes sharing one state-topic = the documented, operator-accepted out-of-scope limitation (bridge-level conflict; hub.hpp:193-197).
+- save/restore "order non-determinism" = false positive: nodes/topics appended in lockstep per desired_ key (cpp:433-440), index-aligned by construction, re-zipped by index on restore; set order irrelevant, ROS names can't hold the \n separator.
+- resize-timer / queued-onDevicesChanged use-after-free of tab_manager_ = false positive: single GUI thread, no interleave; shutdownPlugin nulls both borrowed pointers (setTabManager(nullptr):190, detachTabManager():197) before tab_manager_.reset():206-208; updateForWidth guards both derefs, onDevicesChanged early-returns on null guard + hooks check *alive.
+- reparent timing hole / toggle-reconcile race = mitigated / GUI-thread-only self-correcting, not bugs.
+
+### Findings
+- [ ] (suggestion) restoreSettings calls tab_manager_->openTab() without the null guard every runtime slot now carries — safe (rqt only calls restore at init, never post-teardown); optional consistency hardening — `src/connections_hub_widget.cpp:461`
