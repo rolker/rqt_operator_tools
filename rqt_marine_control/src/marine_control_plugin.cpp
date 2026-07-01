@@ -172,10 +172,32 @@ void MarineControlPlugin::shutdownPlugin()
   // calls shutdownPlugin() first — this flag makes a late localControlTopics()/
   // bridgeNodes() return empty rather than query a torn-down node (#78).
   shutting_down_ = true;
+  // Neutralize the hub's hooks lambdas: any devices-changed marshalled to the hub
+  // after this point (or if the hub widget outlives this plugin) sees a dead flag
+  // and no-ops instead of dereferencing this half-torn-down plugin.
+  if (alive_) {
+    *alive_ = false;
+  }
+  // Stop routing tab-close signals into the hub, and drop the layout's borrowed
+  // TabManager pointer, before the TabManager is destroyed below — so neither a
+  // late tabCloseRequested nor a settling resize can dereference a freed manager.
+  if (layout_ != nullptr && hub_ != nullptr) {
+    disconnect(
+      layout_->tabWidget(), &QTabWidget::tabCloseRequested,
+      hub_, &ConnectionsHubWidget::onTabCloseRequested);
+  }
+  if (layout_ != nullptr) {
+    layout_->setTabManager(nullptr);
+  }
   bridge_client_.reset();
-  // Tears down every tab's subscription/publisher (no leaked subs).
+  // Tear down every tab's subscription/publisher (no leaked subs), then destroy the
+  // TabManager here in a controlled order — while the borrowed node still exists —
+  // rather than at plugin destruction, when ordering against the base node is less
+  // certain. Post-teardown hub callbacks are already inert (guards above), so the
+  // hub's borrowed TabManager pointer is not dereferenced after this reset.
   if (tab_manager_) {
     tab_manager_->clear();
+    tab_manager_.reset();
   }
 }
 
@@ -223,29 +245,41 @@ TabTransportFactory MarineControlPlugin::makeTransportFactory()
 BridgeControlHooks MarineControlPlugin::makeBridgeHooks()
 {
   BridgeControlHooks hooks;
+  // Each lambda holds a copy of the shared liveness flag so it can guard against
+  // this plugin having been torn down (shutdownPlugin) or freed before the hub
+  // widget: a dead flag short-circuits to a safe default rather than touching
+  // freed plugin state. The flag outlives the plugin because the hub keeps a copy.
+  auto alive = alive_;
   // availableDevices() reflects the CURRENT client, and caches into devices_ so the
   // plugin keeps a GUI-thread snapshot of what the hub last saw.
-  hooks.available_devices = [this]() {
+  hooks.available_devices = [this, alive]() {
+      if (!*alive) {
+        return std::vector<marine_control_bridge_client::ControlDevice>{};
+      }
       devices_ = bridge_client_ ? bridge_client_->availableDevices() :
         std::vector<marine_control_bridge_client::ControlDevice>{};
       return devices_;
     };
-  hooks.connect = [this](const marine_control_bridge_client::ControlDevice & device) {
-      if (bridge_client_) {
+  hooks.connect = [this, alive](const marine_control_bridge_client::ControlDevice & device) {
+      if (*alive && bridge_client_) {
         bridge_client_->connect(device);
       }
     };
-  hooks.disconnect = [this](const marine_control_bridge_client::ControlDevice & device) {
-      if (bridge_client_) {
+  hooks.disconnect = [this, alive](const marine_control_bridge_client::ControlDevice & device) {
+      if (*alive && bridge_client_) {
         bridge_client_->disconnect(device);
       }
     };
-  hooks.is_connected = [this](const std::string & remote, const std::string & state_topic) {
-      return bridge_client_ && bridge_client_->isConnected(remote, state_topic);
+  hooks.is_connected =
+    [this, alive](const std::string & remote, const std::string & state_topic) {
+      return *alive && bridge_client_ && bridge_client_->isConnected(remote, state_topic);
     };
   // Store the hub's marshalling callback and register it on the current client;
   // onBridgeSelected re-registers it on a freshly built one.
-  hooks.set_devices_changed_callback = [this](std::function<void()> callback) {
+  hooks.set_devices_changed_callback = [this, alive](std::function<void()> callback) {
+      if (!*alive) {
+        return;
+      }
       devices_changed_cb_ = std::move(callback);
       if (bridge_client_) {
         bridge_client_->setDevicesChangedCallback(devices_changed_cb_);

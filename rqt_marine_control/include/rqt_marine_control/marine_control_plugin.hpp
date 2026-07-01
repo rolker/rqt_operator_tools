@@ -106,6 +106,12 @@ private:
   /// Set in shutdownPlugin() so a deferred populate queued in initPlugin
   /// (QTimer::singleShot) becomes a no-op if it fires during teardown.
   bool shutting_down_ = false;
+  /// Liveness flag shared (by value) with the hub's BridgeControlHooks lambdas.
+  /// Cleared in shutdownPlugin() so a hooks call marshalled to the hub after this
+  /// plugin is torn down — or if the hub widget outlives the plugin — becomes a safe
+  /// no-op instead of dereferencing a freed plugin. GUI-thread only, so a plain bool
+  /// behind a shared_ptr (which the lambdas keep alive) suffices; no atomic needed.
+  std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
 
 }  // namespace rqt_marine_control
