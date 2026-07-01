@@ -35,6 +35,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "marine_control_bridge_client/bridge_control_discovery.hpp"
@@ -110,10 +111,12 @@ public:
   void setBridgeNodesProvider(BridgeNodesProvider provider);
   void setBridgeSelectedCallback(BridgeSelectedCallback callback);
 
-  /// Seed the remote devices (by state topic) the operator wants connected. Each
-  /// is auto-connected and opened as it is discovered (reconciled on the next
-  /// devices-changed). Used by restoreSettings.
-  void setDesiredRemotes(const std::vector<std::string> & state_topics);
+  /// Seed the remote devices the operator wants connected, each as a
+  /// (remote node, state topic) pair — the same (remote, state_topic) identity the
+  /// bridge client uses, so two remotes offering the same state-topic name stay
+  /// distinct. Each is auto-connected and opened as it is discovered (reconciled on
+  /// the next devices-changed). Used by restoreSettings.
+  void setDesiredRemotes(const std::vector<std::pair<std::string, std::string>> & remotes);
 
   void saveSettings(qt_gui_cpp::Settings & settings) const;
   void restoreSettings(const qt_gui_cpp::Settings & settings);
@@ -145,10 +148,6 @@ private:
   void rebuildSections(const std::vector<marine_control_bridge_client::ControlDevice> & devices);
   void onLocalToggled(const std::string & state_topic, bool checked);
   void onRemoteToggled(const marine_control_bridge_client::ControlDevice & device, bool checked);
-  // The discovered remote device whose state topic matches, or nullptr (local).
-  const marine_control_bridge_client::ControlDevice * remoteDeviceForTopic(
-    const std::vector<marine_control_bridge_client::ControlDevice> & devices,
-    const std::string & state_topic) const;
 
   TabManager * tab_manager_;
   BridgeControlHooks hooks_;
@@ -170,10 +169,25 @@ private:
   };
   std::vector<RemoteBox> remote_boxes_;
 
-  // Remote state topics the operator wants connected; drives reconcile and the
-  // remote checkbox state. Survives device-list churn so a dropped-then-restored
+  // Remote devices the operator wants connected, keyed by (remote, state_topic)
+  // via deviceKey() in the .cpp — so two remotes sharing a state-topic name stay
+  // distinct, matching BridgeControlClient's own keying. Drives reconcile and the
+  // remote checkbox state; survives device-list churn so a dropped-then-restored
   // device is reconnected automatically.
   std::set<std::string> desired_;
+
+  // The remote device currently occupying each open device tab, keyed by state
+  // topic. TabManager keys tabs by state topic alone, so this is the authoritative
+  // record of WHICH remote a tab belongs to when several remotes share a state-topic
+  // name — it lets onTabClosed disconnect the exact remote instead of the first
+  // discovered match. Local-only tabs have no entry.
+  //
+  // Limitation: because a tab is keyed by state topic, two remotes that share a
+  // state-topic name collapse onto a single tab (the later one wins this map); only
+  // one can be tabbed at a time. Disambiguating the tab layer itself would require
+  // reworking TabManager's key/subscription split and is out of scope here (two
+  // remotes bridged to one local state topic is already a bridge-level conflict).
+  std::map<std::string, marine_control_bridge_client::ControlDevice> open_remote_tabs_;
 };
 
 }  // namespace rqt_marine_control

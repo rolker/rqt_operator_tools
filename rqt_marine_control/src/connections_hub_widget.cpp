@@ -53,6 +53,15 @@ namespace rqt_marine_control
 
 namespace
 {
+// Identity for a remote device: the (remote, state_topic) pair. Mirrors
+// BridgeControlClient::deviceKey (same '\n' separator, not a valid ROS-name char)
+// so the hub's desired set and per-tab ownership use the exact keying the bridge
+// client does — two remotes offering the same state-topic name stay distinct.
+std::string deviceKey(const std::string & remote, const std::string & state_topic)
+{
+  return remote + '\n' + state_topic;
+}
+
 // Delete every item (and its widget) from a layout so a section can be rebuilt.
 // Safe here because rebuildSections never runs inside a checkbox's own signal:
 // the toggle handlers marshal the rebuild through a queued onDevicesChanged, so
@@ -137,9 +146,12 @@ void ConnectionsHubWidget::setBridgeSelectedCallback(BridgeSelectedCallback call
   on_bridge_selected_ = std::move(callback);
 }
 
-void ConnectionsHubWidget::setDesiredRemotes(const std::vector<std::string> & state_topics)
+void ConnectionsHubWidget::setDesiredRemotes(
+  const std::vector<std::pair<std::string, std::string>> & remotes)
 {
-  desired_.insert(state_topics.begin(), state_topics.end());
+  for (const auto & [remote, state_topic] : remotes) {
+    desired_.insert(deviceKey(remote, state_topic));
+  }
 }
 
 void ConnectionsHubWidget::refresh()
@@ -194,7 +206,7 @@ void ConnectionsHubWidget::onDevicesChanged()
   // what lets a device checked (or restored) before its bridge_info arrived come
   // up automatically, and re-establishes one whose bridge restarted.
   for (const auto & device : devices) {
-    if (desired_.count(device.state_topic) == 0) {
+    if (desired_.count(deviceKey(device.remote, device.state_topic)) == 0) {
       continue;
     }
     const bool connected = hooks_.is_connected &&
@@ -205,6 +217,8 @@ void ConnectionsHubWidget::onDevicesChanged()
     if (!tab_manager_->hasTab(device.state_topic)) {
       tab_manager_->openTab(device.state_topic);
     }
+    // Record which remote owns this tab so a later close disconnects the right one.
+    open_remote_tabs_[device.state_topic] = device;
   }
 
   rebuildSections(devices);
@@ -262,7 +276,8 @@ void ConnectionsHubWidget::rebuildSections(
     auto * box = new QCheckBox(QString::fromStdString(device.state_topic));
     const bool connected = hooks_.is_connected &&
       hooks_.is_connected(device.remote, device.state_topic);
-    box->setChecked(connected || desired_.count(device.state_topic) != 0);
+    box->setChecked(
+      connected || desired_.count(deviceKey(device.remote, device.state_topic)) != 0);
     connect(
       box, &QCheckBox::toggled, this,
       [this, device](bool checked) {onRemoteToggled(device, checked);});
@@ -286,18 +301,21 @@ void ConnectionsHubWidget::onLocalToggled(const std::string & state_topic, bool 
 void ConnectionsHubWidget::onRemoteToggled(
   const marine_control_bridge_client::ControlDevice & device, bool checked)
 {
+  const std::string key = deviceKey(device.remote, device.state_topic);
   if (checked) {
-    desired_.insert(device.state_topic);
+    desired_.insert(key);
     if (hooks_.connect) {
       hooks_.connect(device);
     }
     tab_manager_->openTab(device.state_topic);
+    open_remote_tabs_[device.state_topic] = device;
   } else {
-    desired_.erase(device.state_topic);
+    desired_.erase(key);
     if (hooks_.disconnect) {
       hooks_.disconnect(device);
     }
     tab_manager_->closeTab(device.state_topic);
+    open_remote_tabs_.erase(device.state_topic);
   }
   // Refresh de-dup and checkbox state after the connection change. Queued so the
   // rebuild (which deletes and recreates these boxes) never runs while this box's
@@ -305,45 +323,45 @@ void ConnectionsHubWidget::onRemoteToggled(
   QMetaObject::invokeMethod(this, "onDevicesChanged", Qt::QueuedConnection);
 }
 
-const marine_control_bridge_client::ControlDevice * ConnectionsHubWidget::remoteDeviceForTopic(
-  const std::vector<marine_control_bridge_client::ControlDevice> & devices,
-  const std::string & state_topic) const
-{
-  for (const auto & device : devices) {
-    if (device.state_topic == state_topic) {
-      return &device;
-    }
-  }
-  return nullptr;
-}
-
 void ConnectionsHubWidget::onTabClosed(const std::string & state_topic)
 {
-  std::vector<marine_control_bridge_client::ControlDevice> devices;
-  if (hooks_.available_devices) {
-    devices = hooks_.available_devices();
+  // Resolve the remote device this tab belongs to from the authoritative open-tab
+  // map — NOT by first-match on the state topic, which would disconnect the wrong
+  // remote when several remotes share a state-topic name. A topic with no entry is
+  // a local-only tab (nothing to disconnect over the bridge).
+  const auto it = open_remote_tabs_.find(state_topic);
+  const bool is_remote = it != open_remote_tabs_.end();
+  marine_control_bridge_client::ControlDevice device;
+  if (is_remote) {
+    device = it->second;
   }
-  const marine_control_bridge_client::ControlDevice * device =
-    remoteDeviceForTopic(devices, state_topic);
 
   // A closed tab means the operator no longer wants this device. Drop it from the
   // desired set (so reconcile does not reopen it) and, if it is a remote device,
-  // disconnect it over the bridge — immediately, no confirm dialog.
-  desired_.erase(state_topic);
-  if (device != nullptr && hooks_.disconnect) {
-    hooks_.disconnect(*device);
+  // disconnect that exact remote over the bridge — immediately, no confirm dialog.
+  if (is_remote) {
+    desired_.erase(deviceKey(device.remote, device.state_topic));
+    if (hooks_.disconnect) {
+      hooks_.disconnect(device);
+    }
+    open_remote_tabs_.erase(it);
   }
 
   // Uncheck the matching box without re-entering its toggle handler (that would
-  // close the tab a second time / double-disconnect).
-  if (auto it = local_boxes_.find(state_topic); it != local_boxes_.end()) {
-    const QSignalBlocker blocker(it->second);
-    it->second->setChecked(false);
+  // close the tab a second time / double-disconnect). For a remote match, uncheck
+  // only the box for THIS remote, not every box that shares the state topic.
+  if (auto lit = local_boxes_.find(state_topic); lit != local_boxes_.end()) {
+    const QSignalBlocker blocker(lit->second);
+    lit->second->setChecked(false);
   }
-  for (auto & remote : remote_boxes_) {
-    if (remote.device.state_topic == state_topic) {
-      const QSignalBlocker blocker(remote.box);
-      remote.box->setChecked(false);
+  if (is_remote) {
+    for (auto & remote : remote_boxes_) {
+      if (remote.device.remote == device.remote &&
+        remote.device.state_topic == device.state_topic)
+      {
+        const QSignalBlocker blocker(remote.box);
+        remote.box->setChecked(false);
+      }
     }
   }
 
@@ -370,12 +388,22 @@ void ConnectionsHubWidget::saveSettings(qt_gui_cpp::Settings & settings) const
       locals.append(QString::fromStdString(topic));
     }
   }
-  QStringList remotes;
-  for (const auto & topic : desired_) {
-    remotes.append(QString::fromStdString(topic));
+  // Persist the desired remotes as index-aligned (node, topic) lists so the
+  // (remote, state_topic) identity round-trips — a bare topic list could not tell
+  // two same-named topics on different remotes apart on restore.
+  QStringList remote_nodes;
+  QStringList remote_topics;
+  for (const auto & key : desired_) {
+    const auto nl = key.find('\n');
+    if (nl == std::string::npos) {
+      continue;
+    }
+    remote_nodes.append(QString::fromStdString(key.substr(0, nl)));
+    remote_topics.append(QString::fromStdString(key.substr(nl + 1)));
   }
   settings.setValue("hub_local_topics", locals);
-  settings.setValue("hub_desired_remotes", remotes);
+  settings.setValue("hub_desired_remote_nodes", remote_nodes);
+  settings.setValue("hub_desired_remote_topics", remote_topics);
   if (bridge_combo_ != nullptr) {
     settings.setValue("hub_bridge_node", bridge_combo_->currentText());
   }
@@ -383,11 +411,11 @@ void ConnectionsHubWidget::saveSettings(qt_gui_cpp::Settings & settings) const
 
 void ConnectionsHubWidget::restoreSettings(const qt_gui_cpp::Settings & settings)
 {
-  const QStringList remotes = settings.value("hub_desired_remotes").toStringList();
-  std::vector<std::string> desired;
-  desired.reserve(remotes.size());
-  for (const auto & topic : remotes) {
-    desired.push_back(topic.toStdString());
+  const QStringList remote_nodes = settings.value("hub_desired_remote_nodes").toStringList();
+  const QStringList remote_topics = settings.value("hub_desired_remote_topics").toStringList();
+  std::vector<std::pair<std::string, std::string>> desired;
+  for (int i = 0; i < remote_nodes.size() && i < remote_topics.size(); ++i) {
+    desired.emplace_back(remote_nodes.at(i).toStdString(), remote_topics.at(i).toStdString());
   }
   setDesiredRemotes(desired);
 
