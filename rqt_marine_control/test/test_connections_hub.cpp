@@ -251,8 +251,9 @@ TEST_F(ConnectionsHubTest, DesiredDeviceAutoConnectsAndOpensWhenDiscovered)
   std::vector<std::string> local;
   ConnectionsHubWidget hub(&mgr, makeHooks(bridge_), [&local]() {return local;});
 
-  // Desire a device before it has been discovered (as restoreSettings would).
-  hub.setDesiredRemotes({"/late/state"});
+  // Desire a device before it has been discovered (as restoreSettings would),
+  // keyed by its (remote, state_topic) identity.
+  hub.setDesiredRemotes({{"/boat/bridge", "/late/state"}});
   hub.onDevicesChanged();   // nothing discovered yet -> no connect, no tab
   EXPECT_EQ(bridge_->connect_calls, 0);
   EXPECT_FALSE(mgr.hasTab("/late/state"));
@@ -266,4 +267,56 @@ TEST_F(ConnectionsHubTest, DesiredDeviceAutoConnectsAndOpensWhenDiscovered)
   QCheckBox * box = findCheckBox(&hub, "/late/state");
   ASSERT_NE(box, nullptr);
   EXPECT_TRUE(box->isChecked());
+}
+
+// Two remotes offering the SAME state topic must stay distinct: the hub keys remote
+// devices by (remote, state_topic), so checking one connects only that remote, its
+// box (not the other's) reflects the state, and closing the shared tab disconnects
+// the remote that actually owns it — not the first discovered match on the topic.
+// First-match (topic-only) keying would have connected/disconnected the wrong remote.
+TEST_F(ConnectionsHubTest, DuplicateStateTopicAcrossRemotesKeysByRemote)
+{
+  QTabWidget tabs;
+  TabManager mgr(&tabs, nullFactory());
+  std::vector<std::string> local;
+  const ControlDevice alpha = device("/alpha/bridge", "/thruster/state");
+  const ControlDevice bravo = device("/bravo/bridge", "/thruster/state");
+  bridge_->devices = {alpha, bravo};   // iteration order: alpha then bravo
+  ConnectionsHubWidget hub(&mgr, makeHooks(bridge_), [&local]() {return local;});
+  hub.refresh();
+
+  // Two remote boxes share the "/thruster/state" label, one per remote, in device
+  // order (alpha first, bravo second) — the only checkboxes present (no locals).
+  auto sharedBoxes = [&hub]() {
+      QList<QCheckBox *> found;
+      for (QCheckBox * box : hub.findChildren<QCheckBox *>()) {
+        if (box->text() == "/thruster/state") {
+          found.append(box);
+        }
+      }
+      return found;
+    };
+  QList<QCheckBox *> boxes = sharedBoxes();
+  ASSERT_EQ(boxes.size(), 2);
+
+  // Check the SECOND remote (bravo): only bravo connects; alpha is untouched.
+  boxes[1]->click();
+  EXPECT_EQ(bridge_->connect_calls, 1);
+  EXPECT_NE(bridge_->connected.count(FakeBridge::key("/bravo/bridge", "/thruster/state")), 0u);
+  EXPECT_EQ(bridge_->connected.count(FakeBridge::key("/alpha/bridge", "/thruster/state")), 0u);
+
+  // After the queued reconcile rebuilds the sections, only bravo's box is checked.
+  QCoreApplication::processEvents();
+  boxes = sharedBoxes();
+  ASSERT_EQ(boxes.size(), 2);
+  EXPECT_FALSE(boxes[0]->isChecked());   // alpha
+  EXPECT_TRUE(boxes[1]->isChecked());    // bravo
+
+  // Closing the (single, shared) tab disconnects the remote that actually owns it —
+  // bravo — not the first-by-topic match (alpha).
+  ASSERT_TRUE(mgr.hasTab("/thruster/state"));
+  hub.onTabClosed("/thruster/state");
+  EXPECT_EQ(bridge_->disconnect_calls, 1);
+  EXPECT_EQ(bridge_->connected.count(FakeBridge::key("/bravo/bridge", "/thruster/state")), 0u);
+  EXPECT_FALSE(mgr.hasTab("/thruster/state"));
 }
