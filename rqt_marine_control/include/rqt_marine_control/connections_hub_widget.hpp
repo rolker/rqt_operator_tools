@@ -125,6 +125,14 @@ public:
   /// programmatically): uncheck its box and, for a remote device, disconnect it.
   void onTabClosed(const std::string & state_topic);
 
+  /// Drop the borrowed TabManager pointer. Call this from the owner's teardown
+  /// BEFORE it destroys the TabManager the hub was handed at construction. After
+  /// this, every runtime slot (onDevicesChanged / onTabClosed / onTabCloseRequested
+  /// and the checkbox toggles) no-ops rather than dereferencing the freed manager,
+  /// so the hub's post-shutdown safety is self-contained — it does not depend on the
+  /// owner also disconnecting signals or gating its marshalled callbacks.
+  void detachTabManager();
+
 public slots:
   /// Re-query the providers and rebuild every section. Deferred off the plugin-load
   /// path (the providers touch the node graph, which can stall mid-discovery).

@@ -320,3 +320,35 @@ TEST_F(ConnectionsHubTest, DuplicateStateTopicAcrossRemotesKeysByRemote)
   EXPECT_EQ(bridge_->connected.count(FakeBridge::key("/bravo/bridge", "/thruster/state")), 0u);
   EXPECT_FALSE(mgr.hasTab("/thruster/state"));
 }
+
+// The hub borrows the TabManager. After the owner tears the manager down it must
+// call detachTabManager() first; every runtime slot then no-ops on the hub's own
+// null guard instead of dereferencing freed memory — post-shutdown safety local to
+// the hub, not gated on the owner disconnecting signals. Here the manager is
+// heap-allocated and deleted after detach, so any surviving deref would be a
+// use-after-free the slots below must not commit.
+TEST_F(ConnectionsHubTest, SlotsNoOpAfterTabManagerDetached)
+{
+  auto tabs = std::make_unique<QTabWidget>();
+  auto * mgr = new TabManager(tabs.get(), nullFactory());
+  std::vector<std::string> local = {"/a/state"};
+  bridge_->devices = {device("/boat/bridge", "/thruster/state")};
+  ConnectionsHubWidget hub(mgr, makeHooks(bridge_), [&local]() {return local;});
+  hub.refresh();
+
+  const int connect_before = bridge_->connect_calls;
+  const int disconnect_before = bridge_->disconnect_calls;
+
+  // Owner teardown order: detach the borrowed pointer, THEN destroy the manager.
+  hub.detachTabManager();
+  delete mgr;
+
+  // None of these may touch the freed manager, and none may drive bridge activity.
+  hub.onDevicesChanged();
+  hub.onTabClosed("/thruster/state");
+  hub.onTabCloseRequested(0);
+  QCoreApplication::processEvents();   // drain any queued marshalled reconcile
+
+  EXPECT_EQ(bridge_->connect_calls, connect_before);
+  EXPECT_EQ(bridge_->disconnect_calls, disconnect_before);
+}

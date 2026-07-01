@@ -205,6 +205,13 @@ void ConnectionsHubWidget::onBridgeComboChanged(int index)
 
 void ConnectionsHubWidget::onDevicesChanged()
 {
+  // Detached at owner teardown (detachTabManager): a devices-changed marshalled
+  // onto the hub after the TabManager is gone no-ops here instead of dereferencing
+  // a freed manager. This is the hub's own guard, independent of the owner's.
+  if (tab_manager_ == nullptr) {
+    return;
+  }
+
   std::vector<marine_control_bridge_client::ControlDevice> devices;
   if (hooks_.available_devices) {
     devices = hooks_.available_devices();
@@ -300,6 +307,9 @@ void ConnectionsHubWidget::rebuildSections(
 
 void ConnectionsHubWidget::onLocalToggled(const std::string & state_topic, bool checked)
 {
+  if (tab_manager_ == nullptr) {
+    return;
+  }
   if (checked) {
     tab_manager_->openTab(state_topic);
   } else {
@@ -310,6 +320,9 @@ void ConnectionsHubWidget::onLocalToggled(const std::string & state_topic, bool 
 void ConnectionsHubWidget::onRemoteToggled(
   const marine_control_bridge_client::ControlDevice & device, bool checked)
 {
+  if (tab_manager_ == nullptr) {
+    return;
+  }
   const std::string key = deviceKey(device.remote, device.state_topic);
   if (checked) {
     desired_.insert(key);
@@ -334,6 +347,9 @@ void ConnectionsHubWidget::onRemoteToggled(
 
 void ConnectionsHubWidget::onTabClosed(const std::string & state_topic)
 {
+  if (tab_manager_ == nullptr) {
+    return;
+  }
   // Resolve the remote device this tab belongs to from the authoritative open-tab
   // map — NOT by first-match on the state topic, which would disconnect the wrong
   // remote when several remotes share a state-topic name. A topic with no entry is
@@ -382,11 +398,23 @@ void ConnectionsHubWidget::onTabClosed(const std::string & state_topic)
 
 void ConnectionsHubWidget::onTabCloseRequested(int index)
 {
+  if (tab_manager_ == nullptr) {
+    return;
+  }
   const std::string state_topic = tab_manager_->topicForIndex(index);
   if (state_topic.empty()) {
     return;   // the hub's own tab (when docked as tab 0) or an unknown widget
   }
   onTabClosed(state_topic);
+}
+
+void ConnectionsHubWidget::detachTabManager()
+{
+  // The owner is about to destroy the TabManager it lent us at construction. Drop
+  // the borrowed pointer so any subsequent runtime slot (a queued devices-changed,
+  // a late tab-close) short-circuits on the null guards above rather than touching
+  // freed memory — keeping post-shutdown safety local to the hub.
+  tab_manager_ = nullptr;
 }
 
 void ConnectionsHubWidget::saveSettings(qt_gui_cpp::Settings & settings) const

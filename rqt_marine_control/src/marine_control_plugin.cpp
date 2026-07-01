@@ -189,12 +189,20 @@ void MarineControlPlugin::shutdownPlugin()
   if (layout_ != nullptr) {
     layout_->setTabManager(nullptr);
   }
+  // Detach the hub's own borrowed TabManager pointer too, so its post-teardown
+  // safety is self-contained: a queued devices-changed or late tab-close slot
+  // short-circuits on the hub's null guard rather than relying on the disconnect
+  // above and the alive_ flag to keep it from touching the freed manager.
+  if (hub_ != nullptr) {
+    hub_->detachTabManager();
+  }
   bridge_client_.reset();
   // Tear down every tab's subscription/publisher (no leaked subs), then destroy the
   // TabManager here in a controlled order — while the borrowed node still exists —
   // rather than at plugin destruction, when ordering against the base node is less
-  // certain. Post-teardown hub callbacks are already inert (guards above), so the
-  // hub's borrowed TabManager pointer is not dereferenced after this reset.
+  // certain. The hub has already dropped its borrowed pointer (detachTabManager
+  // above) and null-guards every slot, so no post-teardown hub callback dereferences
+  // this manager after the reset — independently of the alive_/disconnect guards.
   if (tab_manager_) {
     tab_manager_->clear();
     tab_manager_.reset();
