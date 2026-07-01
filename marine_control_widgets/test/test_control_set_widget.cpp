@@ -41,6 +41,8 @@
 #include <QSpinBox>
 #include <QString>
 
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -389,4 +391,86 @@ TEST_F(ControlSetWidgetTest, RangeHintAppearsForBoundedFloat)
   EXPECT_TRUE(hint.contains("10"));
   EXPECT_TRUE(hint.contains("m"));
   EXPECT_TRUE(w.rangeHintText("trim").isEmpty());
+}
+
+TEST_F(ControlSetWidgetTest, LowerBoundedFloatHintOmitsSentinelUpperBound)
+{
+  // A one-sided control (real floor, DBL_MAX "no upper bound" sentinel — the
+  // idiom manda_coverage's distance params use) must render as a lower-only hint,
+  // never dumping the ~1.8e308 sentinel into the UI.
+  ControlSetWidget w;
+  ControlSet set;
+  auto lead_in = item("lead_in_distance", ControlItem::TYPE_FLOAT, "15.0");
+  lead_in.min_value = 0.0;
+  lead_in.max_value = std::numeric_limits<double>::max();
+  lead_in.units = "m";
+  set.items.push_back(lead_in);
+  w.apply(set);
+
+  const QString hint = w.rangeHintText("lead_in_distance");
+  ASSERT_FALSE(hint.isEmpty());               // lower bound is still worth showing
+  EXPECT_TRUE(hint.contains("0"));            // the real floor
+  EXPECT_TRUE(hint.contains("m"));           // units
+  EXPECT_FALSE(hint.contains("1797"));       // no DBL_MAX digits leak through
+  EXPECT_FALSE(hint.contains("e+"));         // nor scientific notation
+  EXPECT_TRUE(hint.contains(QChar(0x2265)));  // rendered as ">= floor"
+
+  // The editor stays usable: the open upper side falls back to the wide range,
+  // not the sentinel (which QDoubleSpinBox would clamp to its own default max).
+  auto * spin = dynamic_cast<QDoubleSpinBox *>(w.inputFor("lead_in_distance"));
+  ASSERT_NE(spin, nullptr);
+  EXPECT_DOUBLE_EQ(spin->minimum(), 0.0);
+  EXPECT_GE(spin->maximum(), 1.0e9);
+  EXPECT_LT(spin->maximum(), std::numeric_limits<double>::max());
+}
+
+TEST_F(ControlSetWidgetTest, UpperBoundedFloatRendersUpperOnlyHint)
+{
+  // A control open below but capped above renders a "<= cap" hint.
+  ControlSetWidget w;
+  ControlSet set;
+  auto trim = item("trim", ControlItem::TYPE_FLOAT, "0.0");
+  trim.min_value = std::numeric_limits<double>::lowest();
+  trim.max_value = 5.0;
+  trim.units = "deg";
+  set.items.push_back(trim);
+  w.apply(set);
+
+  const QString hint = w.rangeHintText("trim");
+  ASSERT_FALSE(hint.isEmpty());
+  EXPECT_TRUE(hint.contains("5"));
+  EXPECT_TRUE(hint.contains(QChar(0x2264)));  // "<= cap"
+  EXPECT_FALSE(hint.contains("1797"));
+
+  auto * spin = dynamic_cast<QDoubleSpinBox *>(w.inputFor("trim"));
+  ASSERT_NE(spin, nullptr);
+  EXPECT_DOUBLE_EQ(spin->maximum(), 5.0);
+  EXPECT_LE(spin->minimum(), -1.0e9);
+}
+
+TEST_F(ControlSetWidgetTest, NonFiniteBoundsTreatedAsOpen)
+{
+  // Infinite bounds (an alternative "unbounded" spelling) are treated as open on
+  // that side, exactly like the DBL_MAX sentinel.
+  ControlSetWidget w;
+  ControlSet set;
+  auto both_open = item("free", ControlItem::TYPE_FLOAT, "1.0");
+  both_open.min_value = -std::numeric_limits<double>::infinity();
+  both_open.max_value = std::numeric_limits<double>::infinity();
+  set.items.push_back(both_open);
+
+  auto lower_open = item("capped", ControlItem::TYPE_FLOAT, "1.0");
+  lower_open.min_value = 2.0;
+  lower_open.max_value = std::numeric_limits<double>::infinity();
+  lower_open.units = "m";
+  set.items.push_back(lower_open);
+  w.apply(set);
+
+  // Open on both sides -> no hint at all (like the old max == min case).
+  EXPECT_TRUE(w.rangeHintText("free").isEmpty());
+  // Open above only -> lower-only hint, no "inf" text.
+  const QString hint = w.rangeHintText("capped");
+  ASSERT_FALSE(hint.isEmpty());
+  EXPECT_TRUE(hint.contains("2"));
+  EXPECT_FALSE(hint.toLower().contains("inf"));
 }
