@@ -33,3 +33,15 @@ All three actions resolved by the operator (Roland) via run-issue checkpoint:
    thresholds (≈860/700 px) are header constants in the layout controller, not a
    runtime-settable value. No rqt setting, no ROS param. Can be promoted to
    settable later if it ever proves necessary (out of scope for v1).
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-07-01 00:00 +00:00
+**By**: Claude Code Agent (Claude Sonnet)
+
+**Plan**: `.agent/work-plans/issue-97/plan.md` at `5987ad7`
+**Branch**: feature/issue-97 at `5987ad7`
+**Phases**: single
+
+### Open questions
+- [ ] No open questions — plan is review-plan-ready.
