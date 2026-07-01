@@ -67,3 +67,71 @@ called backend APIs verified against the current source.
 - [ ] (must-fix) Dead code left behind (violates operator decision 2): `onTabCloseRequested` (`marine_control_plugin.hpp:84`) and `connectedDeviceForTopic` (`marine_control_plugin.hpp:97`) are orphaned by the redesign but absent from the removal list — `plan.md:36-37`
 - [ ] (suggestion) Name the stable QObject that receives the marshaled `devicesChanged` callback after a bridge rebuild (hub survives reparenting) — `plan.md:20,22`
 - [ ] (suggestion) Scope is at the upper edge of a single PR (~9 files, 2 non-trivial new classes) but cohesive — no split needed — `plan.md:48-60`
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-01 03:10 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-97 at `51f949a`
+**Commits**:
+- `0a2ef32` feat(rqt_marine_control): replace toolbar with Connections hub UI (#97)
+- `51f949a` test(rqt_marine_control): node-free hub + responsive layout tests (#97)
+
+### What was built
+- **`ConnectionsHubWidget`** (`connections_hub_widget.{hpp,cpp}`) — scrollable
+  three-section checklist (Local / Bridge selector / Remote). Depends on the
+  bridge only through the injected **`BridgeControlHooks`** functor seam (struct
+  of `std::function`s), so `BridgeControlClient` is untouched and the hub runs
+  without a ROS node. Implements local/bridged de-dup, a **desired set**
+  reconciled on every devices-changed (a device desired before discovery
+  auto-connects + opens), `onTabClosed`/`onTabCloseRequested` (immediate remote
+  disconnect on close, no dialog), and `saveSettings`/`restoreSettings`. The
+  devices-changed callback is marshalled onto the hub instance itself (the stable
+  QObject that outlives bridge rebuilds and reparents).
+- **`ResponsiveHubLayout`** (`responsive_hub_layout.{hpp,cpp}`) — owns the hub +
+  `QTabWidget` + `QSplitter`; debounced `resizeEvent`; compile-time hysteresis
+  constants (`kHubPanelWidthHi=860`, `kHubPanelWidthLo=700`); reparent that
+  preserves the hub instance and re-selects the device tab by topic key.
+- **`MarineControlPlugin`** rewired: deleted the toolbar members/slots incl.
+  `onTabCloseRequested` and `connectedDeviceForTopic` (plan-review must-fix #2);
+  builds `BridgeControlHooks` from the real client; delegates save/restore;
+  `shutdownPlugin`/`makeTransportFactory`/`RclcppTabTransport` unchanged.
+- `CMakeLists.txt`: registered the new sources/headers and two offscreen gtest
+  targets. Tests: `test_connections_hub.cpp` (check↔tab sync, connect/disconnect,
+  de-dup, desired-set reconcile — all against a fake `BridgeControlHooks` + fake
+  transport) and `test_responsive_hub_layout.cpp` (reparent state preservation,
+  hysteresis no-thrash, selection-by-topic preservation).
+
+### Deviations from the plan
+- **Hooks are stable, not re-handed on bridge change.** Plan step 1 said a bridge
+  change would "hand the hub a freshly-populated `BridgeControlHooks`." Instead the
+  hooks read the plugin's *current* `bridge_client_` dynamically, so they stay
+  valid across a rebuild without a swap; the plugin re-registers the hub's
+  marshalling callback on the fresh client and calls `hub->onDevicesChanged()`.
+  This still fully satisfies must-fix #1 (hub sees only the injected seam; client
+  unchanged; node-free tests) and is simpler / less error-prone.
+- **`onTabClosed` signal wiring.** `QTabWidget::tabCloseRequested(int)` connects to
+  a hub slot `onTabCloseRequested(int)` that resolves the index→topic via
+  `TabManager` and calls `onTabClosed(state_topic)` (the plan named the target
+  `onTabClosed`, which takes a topic; the int-index adapter bridges the signal).
+- **Also removed `widget_` and `tab_widget_`** plugin members (superseded by
+  `ResponsiveHubLayout`), consistent with operator decision 2 (no dead code),
+  though they were not on the explicit removal list. `arg_topic_` removed as
+  listed; a command-line topic now opens a tab directly.
+- **Stable-QObject naming** (plan-review suggestion): documented in the hub header
+  and constructor — the callback marshals onto `ConnectionsHubWidget` itself.
+
+### Test / lint results
+- Build clean: `./ui_ws/build.sh rqt_marine_control` — 0 errors, 0 new warnings.
+- Tests green: `./ui_ws/test.sh rqt_marine_control` — 89 tests, 0 failures
+  (13 gtests across the two new suites + existing suites; the rest are lint).
+- Lint clean: uncrustify / cpplint / copyright / header-guard all pass on the
+  changed files (`.h` third-party include flagged by cpplint's extension
+  heuristic silenced with `// NOLINT(build/include_order)`, matching existing
+  repo usage).
+
+### Environment note (not a code change)
+The shared core layer had no build, so `marine_control_interfaces` and
+`udp_bridge_interfaces` were built once in `core_ws` to satisfy the ui-layer
+build; no core sources were modified.
