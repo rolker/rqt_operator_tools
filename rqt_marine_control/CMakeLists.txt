@@ -94,6 +94,40 @@ if(BUILD_TESTING)
   set_tests_properties(test_tab_manager PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+  # Node-free hub tests: the ConnectionsHubWidget drives the bridge through an
+  # injected BridgeControlHooks and tabs through an injected TabTransportFactory,
+  # so fakes exercise check<->tab sync, local/bridged de-dup, and desired-set
+  # reconcile without a live ROS node or a real BridgeControlClient.
+  ament_add_gtest(test_connections_hub
+    test/test_connections_hub.cpp
+    src/connections_hub_widget.cpp
+    include/${PROJECT_NAME}/connections_hub_widget.hpp
+    src/tab_manager.cpp
+  )
+  set_target_properties(test_connections_hub PROPERTIES AUTOMOC ON)
+  target_include_directories(test_connections_hub PRIVATE include)
+  target_link_libraries(test_connections_hub Qt5::Widgets)
+  ament_target_dependencies(test_connections_hub
+    marine_control_interfaces marine_control_widgets marine_control_bridge_client qt_gui_cpp)
+  set_tests_properties(test_connections_hub PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+  # Reparent/hysteresis tests for the responsive layout: prove hub state survives
+  # the wide<->narrow reparent and that a width in the dead band does not thrash.
+  ament_add_gtest(test_responsive_hub_layout
+    test/test_responsive_hub_layout.cpp
+    src/responsive_hub_layout.cpp
+    include/${PROJECT_NAME}/responsive_hub_layout.hpp
+    src/tab_manager.cpp
+  )
+  set_target_properties(test_responsive_hub_layout PROPERTIES AUTOMOC ON)
+  target_include_directories(test_responsive_hub_layout PRIVATE include)
+  target_link_libraries(test_responsive_hub_layout Qt5::Widgets)
+  ament_target_dependencies(test_responsive_hub_layout
+    marine_control_interfaces marine_control_widgets qt_gui_cpp)
+  set_tests_properties(test_responsive_hub_layout PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
   ament_lint_auto_find_test_dependencies()
 endif()
 
