@@ -156,12 +156,12 @@ independently verified the stable-QObject devices-changed marshalling survives
 bridge rebuild + reparent — the core safety property holds.
 
 ### Findings
-- [ ] (must-fix) Hub keys remote devices by `state_topic` alone but `BridgeControlClient` distinguishes `(remote, state_topic)`; multi-remote same-topic → reconcile auto-connects the wrong remote, mis-checks its box, and `onTabClosed` disconnects the wrong remote. Re-key by `(remote, state_topic)` or record multi-remote-same-topic as out-of-scope — `connections_hub_widget.cpp:197,265,308`
-- [ ] (suggestion) Selected bridge vanishing from discovery resets the combo under QSignalBlocker, leaving a live client while UI shows "no bridge" (state/UI desync); restoreSettings conversely resurrects a phantom bridge — `connections_hub_widget.cpp:151`
-- [ ] (suggestion) Close teardown-ordering windows: reset `tab_manager_` in shutdownPlugin and guard the `hooks_` lambdas against plugin-freed-before-widget — `marine_control_plugin.cpp:175`
-- [ ] (suggestion) `bridge_client_.reset()` on GUI thread while executor spins may race in-flight bridge_info callbacks (pre-existing pattern; header calls out the contract) — `marine_control_plugin.cpp:175,279`
-- [ ] (suggestion) Command-line argv topic opens an orphan tab (no checkbox, no bridge connect if remote/unknown) — `marine_control_plugin.cpp:162`
-- [ ] (suggestion) Add a duplicate-topic-across-remotes test so the must-fix path is covered — `test/test_connections_hub.cpp`
+- [x] (must-fix) Hub keys remote devices by `state_topic` alone but `BridgeControlClient` distinguishes `(remote, state_topic)`; multi-remote same-topic → reconcile auto-connects the wrong remote, mis-checks its box, and `onTabClosed` disconnects the wrong remote. Re-key by `(remote, state_topic)` or record multi-remote-same-topic as out-of-scope — `connections_hub_widget.cpp:197,265,308`
+- [x] (suggestion) Selected bridge vanishing from discovery resets the combo under QSignalBlocker, leaving a live client while UI shows "no bridge" (state/UI desync); restoreSettings conversely resurrects a phantom bridge — `connections_hub_widget.cpp:151`
+- [x] (suggestion) Close teardown-ordering windows: reset `tab_manager_` in shutdownPlugin and guard the `hooks_` lambdas against plugin-freed-before-widget — `marine_control_plugin.cpp:175`
+- [x] (suggestion) `bridge_client_.reset()` on GUI thread while executor spins may race in-flight bridge_info callbacks (pre-existing pattern; header calls out the contract) — `marine_control_plugin.cpp:175,279` (deferred: operator decision — pre-existing pattern, header documents the contract; follow-up to be filed)
+- [x] (suggestion) Command-line argv topic opens an orphan tab (no checkbox, no bridge connect if remote/unknown) — `marine_control_plugin.cpp:162` (deferred: operator decision — edge input path, not part of the hub contract)
+- [x] (suggestion) Add a duplicate-topic-across-remotes test so the must-fix path is covered — `test/test_connections_hub.cpp`
 
 ### Operator decision (2026-07-01, checkpoint on Round 1 review)
 Roland chose **"Fix properly + safety items"**. For the `address-findings` pass:
@@ -192,3 +192,65 @@ Roland chose **"Fix properly + safety items"**. For the `address-findings` pass:
 
 After applying, write a `## Implementation` entry documenting each finding's
 resolution (fixed / deferred-with-reason) so the re-review can verify.
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-01 03:46 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-97 at `7849e23`
+**Addressed**: `## Local Review (Pre-Push)` (2026-07-01 03:18 +00:00, `5bc0cfc`) — Round 1, per the operator decision "Fix properly + safety items"
+**Commits**:
+- `9debf2c` fix: key hub remote devices by (remote, state_topic) (#97)
+- `9a5d90e` fix: keep selected bridge in combo to avoid state/UI desync (#97)
+- `6d7884b` fix: guard hub hooks and reset TabManager on shutdown (#97)
+- `7849e23` test: duplicate-topic-across-remotes hub test (#97)
+
+### Actions
+- [x] (must-fix) Re-key remote devices by `(remote, state_topic)` — `9debf2c`. Added a
+  `deviceKey(remote, state_topic)` helper mirroring `BridgeControlClient::deviceKey`
+  (same `\n` separator). The desired set, reconcile membership test, remote checkbox
+  checked-state, and `onRemoteToggled`/`onTabClosed`/`onTabCloseRequested` now all key
+  on the pair. `onTabClosed` resolves the owning remote from a new authoritative
+  `open_remote_tabs_` map (state_topic → the remote device occupying that tab) instead
+  of first-match-by-topic — so the *correct* remote is disconnected. Persistence now
+  stores index-aligned `hub_desired_remote_nodes`/`hub_desired_remote_topics` lists so
+  the identity round-trips (`setDesiredRemotes` takes `(remote, topic)` pairs).
+  **Tab-layer note (per the operator's "handle or explicitly note"):** TabManager still
+  keys tabs by state_topic, so two remotes sharing a state-topic name collapse onto one
+  tab (documented in the header). Disambiguating TabManager's key/subscription split is
+  out of scope — two remotes bridged to one local state topic is itself a bridge-level
+  conflict. — `connections_hub_widget.{hpp,cpp}`
+- [x] (test) Duplicate-topic-across-remotes test — `7849e23`. New
+  `DuplicateStateTopicAcrossRemotesKeysByRemote`: two remotes, same `/thruster/state`;
+  checking the *second* (bravo) connects only bravo, its box (not alpha's) reflects the
+  state after reconcile, and closing the shared tab disconnects bravo — the exact path
+  first-match keying got wrong. Also migrated the existing desired-device test to the
+  new pair API. — `test/test_connections_hub.cpp`
+- [x] (suggestion) Bridge-combo state/UI desync — `9a5d90e`. `rebuildBridgeCombo` now
+  keeps the currently-selected bridge in the list even when it drops out of discovery,
+  so the combo never silently falls back to "no bridge" while a live client persists.
+  Documented that `restoreSettings` selecting a not-yet-discovered bridge is the same
+  deliberate persist-the-selection policy (reconciled by the deferred refresh), not a
+  stray phantom. — `connections_hub_widget.cpp`
+- [x] (suggestion) Close teardown-ordering windows — `6d7884b`. Added a shared liveness
+  flag (`alive_`) the hub's hooks lambdas copy and check; cleared in `shutdownPlugin`,
+  so a devices-changed marshalled after teardown (or if the hub outlives the plugin)
+  no-ops instead of dereferencing a freed plugin. `shutdownPlugin` now resets
+  `tab_manager_` in a controlled order (after disconnecting the `tabCloseRequested`→hub
+  signal and dropping the layout's borrowed TabManager pointer). — `marine_control_plugin.{hpp,cpp}`
+- [x] (deferred) `bridge_client_.reset()` vs. executor bridge_info race — **not fixed**
+  (deferred: operator decision). Pre-existing pattern; the client header already documents
+  the "destroy while node not spinning" contract. Operator will file a follow-up.
+- [x] (deferred) Command-line argv topic opens an orphan tab — **not fixed** (deferred:
+  operator decision). Edge input path, outside the hub contract.
+
+### Test / lint results
+- Build clean: `./ui_ws/build.sh marine_control_bridge_client marine_control_widgets rqt_marine_control` — 0 errors, 0 new warnings.
+- Tests green: `./ui_ws/test.sh rqt_marine_control` — 90 tests, 0 failures, 14 skipped
+  (includes the new duplicate-topic test; uncrustify/cpplint/cppcheck/copyright all pass).
+
+### Environment note (not a code change)
+As in the prior implementation, the shared core layer had no build, so
+`marine_control_interfaces` and `udp_bridge_interfaces` were built once in `core_ws`
+to satisfy the ui-layer build; no core sources were modified.
