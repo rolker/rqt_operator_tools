@@ -37,6 +37,7 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QScrollArea>
 #include <QTabWidget>
 
 #include <functional>
@@ -233,6 +234,36 @@ TEST_F(TabManagerTest, EditPublishesOnlyToThatTabsTransport)
   EXPECT_EQ(reg_->get("/a/state")->published[0].first, "enabled");
   EXPECT_EQ(reg_->get("/a/state")->published[0].second, "true");
   EXPECT_TRUE(reg_->get("/b/state")->published.empty());   // no cross-talk
+}
+
+TEST_F(TabManagerTest, TabContentIsWrappedInAResizableScrollArea)
+{
+  QTabWidget tabs;
+  TabManager mgr(&tabs, makeFactory(reg_));
+  auto * widget = mgr.openTab("/a/state");
+
+  // The tab's page is a scroll area (so a tall control set scrolls instead of
+  // growing the plugin), and the ControlSetWidget is its scrollable content.
+  auto * page = dynamic_cast<QScrollArea *>(tabs.widget(0));
+  ASSERT_NE(page, nullptr);
+  EXPECT_TRUE(page->widgetResizable());
+  EXPECT_EQ(page->widget(), widget);
+}
+
+TEST_F(TabManagerTest, TabIndexForTracksTabPositionAndClose)
+{
+  QTabWidget tabs;
+  TabManager mgr(&tabs, makeFactory(reg_));
+  mgr.openTab("/a/state");
+  mgr.openTab("/b/state");
+
+  EXPECT_EQ(mgr.tabIndexFor("/a/state"), 0);
+  EXPECT_EQ(mgr.tabIndexFor("/b/state"), 1);
+  EXPECT_EQ(mgr.tabIndexFor("/missing/state"), -1);
+
+  mgr.closeTab("/a/state");
+  EXPECT_EQ(mgr.tabIndexFor("/a/state"), -1);   // gone
+  EXPECT_EQ(mgr.tabIndexFor("/b/state"), 0);    // shifted down into the freed slot
 }
 
 TEST_F(TabManagerTest, DeliveredSetRendersAndTitlesTabWithDeviceName)

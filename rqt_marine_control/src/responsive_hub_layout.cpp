@@ -132,11 +132,9 @@ void ResponsiveHubLayout::updateForWidth(int width)
   }
 
   if (tab_manager_ != nullptr && !selected_topic.empty()) {
-    if (auto * widget = tab_manager_->widgetFor(selected_topic)) {
-      const int index = tabs_->indexOf(widget);
-      if (index >= 0) {
-        tabs_->setCurrentIndex(index);
-      }
+    const int index = tab_manager_->tabIndexFor(selected_topic);
+    if (index >= 0) {
+      tabs_->setCurrentIndex(index);
     }
   }
 }
