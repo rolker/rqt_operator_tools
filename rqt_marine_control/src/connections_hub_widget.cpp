@@ -174,6 +174,15 @@ void ConnectionsHubWidget::rebuildBridgeCombo()
       nodes.append(QString::fromStdString(name));
     }
   }
+  // Keep the currently-selected bridge in the list even if it has (transiently)
+  // dropped out of discovery. Silently falling back to "no bridge" here would strand
+  // a still-live client: the combo would read "no bridge" while the plugin keeps
+  // controlling remotes through the old client (state/UI desync). Preserving the
+  // selection keeps the combo and the live client consistent; the operator can
+  // switch to "no bridge" explicitly if the bridge is truly gone.
+  if (!selected.isEmpty() && !nodes.contains(selected)) {
+    nodes.append(selected);
+  }
 
   // Block signals so a plain refresh that leaves the selection unchanged does not
   // tear down and rebuild the active client (mirrors the old updateBridgeList).
@@ -427,6 +436,11 @@ void ConnectionsHubWidget::restoreSettings(const qt_gui_cpp::Settings & settings
   // Reselect the bridge; the change fires onBridgeComboChanged, which asks the
   // owner to rebuild the client. The deferred refresh() (queued by the owner off
   // the load path) then reconciles the restored desired set once devices appear.
+  // Selecting a not-yet-discovered bridge here is deliberate — discovery has not run
+  // at restore time, so the persisted selection is trusted and reconciled by that
+  // refresh; it is the same persist-the-selection policy rebuildBridgeCombo applies
+  // to a vanished bridge, not a stray phantom (a client for an absent bridge simply
+  // discovers nothing until it appears).
   const QString bridge = settings.value("hub_bridge_node", "").toString();
   if (bridge_combo_ != nullptr && !bridge.isEmpty()) {
     int index = bridge_combo_->findText(bridge);
