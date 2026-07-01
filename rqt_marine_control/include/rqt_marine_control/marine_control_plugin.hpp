@@ -29,38 +29,36 @@
 #ifndef RQT_MARINE_CONTROL__MARINE_CONTROL_PLUGIN_HPP_
 #define RQT_MARINE_CONTROL__MARINE_CONTROL_PLUGIN_HPP_
 
-#include <QString>
-
 #include <rqt_gui_cpp/plugin.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <marine_control_interfaces/msg/control_set.hpp>
-#include <marine_control_interfaces/msg/control_value.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include "marine_control_bridge_client/bridge_control_client.hpp"
+#include "rqt_marine_control/connections_hub_widget.hpp"
 #include "rqt_marine_control/tab_manager.hpp"
-
-class QComboBox;
-class QLabel;
-class QPushButton;
-class QTabWidget;
-class QWidget;
 
 namespace rqt_marine_control
 {
 
+class ResponsiveHubLayout;
+
 /// Generic rqt plugin for the bridgeable device-control contract (ADR-0003):
-/// open one tab per connected device (or per manually selected ControlSet state
-/// topic), render each with a ControlSetWidget, and publish a ControlValue to the
-/// matching change topic on edit. State is subscribed RELIABLE + VOLATILE
-/// (ADR-0003 D5) to match the device library's publisher; the change is
-/// fire-and-forget, confirmed by the next state echo. Per-tab subscriptions are
-/// owned by a TabManager; incoming sets are marshalled from the executor thread
-/// onto the GUI thread (see TabManager's threading note).
+/// present a Connections hub — a checklist of every local and remote control
+/// device — and open one tab per checked device, each rendered with a
+/// ControlSetWidget that publishes a ControlValue to the matching change topic on
+/// edit. State is subscribed RELIABLE + VOLATILE (ADR-0003 D5) to match the device
+/// library's publisher; the change is fire-and-forget, confirmed by the next state
+/// echo. Per-tab subscriptions are owned by a TabManager; incoming sets are
+/// marshalled from the executor thread onto the GUI thread (see TabManager's
+/// threading note). The hub and its responsive tab/side-panel arrangement are the
+/// ConnectionsHubWidget and ResponsiveHubLayout; this plugin owns the rclcpp
+/// plumbing (node, BridgeControlClient, transport factory) and wires it to the hub
+/// through the injected BridgeControlHooks seam.
 class MarineControlPlugin : public rqt_gui_cpp::Plugin
 {
   Q_OBJECT
@@ -77,45 +75,43 @@ public:
     const qt_gui_cpp::Settings & plugin_settings,
     const qt_gui_cpp::Settings & instance_settings) override;
 
-protected slots:
-  void updateTopicList();
-  void selectTopic(const QString & topic);
-  void onTopicChanged(int index);
-  void onTabCloseRequested(int index);   // close = disconnect a bridge device
-  // Dynamic-bridge (D7-dyn) UI, all GUI thread:
-  void updateBridgeList();        // discover udp_bridge nodes -> bridge_combo_
-  void onBridgeChanged(int index);  // (re)build the client for the selected bridge
-  void refreshDevices();          // rebuild device_combo_ from discovered devices
-  void onDeviceChanged(int index);  // sync the connect button to the device's state
-  void onConnectClicked();        // explicit connect/disconnect of the selected device
-
 private:
   // Build the real (rclcpp-backed) transport factory the TabManager uses to wire
   // each tab's subscription/publisher.
   TabTransportFactory makeTransportFactory();
-  // The connected bridge device whose state topic matches, if any (GUI thread).
-  const marine_control_bridge_client::ControlDevice * connectedDeviceForTopic(
-    const std::string & state_topic) const;
+  // Build the injected functor seam the hub drives the bridge through. The hooks
+  // read the plugin's CURRENT bridge_client_, so they stay valid across a bridge
+  // rebuild without being re-handed to the hub.
+  BridgeControlHooks makeBridgeHooks();
+  // Node-graph queries for the hub's Local and Bridge sections (GUI thread; empty
+  // during teardown or before the node exists).
+  std::vector<std::string> localControlTopics();
+  std::vector<std::string> bridgeNodes();
+  // Rebuild the BridgeControlClient for a newly selected bridge node (GUI thread),
+  // re-registering the hub's devices-changed callback on the fresh client.
+  void onBridgeSelected(const std::string & bridge_node);
 
-  QWidget * widget_ = nullptr;
-  QComboBox * topic_combo_ = nullptr;
-  QComboBox * bridge_combo_ = nullptr;
-  QComboBox * device_combo_ = nullptr;
-  QPushButton * connect_button_ = nullptr;
-  QLabel * status_label_ = nullptr;
-  QTabWidget * tab_widget_ = nullptr;
+  // Top-level widget added to the rqt container; owns the hub + tab widget. Owned
+  // by rqt once added to the context.
+  ResponsiveHubLayout * layout_ = nullptr;
+  ConnectionsHubWidget * hub_ = nullptr;   // owned by layout_ via the Qt parent
   std::unique_ptr<marine_control_bridge_client::BridgeControlClient> bridge_client_;
-  std::vector<marine_control_bridge_client::ControlDevice> devices_;  // GUI thread
+  std::vector<marine_control_bridge_client::ControlDevice> devices_;  // GUI thread cache
   // Owns one (widget + subscription + publisher) per device/topic tab. All
   // accesses are on the GUI thread.
   std::unique_ptr<TabManager> tab_manager_;
-  // The state topic of the tab opened via topic_combo_ (the single "manual" tab),
-  // or empty. Tracked so moving/clearing the combo can retarget or close it.
-  std::string manual_topic_;
-  QString arg_topic_;
+  // The hub's marshalling devices-changed callback, kept so it can be re-registered
+  // on a freshly built client when the operator switches bridges.
+  std::function<void()> devices_changed_cb_;
   /// Set in shutdownPlugin() so a deferred populate queued in initPlugin
   /// (QTimer::singleShot) becomes a no-op if it fires during teardown.
   bool shutting_down_ = false;
+  /// Liveness flag shared (by value) with the hub's BridgeControlHooks lambdas.
+  /// Cleared in shutdownPlugin() so a hooks call marshalled to the hub after this
+  /// plugin is torn down — or if the hub widget outlives the plugin — becomes a safe
+  /// no-op instead of dereferencing a freed plugin. GUI-thread only, so a plain bool
+  /// behind a shared_ptr (which the lambdas keep alive) suffices; no atomic needed.
+  std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
 
 }  // namespace rqt_marine_control

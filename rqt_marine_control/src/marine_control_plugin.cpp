@@ -28,26 +28,23 @@
 
 #include "rqt_marine_control/marine_control_plugin.hpp"
 
-#include <QComboBox>
-#include <QHBoxLayout>
-#include <QIcon>
-#include <QLabel>
 #include <QList>
 #include <QMetaObject>
-#include <QPushButton>
-#include <QSignalBlocker>
+#include <QString>
 #include <QTabWidget>
 #include <QTimer>
-#include <QVBoxLayout>
 
-#include <algorithm>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include <marine_control_interfaces/msg/control_set.hpp>
+#include <marine_control_interfaces/msg/control_value.hpp>
 #include <pluginlib/class_list_macros.hpp>
 
+#include "rqt_marine_control/responsive_hub_layout.hpp"
 #include "rqt_marine_control/topic_filter.hpp"
 
 namespace rqt_marine_control
@@ -128,107 +125,87 @@ MarineControlPlugin::MarineControlPlugin()
 
 void MarineControlPlugin::initPlugin(qt_gui_cpp::PluginContext & context)
 {
-  widget_ = new QWidget();
-  auto * layout = new QVBoxLayout(widget_);
+  // The responsive layout owns the device tab widget; the TabManager drives it.
+  layout_ = new ResponsiveHubLayout();
+  tab_manager_ = std::make_unique<TabManager>(layout_->tabWidget(), makeTransportFactory());
+  layout_->setTabManager(tab_manager_.get());
 
-  auto * toolbar = new QHBoxLayout();
-  toolbar->addWidget(new QLabel(tr("Control topic:")));
-  topic_combo_ = new QComboBox();
-  topic_combo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-  toolbar->addWidget(topic_combo_, 1);
-  auto * refresh = new QPushButton();
-  refresh->setIcon(QIcon::fromTheme("view-refresh"));
-  refresh->setToolTip(tr("Refresh the list of control topics"));
-  toolbar->addWidget(refresh);
-  layout->addLayout(toolbar);
+  // The hub depends only on the injected BridgeControlHooks (over the real client)
+  // and on node-graph providers for its Local and Bridge sections.
+  hub_ = new ConnectionsHubWidget(
+    tab_manager_.get(), makeBridgeHooks(),
+    [this]() {return localControlTopics();});
+  hub_->setBridgeNodesProvider([this]() {return bridgeNodes();});
+  hub_->setBridgeSelectedCallback([this](const std::string & bridge) {onBridgeSelected(bridge);});
+  layout_->setHub(hub_);
 
-  // Dynamic-bridge row (ADR-0003 D7-dyn): pick a local udp_bridge, see the
-  // devices discovered on its remotes, and connect/disconnect them explicitly.
-  auto * bridge_bar = new QHBoxLayout();
-  bridge_bar->addWidget(new QLabel(tr("Bridge:")));
-  bridge_combo_ = new QComboBox();
-  bridge_combo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-  bridge_bar->addWidget(bridge_combo_, 1);
-  auto * bridge_refresh = new QPushButton();
-  bridge_refresh->setIcon(QIcon::fromTheme("view-refresh"));
-  bridge_refresh->setToolTip(tr("Refresh the list of udp_bridge nodes"));
-  bridge_bar->addWidget(bridge_refresh);
-  bridge_bar->addWidget(new QLabel(tr("Device:")));
-  device_combo_ = new QComboBox();
-  device_combo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-  bridge_bar->addWidget(device_combo_, 1);
-  connect_button_ = new QPushButton(tr("Connect"));
-  // Momentary push button (not checkable): it must visibly release on click. The
-  // connected/disconnected state is carried by the button text and the status
-  // label, not by a sunken "checked" look (which read as a stuck/pressed button).
-  connect_button_->setToolTip(tr("Connect/disconnect the selected device over the bridge"));
-  bridge_bar->addWidget(connect_button_);
-  // Connection-status indicator: starts "Disconnected" and is driven from the
-  // client's actual connection state in onDeviceChanged (#78 acceptance: surface
-  // state as an indicator, never a frozen GUI).
-  status_label_ = new QLabel(tr("Disconnected"));
-  bridge_bar->addWidget(status_label_);
-  layout->addLayout(bridge_bar);
-
-  // One closable tab per connected device / selected topic. With zero tabs the
-  // widget simply shows an empty tab bar (no crash, no placeholder needed).
-  tab_widget_ = new QTabWidget();
-  tab_widget_->setTabsClosable(true);
-  tab_widget_->setMovable(true);
-  layout->addWidget(tab_widget_, 1);
-  tab_manager_ = std::make_unique<TabManager>(tab_widget_, makeTransportFactory());
+  // Closing a device tab routes through the hub so it unchecks the box and, for a
+  // remote device, disconnects it over the bridge (operator decision #97:
+  // immediate, no confirm dialog).
   connect(
-    tab_widget_, &QTabWidget::tabCloseRequested,
-    this, &MarineControlPlugin::onTabCloseRequested);
+    layout_->tabWidget(), &QTabWidget::tabCloseRequested,
+    hub_, &ConnectionsHubWidget::onTabCloseRequested);
 
-  widget_->setWindowTitle(
+  layout_->setWindowTitle(
     QStringLiteral("Marine Control (") + QString::number(context.serialNumber()) + ")");
-  context.addWidget(widget_);
+  context.addWidget(layout_);
 
-  connect(refresh, &QPushButton::clicked, this, &MarineControlPlugin::updateTopicList);
+  // Defer the initial DDS-graph queries off the plugin-load path. The hub's
+  // providers call get_*_names_and_types(), which can stall under a degraded/
+  // mid-discovery link; running them synchronously in initPlugin froze the whole
+  // rqt instance (#78). QTimer::singleShot(0) runs the populate on the GUI thread
+  // once the event loop starts, so initPlugin returns immediately.
+  QTimer::singleShot(0, hub_, &ConnectionsHubWidget::refresh);
 
-  // Defer the initial DDS-graph queries off the plugin-load path. Both
-  // updateTopicList() and updateBridgeList() call get_*_names_and_types(), which
-  // can stall under a degraded/mid-discovery link; running them synchronously in
-  // initPlugin froze the whole rqt instance (#78). QTimer::singleShot(0) runs
-  // them on the GUI thread once the event loop starts, so initPlugin returns
-  // immediately and the GUI comes up responsive (showing "Disconnected").
-  QTimer::singleShot(0, this, &MarineControlPlugin::updateTopicList);
-  connect(
-    topic_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-    this, &MarineControlPlugin::onTopicChanged);
-
-  // The bridge-list populate is likewise deferred. updateBridgeList() already
-  // blocks bridge_combo_'s signals while repopulating, so it won't spuriously
-  // build a client when it runs after onBridgeChanged is connected below.
-  connect(bridge_refresh, &QPushButton::clicked, this, &MarineControlPlugin::updateBridgeList);
-  connect(connect_button_, &QPushButton::clicked, this, &MarineControlPlugin::onConnectClicked);
-  QTimer::singleShot(0, this, &MarineControlPlugin::updateBridgeList);
-  connect(
-    bridge_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-    this, &MarineControlPlugin::onBridgeChanged);
-  connect(
-    device_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-    this, &MarineControlPlugin::onDeviceChanged);
-
+  // A topic passed on the command line opens directly as a tab; the hub checks its
+  // box on the next refresh if it is a known local topic.
   const QList<QString> & argv = context.argv();
-  if (!argv.empty()) {
-    arg_topic_ = argv[0];
-    selectTopic(arg_topic_);
+  if (!argv.empty() && !argv[0].isEmpty()) {
+    tab_manager_->openTab(argv[0].toStdString());
   }
 }
 
 void MarineControlPlugin::shutdownPlugin()
 {
   // Suppress any deferred populate still queued from initPlugin. The receiver-
-  // context QTimer::singleShot auto-cancels when `this` is destroyed, but rqt
-  // calls shutdownPlugin() before destruction — this flag closes that window so
-  // a late updateTopicList()/updateBridgeList() can't run mid-teardown (#78).
+  // context QTimer::singleShot auto-cancels when the hub is destroyed, but rqt
+  // calls shutdownPlugin() first — this flag makes a late localControlTopics()/
+  // bridgeNodes() return empty rather than query a torn-down node (#78).
   shutting_down_ = true;
+  // Neutralize the hub's hooks lambdas: any devices-changed marshalled to the hub
+  // after this point (or if the hub widget outlives this plugin) sees a dead flag
+  // and no-ops instead of dereferencing this half-torn-down plugin.
+  if (alive_) {
+    *alive_ = false;
+  }
+  // Stop routing tab-close signals into the hub, and drop the layout's borrowed
+  // TabManager pointer, before the TabManager is destroyed below — so neither a
+  // late tabCloseRequested nor a settling resize can dereference a freed manager.
+  if (layout_ != nullptr && hub_ != nullptr) {
+    disconnect(
+      layout_->tabWidget(), &QTabWidget::tabCloseRequested,
+      hub_, &ConnectionsHubWidget::onTabCloseRequested);
+  }
+  if (layout_ != nullptr) {
+    layout_->setTabManager(nullptr);
+  }
+  // Detach the hub's own borrowed TabManager pointer too, so its post-teardown
+  // safety is self-contained: a queued devices-changed or late tab-close slot
+  // short-circuits on the hub's null guard rather than relying on the disconnect
+  // above and the alive_ flag to keep it from touching the freed manager.
+  if (hub_ != nullptr) {
+    hub_->detachTabManager();
+  }
   bridge_client_.reset();
-  // Tears down every tab's subscription/publisher (no leaked subs).
+  // Tear down every tab's subscription/publisher (no leaked subs), then destroy the
+  // TabManager here in a controlled order — while the borrowed node still exists —
+  // rather than at plugin destruction, when ordering against the base node is less
+  // certain. The hub has already dropped its borrowed pointer (detachTabManager
+  // above) and null-guards every slot, so no post-teardown hub callback dereferences
+  // this manager after the reset — independently of the alive_/disconnect guards.
   if (tab_manager_) {
     tab_manager_->clear();
+    tab_manager_.reset();
   }
 }
 
@@ -237,15 +214,15 @@ void MarineControlPlugin::saveSettings(
   qt_gui_cpp::Settings & instance_settings) const
 {
   (void)plugin_settings;
-  // Persist only the MANUAL tab's topic (operator decision for #92): a minimal
-  // extension of the prior single-"topic" persistence. restoreSettings reopens
-  // it as a manual tab, so we must not persist a bridge-only (auto-opened) tab —
-  // it would restore as an empty, node-less "manual" tab because nothing reopens
-  // the bridge connection. Bridge tabs are transient and reopen on the next
-  // bridge connect, so full multi-tab restore is intentionally out of scope.
-  // (manual_topic_ already coincides with the active tab when the operator's
-  // manual selection is the focused tab.)
-  instance_settings.setValue("topic", QString::fromStdString(manual_topic_));
+  // The hub persists its checked local topics + desired remotes + selected bridge;
+  // the layout persists its splitter divider. Bridge tabs reopen via the desired-
+  // set reconcile once the restored bridge rediscovers them.
+  if (hub_ != nullptr) {
+    hub_->saveSettings(instance_settings);
+  }
+  if (layout_ != nullptr) {
+    layout_->saveSettings(instance_settings);
+  }
 }
 
 void MarineControlPlugin::restoreSettings(
@@ -253,76 +230,12 @@ void MarineControlPlugin::restoreSettings(
   const qt_gui_cpp::Settings & instance_settings)
 {
   (void)plugin_settings;
-  const QString topic = instance_settings.value("topic", "").toString();
-  if (!arg_topic_.isEmpty()) {
-    arg_topic_ = "";   // don't override a topic passed on the command line
-  } else {
-    selectTopic(topic);
+  if (hub_ != nullptr) {
+    hub_->restoreSettings(instance_settings);
   }
-}
-
-void MarineControlPlugin::updateTopicList()
-{
-  if (shutting_down_) {
-    return;
+  if (layout_ != nullptr) {
+    layout_->restoreSettings(instance_settings);
   }
-  const QString selected = topic_combo_->currentText();
-
-  QList<QString> topics;
-  topics.append("");   // the "no topic" entry
-  if (node_) {
-    for (const auto & name : control_set_topics(node_->get_topic_names_and_types())) {
-      topics.append(QString::fromStdString(name));
-    }
-  }
-
-  // Block signals while repopulating so the clear()/addItem churn doesn't emit
-  // currentIndexChanged -> onTopicChanged, which would tear down and rebuild the
-  // active subscription on every refresh. selectTopic() preserves the prior
-  // selection, so an unchanged topic keeps its subscription. (Mirrors the
-  // QSignalBlocker pattern in updateBridgeList(); load-bearing now that the
-  // initial populate is deferred to run after onTopicChanged is connected, #78.)
-  const QSignalBlocker blocker(topic_combo_);
-  topic_combo_->clear();
-  for (const auto & topic : topics) {
-    topic_combo_->addItem(topic);
-  }
-  selectTopic(selected);
-}
-
-void MarineControlPlugin::selectTopic(const QString & topic)
-{
-  int index = topic_combo_->findText(topic);
-  if (index == -1) {
-    topic_combo_->addItem(topic);
-    index = topic_combo_->findText(topic);
-  }
-  topic_combo_->setCurrentIndex(index);
-}
-
-void MarineControlPlugin::onTopicChanged(int index)
-{
-  const QString topic = topic_combo_->itemText(index);
-  const std::string state_topic = topic.toStdString();
-
-  // The manual selector owns at most one tab. If it moved off its previous
-  // topic, close that tab — unless it is also a connected bridge device, whose
-  // tab outlives the combo selection.
-  if (!manual_topic_.empty() && manual_topic_ != state_topic) {
-    if (connectedDeviceForTopic(manual_topic_) == nullptr) {
-      tab_manager_->closeTab(manual_topic_);
-    }
-    manual_topic_.clear();
-  }
-
-  if (topic.isEmpty() || !node_) {
-    return;
-  }
-
-  // Opens a new tab, or focuses the existing one if the topic already has a tab
-  // (e.g. a bridge device the operator also selected manually).
-  tab_manager_->openTab(state_topic);
-  manual_topic_ = state_topic;
 }
 
 TabTransportFactory MarineControlPlugin::makeTransportFactory()
@@ -337,179 +250,85 @@ TabTransportFactory MarineControlPlugin::makeTransportFactory()
          };
 }
 
-const marine_control_bridge_client::ControlDevice *
-MarineControlPlugin::connectedDeviceForTopic(const std::string & state_topic) const
+BridgeControlHooks MarineControlPlugin::makeBridgeHooks()
 {
-  if (!bridge_client_) {
-    return nullptr;
-  }
-  for (const auto & device : devices_) {
-    if (device.state_topic == state_topic &&
-      bridge_client_->isConnected(device.remote, device.state_topic))
-    {
-      return &device;
-    }
-  }
-  return nullptr;
+  BridgeControlHooks hooks;
+  // Each lambda holds a copy of the shared liveness flag so it can guard against
+  // this plugin having been torn down (shutdownPlugin) or freed before the hub
+  // widget: a dead flag short-circuits to a safe default rather than touching
+  // freed plugin state. The flag outlives the plugin because the hub keeps a copy.
+  auto alive = alive_;
+  // availableDevices() reflects the CURRENT client, and caches into devices_ so the
+  // plugin keeps a GUI-thread snapshot of what the hub last saw.
+  hooks.available_devices = [this, alive]() {
+      if (!*alive) {
+        return std::vector<marine_control_bridge_client::ControlDevice>{};
+      }
+      devices_ = bridge_client_ ? bridge_client_->availableDevices() :
+        std::vector<marine_control_bridge_client::ControlDevice>{};
+      return devices_;
+    };
+  hooks.connect = [this, alive](const marine_control_bridge_client::ControlDevice & device) {
+      if (*alive && bridge_client_) {
+        bridge_client_->connect(device);
+      }
+    };
+  hooks.disconnect = [this, alive](const marine_control_bridge_client::ControlDevice & device) {
+      if (*alive && bridge_client_) {
+        bridge_client_->disconnect(device);
+      }
+    };
+  hooks.is_connected =
+    [this, alive](const std::string & remote, const std::string & state_topic) {
+      return *alive && bridge_client_ && bridge_client_->isConnected(remote, state_topic);
+    };
+  // Store the hub's marshalling callback and register it on the current client;
+  // onBridgeSelected re-registers it on a freshly built one.
+  hooks.set_devices_changed_callback = [this, alive](std::function<void()> callback) {
+      if (!*alive) {
+        return;
+      }
+      devices_changed_cb_ = std::move(callback);
+      if (bridge_client_) {
+        bridge_client_->setDevicesChangedCallback(devices_changed_cb_);
+      }
+    };
+  return hooks;
 }
 
-void MarineControlPlugin::updateBridgeList()
+std::vector<std::string> MarineControlPlugin::localControlTopics()
 {
-  if (shutting_down_) {
-    return;
+  if (shutting_down_ || !node_) {
+    return {};
   }
-  const QString selected = bridge_combo_->currentText();
-
-  QList<QString> bridges;
-  bridges.append("");   // the "no bridge" entry
-  if (node_) {
-    for (const auto & name : bridge_nodes_from_services(node_->get_service_names_and_types())) {
-      bridges.append(QString::fromStdString(name));
-    }
-  }
-
-  // Block signals so repopulating doesn't tear down an active client when the
-  // selection is unchanged (a plain refresh shouldn't disconnect devices).
-  const QSignalBlocker blocker(bridge_combo_);
-  bridge_combo_->clear();
-  for (const auto & bridge : bridges) {
-    bridge_combo_->addItem(bridge);
-  }
-  const int index = bridge_combo_->findText(selected);
-  bridge_combo_->setCurrentIndex(index >= 0 ? index : 0);
+  return control_set_topics(node_->get_topic_names_and_types());
 }
 
-void MarineControlPlugin::onBridgeChanged(int index)
+std::vector<std::string> MarineControlPlugin::bridgeNodes()
 {
-  (void)index;
+  if (shutting_down_ || !node_) {
+    return {};
+  }
+  return bridge_nodes_from_services(node_->get_service_names_and_types());
+}
+
+void MarineControlPlugin::onBridgeSelected(const std::string & bridge_node)
+{
+  // Tear the old client down and build one for the newly selected bridge. The hub
+  // instance is unchanged, so its marshalling callback (kept in devices_changed_cb_)
+  // is simply re-registered on the fresh client.
   bridge_client_.reset();
   devices_.clear();
-  {
-    const QSignalBlocker blocker(device_combo_);
-    device_combo_->clear();
-  }
-  onDeviceChanged(-1);
-
-  const QString bridge = bridge_combo_->currentText();
-  if (bridge.isEmpty() || !node_) {
-    return;
-  }
-  bridge_client_ = std::make_unique<marine_control_bridge_client::BridgeControlClient>(
-    node_.get(), bridge.toStdString());
-  // The client's changed-callback fires on the executor thread; marshal the
-  // device-list refresh onto the GUI thread.
-  bridge_client_->setDevicesChangedCallback(
-    [this]() {QMetaObject::invokeMethod(this, "refreshDevices", Qt::QueuedConnection);});
-  refreshDevices();
-}
-
-void MarineControlPlugin::refreshDevices()
-{
-  if (!bridge_client_) {
-    return;
-  }
-  const QString selected = device_combo_->currentText();
-  devices_ = bridge_client_->availableDevices();
-  {
-    const QSignalBlocker blocker(device_combo_);
-    device_combo_->clear();
-    for (const auto & device : devices_) {
-      device_combo_->addItem(
-        QString::fromStdString(device.remote) + ": " +
-        QString::fromStdString(device.state_topic));
+  if (!bridge_node.empty() && node_) {
+    bridge_client_ = std::make_unique<marine_control_bridge_client::BridgeControlClient>(
+      node_.get(), bridge_node);
+    if (devices_changed_cb_) {
+      bridge_client_->setDevicesChangedCallback(devices_changed_cb_);
     }
-    const int index = device_combo_->findText(selected);
-    device_combo_->setCurrentIndex(index >= 0 ? index : (devices_.empty() ? -1 : 0));
   }
-  onDeviceChanged(device_combo_->currentIndex());
-}
-
-void MarineControlPlugin::onDeviceChanged(int index)
-{
-  const bool valid = bridge_client_ && index >= 0 &&
-    index < static_cast<int>(devices_.size());
-  connect_button_->setEnabled(valid);
-
-  bool connected = false;
-  if (valid) {
-    const auto & device = devices_[index];
-    connected = bridge_client_->isConnected(device.remote, device.state_topic);
-  }
-  connect_button_->setText(connected ? tr("Disconnect") : tr("Connect"));
-  // Single source of truth for the status indicator: driven from the client's
-  // actual connection state, and refreshed here on every device/bridge switch
-  // and after connect/disconnect, so it never goes stale (#78).
-  if (status_label_) {
-    status_label_->setText(connected ? tr("Connected") : tr("Disconnected"));
-  }
-}
-
-void MarineControlPlugin::onConnectClicked()
-{
-  const int index = device_combo_->currentIndex();
-  if (!bridge_client_ || index < 0 || index >= static_cast<int>(devices_.size())) {
-    return;
-  }
-  const auto device = devices_[index];
-  // Toggle on the actual connection state rather than a checkable-button state,
-  // since the button is now momentary.
-  if (!bridge_client_->isConnected(device.remote, device.state_topic)) {
-    bridge_client_->connect(device);
-    // Open the device's tab; its state topic appears locally once the bridge
-    // wires it (subscribing before it exists is fine — it waits for the
-    // publisher).
-    tab_manager_->openTab(device.state_topic);
-  } else {
-    bridge_client_->disconnect(device);
-    // If this device's tab is also the current manual selection, clear that
-    // bookkeeping now (same signal-blocked reset as onTabCloseRequested) so
-    // manual_topic_ and topic_combo_ don't point at a tab we're about to close
-    // until the next selection change.
-    if (manual_topic_ == device.state_topic) {
-      manual_topic_.clear();
-      const QSignalBlocker blocker(topic_combo_);
-      const int empty_index = topic_combo_->findText("");
-      topic_combo_->setCurrentIndex(empty_index >= 0 ? empty_index : -1);
-    }
-    tab_manager_->closeTab(device.state_topic);
-  }
-  // Re-sync the button text and status label through the single source of
-  // truth. Note isConnected() reflects operator intent (the connection was
-  // requested) — connect()/disconnect() set the client's connected_ set
-  // synchronously, ahead of the fire-and-forget bridge service call — not
-  // bridge-confirmed delivery; confirmed state would require established_.
-  onDeviceChanged(index);
-}
-
-void MarineControlPlugin::onTabCloseRequested(int index)
-{
-  const std::string state_topic = tab_manager_->topicForIndex(index);
-  if (state_topic.empty()) {
-    return;
-  }
-
-  // Operator decision (#92): a tab represents device presence, so closing a
-  // connected bridge device's tab disconnects the device over the bridge.
-  const marine_control_bridge_client::ControlDevice * device =
-    connectedDeviceForTopic(state_topic);
-  if (device != nullptr) {
-    bridge_client_->disconnect(*device);
-  }
-
-  // If this was the manual tab, clear the combo's selection bookkeeping without
-  // re-triggering onTopicChanged (which would otherwise try to close it again).
-  if (manual_topic_ == state_topic) {
-    manual_topic_.clear();
-    const QSignalBlocker blocker(topic_combo_);
-    const int empty_index = topic_combo_->findText("");
-    topic_combo_->setCurrentIndex(empty_index >= 0 ? empty_index : -1);
-  }
-
-  tab_manager_->closeTab(state_topic);
-
-  // Refresh the connect button / status indicator if a device's state changed.
-  if (device != nullptr) {
-    onDeviceChanged(device_combo_->currentIndex());
+  // Reflect the new client's device list (or the cleared one) in the hub now.
+  if (hub_ != nullptr) {
+    hub_->onDevicesChanged();
   }
 }
 
