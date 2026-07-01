@@ -93,45 +93,99 @@ int toIntBound(double v)
 // The "group" a control belongs to, with empty mapped to the default section.
 const char * const kDefaultGroup = "General";
 
-// Bounds are meaningful (worth showing) only for numeric controls whose advertised
-// max exceeds min; an unbounded control leaves these unset.
+// A numeric bound is "open" (no real limit) when it is non-finite or sits at the
+// sentinel magnitude a producer uses for "unbounded on this side". The ROS idiom
+// for a one-sided FloatingPointRange is to_value = DBL_MAX (or from_value =
+// lowest()), and marine_control::ControlServer copies that straight through. The
+// 1e300 threshold is far above any real control value yet below DBL_MAX
+// (~1.8e308), so it catches the sentinel and infinities without flagging a
+// genuine bound.
+constexpr double kOpenBoundThreshold = 1.0e300;
+
+bool isOpenBound(double v)
+{
+  return !std::isfinite(v) || std::abs(v) >= kOpenBoundThreshold;
+}
+
+bool isNumeric(const Item & item)
+{
+  return item.type == Item::TYPE_FLOAT || item.type == Item::TYPE_INT;
+}
+
+bool hasLowerBound(const Item & item)
+{
+  return isNumeric(item) && !isOpenBound(item.min_value);
+}
+
+bool hasUpperBound(const Item & item)
+{
+  return isNumeric(item) && !isOpenBound(item.max_value);
+}
+
+// Bounds are worth showing for a numeric control with at least one real (closed)
+// side. When both sides are closed they must form a non-empty interval; a control
+// open on both sides is treated as unbounded (no hint).
 bool hasMeaningfulBounds(const Item & item)
 {
-  return (item.type == Item::TYPE_FLOAT || item.type == Item::TYPE_INT) &&
-         item.max_value > item.min_value;
+  if (!hasLowerBound(item) && !hasUpperBound(item)) {
+    return false;
+  }
+  if (hasLowerBound(item) && hasUpperBound(item)) {
+    return item.max_value > item.min_value;
+  }
+  return true;
 }
 
 // Format min/max (and step) using the control's natural precision: integers for
-// INT, decimalsFor() places for FLOAT.
+// INT, decimalsFor() places for FLOAT. An open side (see isOpenBound) is left
+// empty so callers can render it as a one-sided bound.
 void formatBounds(const Item & item, QString & lo, QString & hi, QString & step)
 {
+  const bool has_lo = hasLowerBound(item);
+  const bool has_hi = hasUpperBound(item);
   if (item.type == Item::TYPE_INT) {
-    lo = QString::number(toIntBound(item.min_value));
-    hi = QString::number(toIntBound(item.max_value));
+    lo = has_lo ? QString::number(toIntBound(item.min_value)) : QString();
+    hi = has_hi ? QString::number(toIntBound(item.max_value)) : QString();
     step = item.step > 0.0 ? QString::number(toIntBound(item.step)) : QString();
   } else {
     const int dec = decimalsFor(item);
-    lo = QString::number(item.min_value, 'f', dec);
-    hi = QString::number(item.max_value, 'f', dec);
+    lo = has_lo ? QString::number(item.min_value, 'f', dec) : QString();
+    hi = has_hi ? QString::number(item.max_value, 'f', dec) : QString();
     step = item.step > 0.0 ? QString::number(item.step, 'f', dec) : QString();
   }
 }
 
-// Compact inline hint, e.g. "[0.0 – 100.0 m]". Empty when bounds aren't meaningful.
+// The "lo – hi" / "≥ lo" / "≤ hi" core with units (no brackets, no prefix).
+// Assumes hasMeaningfulBounds(item).
+QString boundsCore(const Item & item)
+{
+  QString lo, hi, step;
+  formatBounds(item, lo, hi, step);
+  const QChar dash(0x2013);          // en dash
+  const QChar ge(0x2265);            // ≥
+  const QChar le(0x2264);            // ≤  (kept out of the source as literals)
+  QString core;
+  if (!lo.isEmpty() && !hi.isEmpty()) {
+    core = lo + QStringLiteral(" ") + dash + QStringLiteral(" ") + hi;
+  } else if (!lo.isEmpty()) {
+    core = QString(ge) + QStringLiteral(" ") + lo;
+  } else {
+    core = QString(le) + QStringLiteral(" ") + hi;
+  }
+  if (!item.units.empty()) {
+    core += QStringLiteral(" ") + QString::fromStdString(item.units);
+  }
+  return core;
+}
+
+// Compact inline hint, e.g. "[0.0 – 100.0 m]" or "[≥ 0.0 m]". Empty when bounds
+// aren't meaningful.
 QString rangeLabelText(const Item & item)
 {
   if (!hasMeaningfulBounds(item)) {
     return QString();
   }
-  QString lo, hi, step;
-  formatBounds(item, lo, hi, step);
-  const QChar dash(0x2013);   // en dash; kept out of the source as a literal
-  QString text = QStringLiteral("[") + lo + QStringLiteral(" ") + dash +
-    QStringLiteral(" ") + hi;
-  if (!item.units.empty()) {
-    text += QStringLiteral(" ") + QString::fromStdString(item.units);
-  }
-  return text + QStringLiteral("]");
+  return QStringLiteral("[") + boundsCore(item) + QStringLiteral("]");
 }
 
 // Full detail for a tooltip, e.g. "Range: 0.0 – 100.0 m, step 0.5". Empty when
@@ -143,12 +197,7 @@ QString rangeDetailText(const Item & item)
   }
   QString lo, hi, step;
   formatBounds(item, lo, hi, step);
-  const QChar dash(0x2013);
-  QString text = QStringLiteral("Range: ") + lo + QStringLiteral(" ") + dash +
-    QStringLiteral(" ") + hi;
-  if (!item.units.empty()) {
-    text += QStringLiteral(" ") + QString::fromStdString(item.units);
-  }
+  QString text = QStringLiteral("Range: ") + boundsCore(item);
   if (!step.isEmpty()) {
     text += QStringLiteral(", step ") + step;
   }
@@ -196,11 +245,15 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
   switch (item.type) {
     case Item::TYPE_FLOAT: {
         auto * spin = new QDoubleSpinBox();
-        if (item.max_value > item.min_value) {
-          spin->setRange(item.min_value, item.max_value);
-        } else {
-          spin->setRange(-1.0e9, 1.0e9);   // unbounded control: wide range
+        // Clamp each closed side to its advertised bound; leave an open side
+        // (isOpenBound) on the wide fallback so a one-sided range stays editable.
+        double lo_bound = hasLowerBound(item) ? item.min_value : -1.0e9;
+        double hi_bound = hasUpperBound(item) ? item.max_value : 1.0e9;
+        if (lo_bound >= hi_bound) {         // degenerate/inverted: don't trap input
+          lo_bound = -1.0e9;
+          hi_bound = 1.0e9;
         }
+        spin->setRange(lo_bound, hi_bound);
         spin->setDecimals(decimalsFor(item));
         spin->setSingleStep(item.step > 0.0 ? item.step : 0.1);
         if (!item.units.empty()) {
@@ -229,11 +282,17 @@ void ControlSetWidget::makeInput(const Item & item, Row & row)
       }
     case Item::TYPE_INT: {
         auto * spin = new QSpinBox();
-        if (item.max_value > item.min_value) {
-          spin->setRange(toIntBound(item.min_value), toIntBound(item.max_value));
-        } else {
-          spin->setRange(std::numeric_limits<int>::min(), std::numeric_limits<int>::max());
+        // Clamp each closed side to its advertised bound; leave an open side
+        // (isOpenBound) on the full int range so a one-sided range stays editable.
+        int lo_bound = hasLowerBound(item) ?
+          toIntBound(item.min_value) : std::numeric_limits<int>::min();
+        int hi_bound = hasUpperBound(item) ?
+          toIntBound(item.max_value) : std::numeric_limits<int>::max();
+        if (lo_bound >= hi_bound) {         // degenerate/inverted: don't trap input
+          lo_bound = std::numeric_limits<int>::min();
+          hi_bound = std::numeric_limits<int>::max();
         }
+        spin->setRange(lo_bound, hi_bound);
         spin->setSingleStep(item.step > 0.0 ? toIntBound(item.step) : 1);
         if (!item.units.empty()) {
           spin->setSuffix(QStringLiteral(" ") + QString::fromStdString(item.units));
