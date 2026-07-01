@@ -274,7 +274,7 @@ Round-1 must-fix verified fixed: hub `deviceKey` mirrors `BridgeControlClient::d
 Adversarial candidate must-fixes all dismissed on verification: two-remotes-same-state-topic tab collapse is the documented, operator-accepted out-of-scope limitation (bridge-level conflict); combo re-selection "stale client" not reachable (line refs hallucinated); check-then-use reentrancy invalid under single-threaded GUI model with short-circuit null guards; `bridge_client_.reset()` vs executor callback is the pre-existing, operator-deferred, header-documented contract (follow-up to be filed).
 
 ### Findings
-- [ ] (suggestion) Null the hub's borrowed `tab_manager_` pointer (or add a hub-side liveness guard) in teardown so post-shutdown safety is local, not provider-gated — currently safe via `shutting_down_`/`alive_` guards; optional hardening — `src/marine_control_plugin.cpp:198`
+- [x] (suggestion) Null the hub's borrowed `tab_manager_` pointer (or add a hub-side liveness guard) in teardown so post-shutdown safety is local, not provider-gated — currently safe via `shutting_down_`/`alive_` guards; optional hardening — `src/marine_control_plugin.cpp:198`
 
 ### Operator decision (2026-07-01, checkpoint on Round 2 review)
 Round 2 is **approved** (0 must-fix). Roland chose **"Harden first, then publish."**
@@ -286,3 +286,43 @@ Apply the single optional suggestion now (do NOT defer it):
   `src/marine_control_plugin.cpp:198`. Keep it minimal; the code is already safe,
   this makes the safety self-contained. Re-run build + tests; write a
   `## Implementation` entry for the re-review.
+
+## Implementation
+**Status**: complete
+**When**: 2026-07-01 04:10 +00:00
+**By**: Claude Code Agent (Claude Opus)
+
+**Branch**: feature/issue-97 at `402396f`
+**Addressed**: `## Local Review (Pre-Push)` (2026-07-01 03:58 +00:00, `79e79d0`) — Round 2, the single optional suggestion, per the operator decision "Harden first, then publish" (apply now, do NOT defer)
+**Commits**:
+- `402396f` fix(rqt_marine_control): make hub post-shutdown safety self-contained (#97)
+
+### Actions
+- [x] (suggestion) Make the hub's post-shutdown safety self-contained — `402396f`. Added
+  `ConnectionsHubWidget::detachTabManager()`, which drops the borrowed `tab_manager_`
+  raw pointer, and a `tab_manager_ == nullptr` early-return guard at the head of every
+  runtime slot that dereferences it (`onDevicesChanged`, `onLocalToggled`,
+  `onRemoteToggled`, `onTabClosed`, `onTabCloseRequested`). `MarineControlPlugin::shutdownPlugin`
+  now calls `hub_->detachTabManager()` in the same controlled teardown block — right after
+  it drops the layout's borrowed pointer and before it destroys the owning `tab_manager_` —
+  so a queued devices-changed marshalled onto the hub, or a late tab-close, no-ops on the
+  hub's **own** guard rather than relying on the plugin's `alive_`/`shutting_down_`/`disconnect`
+  gating. The stale comment in `shutdownPlugin` that credited the old provider-side guards was
+  updated to describe the now-local guarantee. Net effect matches the finding's "null the
+  borrowed pointer" option; the guards are the hub-side liveness check the finding offered as
+  the alternative, applied together so the deref sites are provably inert once detached. —
+  `connections_hub_widget.{hpp,cpp}`, `marine_control_plugin.cpp:196`
+
+### Test / lint results
+- Build clean: `./ui_ws/build.sh marine_control_bridge_client marine_control_widgets rqt_marine_control` — 0 errors, 0 new warnings.
+- Tests green: `./ui_ws/test.sh rqt_marine_control` — 91 tests, 0 failures, 14 skipped
+  (up from 90: new `SlotsNoOpAfterTabManagerDetached` — heap-allocates the TabManager,
+  detaches, `delete`s it, then drives `onDevicesChanged`/`onTabClosed`/`onTabCloseRequested`
+  and drains the queued reconcile; any surviving deref would be a caught use-after-free, and
+  the bridge sees no connect/disconnect activity). uncrustify / cpplint / cppcheck / copyright
+  all pass on the changed files (pre-commit hooks ran, no `--no-verify`).
+
+### Environment note (not a code change)
+As in prior rounds, the shared core layer had no build in this fresh worktree, so
+`marine_control_interfaces` and `udp_bridge_interfaces` were built once in `core_ws`
+to satisfy the ui-layer build; no core sources were modified.
