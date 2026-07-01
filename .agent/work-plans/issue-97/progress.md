@@ -162,3 +162,33 @@ bridge rebuild + reparent — the core safety property holds.
 - [ ] (suggestion) `bridge_client_.reset()` on GUI thread while executor spins may race in-flight bridge_info callbacks (pre-existing pattern; header calls out the contract) — `marine_control_plugin.cpp:175,279`
 - [ ] (suggestion) Command-line argv topic opens an orphan tab (no checkbox, no bridge connect if remote/unknown) — `marine_control_plugin.cpp:162`
 - [ ] (suggestion) Add a duplicate-topic-across-remotes test so the must-fix path is covered — `test/test_connections_hub.cpp`
+
+### Operator decision (2026-07-01, checkpoint on Round 1 review)
+Roland chose **"Fix properly + safety items"**. For the `address-findings` pass:
+
+- **MUST-FIX — re-key by `(remote, state_topic)`** (do NOT scope multi-remote out).
+  The operator station talks to multiple boats, so same-named control topics
+  across remotes are realistic. Match `BridgeControlClient`'s own
+  `(remote, state_topic)` keying throughout the hub: the desired set, the
+  checkbox map, reconcile, and `onTabClosed`/`onTabCloseRequested` must all key on
+  the pair, not `state_topic` alone. (Note: the tab is still keyed by state_topic
+  in `TabManager`; if two remotes truly share a state-topic string the tab layer
+  needs a disambiguated key too — handle or explicitly note.)
+- **ADD the duplicate-topic-across-remotes test** exercising the re-keyed path
+  (two devices, same state_topic, different remote → correct remote connected,
+  correct box checked, correct remote disconnected on close).
+- **FOLD IN the safety suggestions:**
+  - Close teardown ordering: `control_set_widget`… reset `tab_manager_` in
+    `shutdownPlugin`, and guard the `hooks_` lambdas so a plugin freed before the
+    widget can't dangle (the lifetime concern from the implementation deviation).
+  - Bridge-vanishing / `restoreSettings` desync: don't leave a live client while
+    the combo shows "no bridge"; don't resurrect a phantom bridge on restore.
+- **DEFER (do NOT fix now; leave a one-line tracked note in the Implementation
+  entry + I will file a follow-up):**
+  - Pre-existing GUI-thread `bridge_client_.reset()` vs. executor bridge_info
+    race (pre-existing pattern; the header already documents the contract).
+  - Command-line argv topic opening an orphan tab (edge input path, not part of
+    the hub contract).
+
+After applying, write a `## Implementation` entry documenting each finding's
+resolution (fixed / deferred-with-reason) so the re-review can verify.
