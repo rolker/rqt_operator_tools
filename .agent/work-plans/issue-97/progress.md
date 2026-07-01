@@ -45,3 +45,25 @@ All three actions resolved by the operator (Roland) via run-issue checkpoint:
 
 ### Open questions
 - [ ] No open questions — plan is review-plan-ready.
+
+## Plan Review
+**Status**: complete
+**When**: 2026-07-01 02:18 +00:00
+**By**: Claude Code Agent (Claude Opus)  <!-- independent review: Opus, fresh context; plan was authored by Claude Sonnet. Name-only self-review heuristic would false-match since all agents share the name, so annotation omitted. -->
+
+**Plan**: `.agent/work-plans/issue-97/plan.md` at `5987ad7`
+**PR**: PR-less (`--issue` mode)
+**Verdict**: changes-requested
+
+Note: `gh` unauthenticated in this dispatch — issue body/comments not re-fetched;
+evaluated against the recorded Issue Review findings + operator decisions above.
+Project ADR-0003/0008 text not independently readable (no `docs/decisions/` in
+repo); ADR compliance assessed from the `marine_control_plugin.hpp` contract
+docstring. Plan is otherwise well-grounded — all removed members/slots and all
+called backend APIs verified against the current source.
+
+### Findings
+- [ ] (must-fix) Test approach infeasible: `BridgeControlClient` is a concrete, non-virtual, rclcpp-node-bound class (`bridge_control_client.hpp:50-80`) — "stub BridgeControlClient (no live ROS node)" needs a seam (interface or injected callbacks); add the affected header to Files to Change — `plan.md:45`
+- [ ] (must-fix) Dead code left behind (violates operator decision 2): `onTabCloseRequested` (`marine_control_plugin.hpp:84`) and `connectedDeviceForTopic` (`marine_control_plugin.hpp:97`) are orphaned by the redesign but absent from the removal list — `plan.md:36-37`
+- [ ] (suggestion) Name the stable QObject that receives the marshaled `devicesChanged` callback after a bridge rebuild (hub survives reparenting) — `plan.md:20,22`
+- [ ] (suggestion) Scope is at the upper edge of a single PR (~9 files, 2 non-trivial new classes) but cohesive — no split needed — `plan.md:48-60`
