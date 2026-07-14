@@ -161,7 +161,7 @@ TEST_F(ResponsiveHubLayoutTest, PreservesSelectedTabByTopicAcrossReparent)
 
   mgr.openTab("/a/state");
   mgr.openTab("/b/state");
-  const int b_index = layout.tabWidget()->indexOf(mgr.widgetFor("/b/state"));
+  const int b_index = mgr.tabIndexFor("/b/state");
   layout.tabWidget()->setCurrentIndex(b_index);
   ASSERT_EQ(mgr.topicForIndex(layout.tabWidget()->currentIndex()), "/b/state");
 

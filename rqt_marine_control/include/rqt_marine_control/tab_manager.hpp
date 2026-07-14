@@ -36,6 +36,7 @@
 
 #include <marine_control_interfaces/msg/control_set.hpp>
 
+class QScrollArea;
 class QTabWidget;
 
 namespace marine_control_widgets
@@ -100,13 +101,20 @@ public:
   int tabCount() const;
   /// The state topic backing the tab at a QTabWidget index, or "" if out of range.
   std::string topicForIndex(int index) const;
-  marine_control_widgets::ControlSetWidget * widgetFor(const std::string & state_topic) const;
+  /// The QTabWidget index of the tab backing `state_topic`, or -1 if none. This is
+  /// the only topic->tab lookup: each tab's page is a scroll-area wrapper, not the
+  /// ControlSetWidget itself, so indexOf() on the control-set widget never resolves.
+  int tabIndexFor(const std::string & state_topic) const;
 
 private:
   struct TabEntry
   {
     std::string state_topic;
-    marine_control_widgets::ControlSetWidget * widget = nullptr;  // owned by the QTabWidget
+    // The scroll-area page is the tab's widget in the QTabWidget (owned by it); the
+    // ControlSetWidget is the page's child (owned by the page). So a tall control
+    // set scrolls inside the tab instead of forcing the whole plugin to grow.
+    QScrollArea * page = nullptr;
+    marine_control_widgets::ControlSetWidget * widget = nullptr;
     std::shared_ptr<TabTransport> transport;
     bool titled = false;   // has device_name been applied to the tab title yet?
   };

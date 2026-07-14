@@ -28,6 +28,8 @@
 
 #include "rqt_marine_control/tab_manager.hpp"
 
+#include <QFrame>
+#include <QScrollArea>
 #include <QString>
 #include <QTabWidget>
 
@@ -53,7 +55,7 @@ TabManager::~TabManager()
 marine_control_widgets::ControlSetWidget * TabManager::openTab(const std::string & state_topic)
 {
   if (auto it = entries_.find(state_topic); it != entries_.end()) {
-    const int idx = tabs_->indexOf(it->second->widget);
+    const int idx = tabs_->indexOf(it->second->page);
     if (idx >= 0) {
       tabs_->setCurrentIndex(idx);
     }
@@ -63,8 +65,16 @@ marine_control_widgets::ControlSetWidget * TabManager::openTab(const std::string
   auto entry = std::make_shared<TabEntry>();
   entry->state_topic = state_topic;
   entry->widget = new marine_control_widgets::ControlSetWidget();
+  // Wrap the control set in a scroll area so a device with many controls scrolls
+  // inside the tab rather than growing the whole plugin. setWidgetResizable keeps
+  // the content stretched to the viewport width (only the vertical bar appears when
+  // the rows overflow); NoFrame avoids a border nested inside the tab's own edge.
+  entry->page = new QScrollArea();
+  entry->page->setWidgetResizable(true);
+  entry->page->setFrameShape(QFrame::NoFrame);
+  entry->page->setWidget(entry->widget);
   // Title with the topic until the first ControlSet's device_name arrives.
-  const int idx = tabs_->addTab(entry->widget, QString::fromStdString(state_topic));
+  const int idx = tabs_->addTab(entry->page, QString::fromStdString(state_topic));
   tabs_->setCurrentIndex(idx);
 
   // An edit in this tab publishes only through this tab's transport. The lambda
@@ -101,7 +111,7 @@ void TabManager::closeTab(const std::string & state_topic)
   auto entry = it->second;
   // Drop the transport first so no further state arrives while we tear down.
   entry->transport.reset();
-  const int idx = tabs_->indexOf(entry->widget);
+  const int idx = tabs_->indexOf(entry->page);
   if (idx >= 0) {
     tabs_->removeTab(idx);
   }
@@ -109,7 +119,8 @@ void TabManager::closeTab(const std::string & state_topic)
   // QWidget::~QWidget does not re-enter the Qt event loop here — true for normal
   // teardown — so a queued ControlSet delivery cannot be dispatched into this
   // half-destroyed tab while it is being deleted.
-  delete entry->widget;       // also disconnects the publish lambda
+  delete entry->page;         // deletes the child ControlSetWidget + its publish lambda
+  entry->page = nullptr;
   entry->widget = nullptr;
   entries_.erase(it);
 }
@@ -118,12 +129,13 @@ void TabManager::clear()
 {
   for (auto & [topic, entry] : entries_) {
     entry->transport.reset();
-    if (entry->widget) {
-      const int idx = tabs_->indexOf(entry->widget);
+    if (entry->page) {
+      const int idx = tabs_->indexOf(entry->page);
       if (idx >= 0) {
         tabs_->removeTab(idx);
       }
-      delete entry->widget;
+      delete entry->page;       // deletes the child ControlSetWidget too
+      entry->page = nullptr;
       entry->widget = nullptr;
     }
   }
@@ -142,7 +154,7 @@ void TabManager::applySet(
   // Replace the topic-string title with the device name on the first set carrying
   // one, so the tab reads as the device rather than the raw topic.
   if (!entry->titled && !set.device_name.empty()) {
-    const int idx = tabs_->indexOf(entry->widget);
+    const int idx = tabs_->indexOf(entry->page);
     if (idx >= 0) {
       tabs_->setTabText(idx, QString::fromStdString(set.device_name));
     }
@@ -167,18 +179,17 @@ std::string TabManager::topicForIndex(int index) const
     return {};
   }
   for (const auto & [topic, entry] : entries_) {
-    if (entry->widget == w) {
+    if (entry->page == w) {
       return topic;
     }
   }
   return {};
 }
 
-marine_control_widgets::ControlSetWidget * TabManager::widgetFor(
-  const std::string & state_topic) const
+int TabManager::tabIndexFor(const std::string & state_topic) const
 {
   auto it = entries_.find(state_topic);
-  return it == entries_.end() ? nullptr : it->second->widget;
+  return it == entries_.end() ? -1 : tabs_->indexOf(it->second->page);
 }
 
 }  // namespace rqt_marine_control
