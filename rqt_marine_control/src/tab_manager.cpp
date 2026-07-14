@@ -192,11 +192,4 @@ int TabManager::tabIndexFor(const std::string & state_topic) const
   return it == entries_.end() ? -1 : tabs_->indexOf(it->second->page);
 }
 
-marine_control_widgets::ControlSetWidget * TabManager::widgetFor(
-  const std::string & state_topic) const
-{
-  auto it = entries_.find(state_topic);
-  return it == entries_.end() ? nullptr : it->second->widget;
-}
-
 }  // namespace rqt_marine_control

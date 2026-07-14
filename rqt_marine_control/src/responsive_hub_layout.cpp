@@ -118,7 +118,8 @@ void ResponsiveHubLayout::updateForWidth(int width)
   }
 
   // Preserve which device tab is selected across the reparent. Docking the hub as
-  // tab 0 shifts every device index, so we track the topic and re-select by widget.
+  // tab 0 shifts every device index, so we track the topic and re-select its tab
+  // via tabIndexFor().
   std::string selected_topic;
   if (tab_manager_ != nullptr) {
     selected_topic = tab_manager_->topicForIndex(tabs_->currentIndex());

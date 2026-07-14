@@ -101,11 +101,10 @@ public:
   int tabCount() const;
   /// The state topic backing the tab at a QTabWidget index, or "" if out of range.
   std::string topicForIndex(int index) const;
-  /// The QTabWidget index of the tab backing `state_topic`, or -1 if none. Prefer
-  /// this over indexOf(widgetFor(topic)): each tab's page is a scroll-area wrapper,
-  /// not the ControlSetWidget itself, so the widget is not the tab-widget's child.
+  /// The QTabWidget index of the tab backing `state_topic`, or -1 if none. This is
+  /// the only topic->tab lookup: each tab's page is a scroll-area wrapper, not the
+  /// ControlSetWidget itself, so indexOf() on the control-set widget never resolves.
   int tabIndexFor(const std::string & state_topic) const;
-  marine_control_widgets::ControlSetWidget * widgetFor(const std::string & state_topic) const;
 
 private:
   struct TabEntry
