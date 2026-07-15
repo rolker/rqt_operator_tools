@@ -173,5 +173,6 @@ pending the license-header cleanup.
   mcap segment stays 0 bytes until finalized — don't "fix" that by removing the
   sidecar. `rosbag2_storage_mcap` is a required exec dep or recording fails
   with "No storage could be initialized".
-- **Stale root README**: it currently lists only 5 of the 9 packages — trust
-  `package.xml` files over the README until it is updated.
+- **Keep the root README's package list complete**: when adding a package,
+  add its bullet there too (the list has drifted before) — `package.xml`
+  files are always the ground truth.
