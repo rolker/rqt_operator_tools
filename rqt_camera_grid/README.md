@@ -45,7 +45,7 @@ In a separate terminal, launch rqt and load the matching config:
 
 ```bash
 rqt --force-discover        # first-time: ensures Camera Grid is listed
-# Plugins -> Visualization -> Camera Grid
+# Plugins -> Robot Tools -> Camera Grid
 # wrench icon -> Import YAML...
 #   -> <install-space>/share/rqt_camera_grid/config/demo_webcam_grid.yaml
 ```
