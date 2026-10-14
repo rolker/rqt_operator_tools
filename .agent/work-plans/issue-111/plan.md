@@ -115,7 +115,7 @@ label "Survey Coverage". Modules:
    config.
 5. **`coverage_standalone.py`** + console script `survey_coverage = ...` (`coverage` would shadow the Python coverage tool's name) for a windowed
    scoreboard on a wall display (`--view`, `--topic`, `--config`, `--always-on-top`,
-   same spin-via-QTimer pattern as the annunciator).
+   executor thread, queued-signal hand-off).
 6. **Docs and registration** — package `README.md` (topic, QoS, settings table, the
    score definitions, the staleness rule, Clear/Forget), one line in the repo root
    `README.md` package list. `package.xml` execs: `python_qt_binding`, `rclpy`,
@@ -213,4 +213,4 @@ Single PR (about 7 modules, 5 test files).
 - The widget takes an injectable clock (monotonic seconds) so aging is tested without sleeping.
 - Lint: `ament_flake8`/`ament_pep257` are not part of this repo's test run (`rqt_boat_state` fails the strict import-order and D213 rules too); docstrings are complete, import order is not rearranged.
 - Review-code round 1 changes: topic change clears the store and a failed subscribe shows a retryable notice; the pooled tile and heading take the oldest area's status; redraws are coalesced to one per event-loop turn; a rendering error is shown and logged, not raised; source coverage is clamped to the assessment's; cell counts survive extreme cell sizes; area ids render as plain text; status reads "received N s ago" because a late joiner's first picture is a latched assessment of unknown age; the combined column is a widget so hiding it frees its width.
-- Review-code round 2 changes: `selected_areas` is de-duplicated; glance tiles have a minimum height and the panel scrolls; unique credit summing above the covered area is flagged; the notice line is plain text and reports a QoS mismatch (subscription event callback, queued to the Qt thread); the standalone drains ready callbacks for 3 ms per 33 ms tick instead of one; the aging spin box keeps one decimal.
+- Review-code round 2 changes: `selected_areas` is de-duplicated; glance tiles have a minimum height and the panel scrolls; unique credit summing above the covered area is flagged; the notice line is plain text and reports a QoS mismatch (subscription event callback, queued to the Qt thread); the standalone spins its node on a background `SingleThreadedExecutor` thread (as `rqt_gui_py` does) instead of a Qt-timer `spin_once`, with the queued-signal hand-off kept, and `test_ros_integration.py` runs real rclpy (private DDS domain) to prove a latched assessment reaches a late-joining widget; the aging spin box keeps one decimal.

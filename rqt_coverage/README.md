@@ -28,7 +28,7 @@ clock and goes backwards when a sim restarts. Changing the topic clears the area
 one.
 
 A late joiner's first picture is the scorer's latched last assessment, whose true age is
-unknown here: the status line counts from when it arrived (`received 3 s ago`), and the
+unknown here: the status line counts from when it arrived (`received 3 s ago`; whether that wording is enough is an open owner decision), and the
 detail view shows `header.stamp` as the last assessment time on the scorer's clock.
 
 ## Scores
@@ -100,6 +100,10 @@ ros2 run rqt_coverage survey_coverage --view glance --always-on-top
 # --config <settings.yaml>   the same keys as the settings table
 # --topic <topic>            override the topic
 ```
+
+The standalone spins its node on a background executor thread, as `rqt_gui_py` does; the
+subscription callback only emits a queued Qt signal, so every widget access stays on the Qt
+thread.
 
 ## Tests
 
