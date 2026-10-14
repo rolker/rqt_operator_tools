@@ -27,7 +27,7 @@ New ament_python package `rqt_coverage` in this repo, laid out like `rqt_boat_st
 label "Survey Coverage". Modules:
 
 1. **`score_model.py` (Qt-free, ROS-free logic)** — everything the unit tests hit:
-   - `AreaScore` dataclass built from a message: `area_id`, `name`, `standard_name`,
+   - `AreaScore` dataclass built from a message: `area_id` (the title; `SurveyArea` has no name field), `standard_name`, `standard_a`, `standard_b`,
      `total`, `covered`, `meeting`, `stamp_ns`, `sources` (list of `(source, covered,
      meeting, unique)`), `cell_size`. A `from_msg(msg)` that takes the message
      duck-typed.
@@ -42,8 +42,11 @@ label "Survey Coverage". Modules:
      is not positive.
    - `Store`: latest per `area.id`. Replacement rule: a message replaces the held one
      if its `header.stamp` is newer or equal (equal: last received wins, mirroring the
-     `SurveyArea` rule); an older stamp is dropped, which makes the replayed history
-     (oldest first, repeats of an area) converge to the newest regardless of order.
+     `SurveyArea` rule); an older stamp is dropped only when it arrives within 2 s of the
+     held one (replay or reordering), which makes the replayed history (oldest first,
+     repeats of an area) converge to the newest. A backwards stamp after that window is a
+     scorer clock restart (a sim restart resets sim time) and is accepted; dropping it
+     would freeze the display until the plugin was cleared.
      Records wall-clock receipt time per area. `forget(area_id)` and `clear()`.
    - Global roll-up over a chosen set of areas: pooled, area-weighted
      (`sum covered / sum total`, `sum meeting / sum total`), so a big area counts more
@@ -57,7 +60,7 @@ label "Survey Coverage". Modules:
      to-spec counts fully, covered-below-spec half). Weights are validated to finite,
      0..1, else the default; applied to the pooled and the per-area numbers alike.
    - Staleness ("time since the last assessment arrived"): `age = now_wall - received_wall`;
-     state `FRESH` / `AGING` (age > `stale_timeout`, default 60 s; 0 disables) / `NEVER`.
+     state `FRESH` / `AGING` (age > `aging_timeout`, default 60 s; 0 disables) / `NEVER`.
      Receipt time, not `header.stamp`, because the stamp is assessment time on whatever
      clock the scorer runs (sim time in the demo); the detail view still prints the stamp
      as "last assessment" in the message's own time. **The scorer publishes only when a
@@ -73,7 +76,7 @@ label "Survey Coverage". Modules:
      keys ignored, bad values fall back to defaults): `topic` (default
      `coverage_assessment`), `view` (`glance` | `detail`), `selected_areas` (list of
      ids; empty = all), `font_scale` (0.5..4.0, default 1.0), `show_combined` (bool,
-     default false), `weight_spec`, `weight_covered`, `stale_timeout`.
+     default false), `weight_spec`, `weight_covered`, `aging_timeout`.
 
 2. **`coverage_widget.py`** — `QWidget` owning the subscription. Subscribes with
    `QoSProfile(reliability=RELIABLE, durability=TRANSIENT_LOCAL, history=KEEP_LAST,
@@ -97,9 +100,9 @@ label "Survey Coverage". Modules:
      the area total, plus m^2 and a "clamped" marker when the sanitiser changed
      anything). Sources keyed by the `source` string, never by index; a source that
      vanishes between messages simply drops out of the table.
-   - A "Forget area" action (context menu on a tile/row) calls `Store.forget`, because
+   - An "Areas" toolbar button (menu: "Forget area X", "Clear all areas"; works in both views) calls `Store.forget`, because
      areas never disappear from a latched topic and a removed area would otherwise sit
-     there forever; plus "Clear all". After a scorer reset the old replay is still in
+     there forever; After a scorer reset the old replay is still in
      the latch only until it is overwritten, so the README documents Clear.
 3. **`coverage_plugin.py`** — rqt `Plugin` wrapper like `BoatStatePlugin`: persist the
    config via `instance_settings.set_value('config_yaml', ...)`, restore with a
@@ -108,10 +111,10 @@ label "Survey Coverage". Modules:
 4. **`config_dialog.py`** — view selector, topic, area list (checkable, filled from
    the areas seen so far, plus a free-text id box so an area not yet received can be
    preselected), font scale spin box, combined-score checkbox and two weight spin
-   boxes, stale timeout. Also a toolbar-style quick toggle (view) on the widget itself
-   to follow the repo's perspective-persisted toolbar-setting convention; the view is
-   saved in the same config.
-5. **`coverage_standalone.py`** + console script `coverage = ...` for a windowed
+   boxes, aging window. Also a small toolbar on the widget itself (view toggle, Areas menu) following the
+   repo's perspective-persisted toolbar-setting convention; the view is saved in the same
+   config.
+5. **`coverage_standalone.py`** + console script `survey_coverage = ...` (`coverage` would shadow the Python coverage tool's name) for a windowed
    scoreboard on a wall display (`--view`, `--topic`, `--config`, `--always-on-top`,
    same spin-via-QTimer pattern as the annunciator).
 6. **Docs and registration** — package `README.md` (topic, QoS, settings table, the
@@ -129,7 +132,7 @@ regresses):
 - `test_store.py`: replay of 100 oldest-first repeats converges to the newest per
   `area.id`; an out-of-order older stamp is dropped; equal stamp last-wins; forget and
   clear; two areas coexisting; a source list that changes shape between messages.
-- `test_staleness.py`: fresh, aging past the boundary (not aging at exactly the timeout,
+- `test_aging.py`: fresh, aging past the boundary (not aging at exactly the timeout,
   as in `rqt_boat_state`), disabled timeout, never-received; uses an injected clock, and
   a message whose `header.stamp` is hours off wall clock is still FRESH (receipt-time
   rule).
@@ -197,9 +200,16 @@ aging window default 60 s; package name `rqt_coverage`; no reset button (README 
 `reset_cube_nodes.sh`). Scorer heartbeat is filed separately as
 https://github.com/rolker/cube_bathymetry/issues/169 and is not part of this PR.
 
-Review suggestions adopted: modules and public classes carry docstrings (flake8/pep257
-runs inside `colcon test`); a tile or row with no area name titles itself with `area.id`.
+Review suggestions adopted: modules and public classes carry docstrings; tiles and rows
+title themselves with `area.id`, because `SurveyArea` has no name field.
 
 ## Estimated Scope
 
 Single PR (about 7 modules, 5 test files).
+
+## Implementation Notes
+
+- A replay-window rule replaced "always drop an older stamp": sim-time restarts make the stamp go backwards while the live scorer is fine.
+- `AGING` replaced `STALE` in all names and strings: the scorer publishes only on change, so silence is not proof of a fault.
+- The widget takes an injectable clock (monotonic seconds) so aging is tested without sleeping.
+- Lint: `ament_flake8`/`ament_pep257` are not part of this repo's test run (`rqt_boat_state` fails the strict import-order and D213 rules too); docstrings are complete, import order is not rearranged.
