@@ -131,3 +131,20 @@ Fresh Claude Lens A and Lens B plus gemini and codex re-read the diff cold. Clau
 - [x] (suggestion) Standalone subscribes to the default topic before applying its config (gemini) — `coverage_standalone.py:45`
 - [x] (suggestion) Aging spin box rounds to whole seconds (Lens A) — `config_dialog.py:73`
 - [x] (suggestion) Source meeting above the assessment's flagged as inconsistent (gemini) — `score_model.py:143` (deferred: dismissed, legal per CoverageContribution.msg: one source can meet the standard over more cells than the union does)
+
+## Implementation
+**Status**: complete
+**When**: 2026-10-14 13:01 -04:00
+**By**: Claude Code Agent (Claude Sonnet 5.5)
+
+**Branch**: feature/issue-111 at `a95d39f..70d8f9b`
+**Addressed**: Local Review (Pre-Push) round 2
+**Commits**: a95d39f, 5eab135, c3116aa, 70d8f9b
+
+### Actions
+- [x] selected_areas de-duplicated — `score_model.py:364`
+- [x] glance tiles keep a minimum height and the panel scrolls — `coverage_widget.py:475`
+- [x] unique credit above covered flagged — `score_model.py:144`
+- [x] notice label plain text; QoS mismatch reported — `coverage_widget.py:229`
+- [x] standalone drains ready callbacks and starts with its config; aging box keeps a decimal
+- [x] source meeting above the assessment's — (deferred: dismissed, legal per CoverageContribution.msg)
