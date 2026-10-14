@@ -208,3 +208,16 @@ Fresh Lens A and Lens B plus gemini and codex re-read the branch with attention 
 ### Findings
 - [x] (must-fix) Unreadable-message state survives a topic change and hides the new topic's waiting notice (codex, Claude) — `coverage_widget.py:379`
 - [x] (suggestion) The viewport-rescale test passes with the event filter removed (Claude) — `test_widget_smoke.py:428`
+
+## Implementation
+**Status**: complete
+**When**: 2026-10-14 13:17 -04:00
+**By**: Claude Code Agent (Claude Sonnet 5.5)
+
+**Branch**: feature/issue-111 at `6b9347c`
+**Addressed**: Local Review (Pre-Push) round 4
+**Commits**: 6b9347c
+
+### Actions
+- [x] unreadable-message state reset when the subscription is recreated, with a topic-switch test — `coverage_widget.py:379`
+- [x] viewport test replaced by one that fails when the event filter is removed (checked by mutation) — `test_widget_smoke.py:428`
