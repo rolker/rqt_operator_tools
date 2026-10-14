@@ -83,3 +83,26 @@ Specialists: static analysis (ament_flake8/pep257: style only, repo does not enf
 - [x] (suggestion) QLabel rich-text detection mangles ids with markup; menu text mnemonic (Lens A, Lens B) — `coverage_widget.py:91`
 - [x] (suggestion) Per-message full redraw during a 100-message replay (Lens B) — `coverage_widget.py:428`
 - [x] (suggestion) Standalone: unreadable --config not reported, ros_args without program name, message class not re-imported after marine_interfaces is built (Lens B, gemini) — `coverage_standalone.py:79` (partly deferred: --config and ros_args fixed; re-importing marine_interfaces after startup left out, the plugin logs a warning and needs a restart)
+
+## Implementation
+**Status**: complete
+**When**: 2026-10-14 12:53 -04:00
+**By**: Claude Code Agent (Claude Sonnet 5.5)
+
+**Branch**: feature/issue-111 at `98c8bbb..9a1660e`
+**Addressed**: Local Review (Pre-Push) round 1
+**Commits**: 98c8bbb, 62382e8, b1fddac, 9a1660e
+
+### Actions
+- [x] cell counts survive extreme cell sizes — `score_model.py:115`
+- [x] topic change clears the old topic's areas — `coverage_widget.py:260`
+- [x] failed subscribe shows a notice and is retried on re-apply — `coverage_widget.py:259`
+- [x] roll-up status follows the oldest area (glance and detail) — `coverage_widget.py:388`
+- [x] hidden combined column frees its width — `coverage_widget.py:100`
+- [x] source covered clamped to the assessment's covered — `score_model.py:141`
+- [x] store keeps the last arrival; stamp comparison removed — `score_model.py:200`
+- [x] rendering errors contained and shown — `coverage_widget.py:469`
+- [x] pooled title counts waiting areas, ids render as plain text, redraws coalesced, standalone reports bad --config and keeps program name
+- [x] detail scroll reset — (deferred: not reproduced, test added)
+- [x] late-joiner age — (deferred: unknowable; wording and README changed)
+- [x] message class re-import after startup — (deferred: needs restart, warning is logged)
