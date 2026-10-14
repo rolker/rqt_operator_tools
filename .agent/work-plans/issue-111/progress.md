@@ -164,14 +164,14 @@ Fresh Claude Lens A and Lens B plus gemini and codex re-read the diff cold. Clau
 Fresh Lens A and Lens B plus gemini and codex re-read the branch with attention on the round-2 commits and the executor thread. Claude found no must-fix. Two gemini must-fixes dismissed after testing (button/action slots with the checked argument work in PyQt5; test added).
 
 ### Findings
-- [ ] (must-fix) A compatible publisher's data clears the QoS-mismatch notice for an incompatible one (codex) — `coverage_widget.py:368`
-- [ ] (must-fix) Huge integers in settings raise OverflowError from normalisation; the standalone exits (codex) — `score_model.py:357`
-- [ ] (must-fix) A long notice widens the whole panel (codex) — `coverage_widget.py:238`
-- [ ] (suggestion) show_combined: "false" becomes true (codex) — `score_model.py:379`
-- [ ] (suggestion) Standalone destroys the subscription while the executor still spins; no try/finally (gemini, Lens A, Lens B) — `coverage_standalone.py:63`
-- [ ] (suggestion) Glance numbers not rescaled when only the viewport resizes (Lens A) — `coverage_widget.py:477`
-- [ ] (suggestion) Aggregate unique-credit flag reads "clamped" though values are left as sent (Lens A) — `coverage_widget.py:403`
-- [ ] (suggestion) Unreadable messages log every time and show nothing (Lens B) — `coverage_widget.py:367`
-- [ ] (suggestion) Real-rclpy tests lack QoS-mismatch and topic-switch cases (Lens B) — `test_ros_integration.py:33`
-- [ ] (suggestion) Rebuilt tiles stay visible until deferred deletion (gemini) — `coverage_widget.py:502`
-- [ ] (suggestion) clicked(bool) and triggered(bool) connected to no-argument slots would raise TypeError (gemini) — `coverage_widget.py:228` (dismissed: not reproduced)
+- [x] (must-fix) A compatible publisher's data clears the QoS-mismatch notice for an incompatible one (codex) — `coverage_widget.py:368`
+- [x] (must-fix) Huge integers in settings raise OverflowError from normalisation; the standalone exits (codex) — `score_model.py:357`
+- [x] (must-fix) A long notice widens the whole panel (codex) — `coverage_widget.py:238`
+- [x] (suggestion) show_combined: "false" becomes true (codex) — `score_model.py:379`
+- [x] (suggestion) Standalone destroys the subscription while the executor still spins; no try/finally (gemini, Lens A, Lens B) — `coverage_standalone.py:63`
+- [x] (suggestion) Glance numbers not rescaled when only the viewport resizes (Lens A) — `coverage_widget.py:477`
+- [x] (suggestion) Aggregate unique-credit flag reads "clamped" though values are left as sent (Lens A) — `coverage_widget.py:403`
+- [x] (suggestion) Unreadable messages log every time and show nothing (Lens B) — `coverage_widget.py:367`
+- [x] (suggestion) Real-rclpy tests lack QoS-mismatch and topic-switch cases (Lens B) — `test_ros_integration.py:33`
+- [x] (suggestion) Rebuilt tiles stay visible until deferred deletion (gemini) — `coverage_widget.py:502`
+- [x] (suggestion) clicked(bool) and triggered(bool) connected to no-argument slots would raise TypeError (gemini) — `coverage_widget.py:228` (deferred: dismissed, test_view_button_and_clear_action_work_when_clicked clicks both and passes)
