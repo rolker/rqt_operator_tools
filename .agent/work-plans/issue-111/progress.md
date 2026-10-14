@@ -175,3 +175,20 @@ Fresh Lens A and Lens B plus gemini and codex re-read the branch with attention 
 - [x] (suggestion) Real-rclpy tests lack QoS-mismatch and topic-switch cases (Lens B) — `test_ros_integration.py:33`
 - [x] (suggestion) Rebuilt tiles stay visible until deferred deletion (gemini) — `coverage_widget.py:502`
 - [x] (suggestion) clicked(bool) and triggered(bool) connected to no-argument slots would raise TypeError (gemini) — `coverage_widget.py:228` (deferred: dismissed, test_view_button_and_clear_action_work_when_clicked clicks both and passes)
+
+## Implementation
+**Status**: complete
+**When**: 2026-10-14 13:11 -04:00
+**By**: Claude Code Agent (Claude Sonnet 5.5)
+
+**Branch**: feature/issue-111 at `f0486c0..ee50add`
+**Addressed**: Local Review (Pre-Push) round 3
+**Commits**: f0486c0, 0d18dbe, c219d65, ee50add
+
+### Actions
+- [x] QoS-mismatch notice persists until resubscribe — `coverage_widget.py:368`
+- [x] huge integers and non-boolean show_combined in settings — `score_model.py:357`
+- [x] notice wraps — `coverage_widget.py:238`
+- [x] standalone stops the executor first and tears down in a finally — `coverage_standalone.py:63`
+- [x] viewport rescale, status wording, unreadable-message notice and log throttle, hidden rebuilt tiles, real-rclpy tests
+- [x] button and action slot signatures — (deferred: dismissed, covered by a click test)
