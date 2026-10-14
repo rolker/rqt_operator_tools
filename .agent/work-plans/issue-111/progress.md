@@ -34,6 +34,6 @@ issue: 111
 - [ ] Global score: pooled area-weighted vs mean of per-area percentages
 - [ ] Combined score scale and default weights (1.0 / 0.5)
 - [ ] Default view (glance planned)
-- [ ] Stale timeout default 5 s
+- [ ] Aging window default 60 s; scorer heartbeat wanted? (scorer publishes only on change)
 - [ ] Package name rqt_coverage
 - [ ] Reset-scorer button (planned no)

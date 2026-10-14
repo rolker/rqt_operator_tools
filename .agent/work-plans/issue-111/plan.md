@@ -47,25 +47,34 @@ label "Survey Coverage". Modules:
      Records wall-clock receipt time per area. `forget(area_id)` and `clear()`.
    - Global roll-up over a chosen set of areas: pooled, area-weighted
      (`sum covered / sum total`, `sum meeting / sum total`), so a big area counts more
-     than a small one; areas with total 0 are skipped. Per-area is shown too.
+     than a small one; areas with total 0 are skipped. Overlapping areas are possible
+     (the scorer's `coverage_grid` handles overlap) and the message carries no overlap
+     area, so a cell inside two areas is counted twice in the pool, and each area is
+     judged against its own standard; the pooled tile labels itself "sum of areas" and
+     the README states both caveats. Per-area is shown too.
    - Combined score = `w_spec * pct_to_spec + w_covered_below * (pct_covered -
      pct_to_spec)`, as a percent of the area (defaults 1.0 and 0.5, per the issue:
      to-spec counts fully, covered-below-spec half). Weights are validated to finite,
      0..1, else the default; applied to the pooled and the per-area numbers alike.
-   - Staleness: `age = now_wall - received_wall`; state `FRESH` / `STALE` (age >
-     `stale_timeout`, default 5 s; 0 disables) / `NEVER`. Receipt time, not
-     `header.stamp`, because the stamp is assessment time on whatever clock the scorer
-     runs (sim time in the demo) and a wall-clock comparison against it would show
-     false staleness; the detail view still prints the stamp as "last assessment" in
-     the message's own time. Assumes the scorer republishes each pass (it does, every
-     `assessment_period`, default 1 s); a note in the README says a scorer that only
-     publishes on change would read as stale.
+   - Staleness ("time since the last assessment arrived"): `age = now_wall - received_wall`;
+     state `FRESH` / `AGING` (age > `stale_timeout`, default 60 s; 0 disables) / `NEVER`.
+     Receipt time, not `header.stamp`, because the stamp is assessment time on whatever
+     clock the scorer runs (sim time in the demo); the detail view still prints the stamp
+     as "last assessment" in the message's own time. **The scorer publishes only when a
+     grid or the water surface changed (`coverage_assessment_node.hpp` `assessAndPublish`
+     is gated on `grids_changed_ || force_assessment_ || surface_changed`; the last
+     assessment otherwise "stays published"), so a quiet interval is normal when boats
+     are stopped or the survey is done.** The indicator therefore reads "no new
+     assessment for 75 s" (amber, number kept visible), never "scorer dead", and the
+     README says that silence cannot distinguish an idle survey from a dead scorer
+     without a heartbeat (open question). Window: a 60 s default is a guess to tune on
+     the water.
    - `CoverageConfig` dataclass with YAML round-trip (`to_yaml` / `from_yaml`, unknown
      keys ignored, bad values fall back to defaults): `topic` (default
      `coverage_assessment`), `view` (`glance` | `detail`), `selected_areas` (list of
      ids; empty = all), `font_scale` (0.5..4.0, default 1.0), `show_combined` (bool,
-     default false), `weight_spec`, `weight_covered`, `stale_timeout`, `drop_stale_after`
-     (see 3).
+     default false), `weight_spec`, `weight_covered`, `stale_timeout`.
+
 2. **`coverage_widget.py`** — `QWidget` owning the subscription. Subscribes with
    `QoSProfile(reliability=RELIABLE, durability=TRANSIENT_LOCAL, history=KEEP_LAST,
    depth=100)` (the AGENTS.md "sensor streams are best_effort" note does not apply:
@@ -79,9 +88,8 @@ label "Survey Coverage". Modules:
      "to standard %"), each font-scaled by `font_scale` and by widget size (readable
      across a room); with more than one selected area, one tile per area plus a pooled
      "All areas" tile first (when more than one area is shown). The combined score is a
-     third big number when `show_combined`. A stale tile greys out and shows "STALE
-     12 s" instead of hiding the last number, so a dead scorer is never mistaken for a
-     steady score. A `None` ratio renders "--".
+     third big number when `show_combined`. An aging tile dims and shows "no update 75 s" instead of hiding the last number, so an old number is never mistaken for a live one.
+     A `None` ratio renders "--".
    - **Detail view** — per area: name/id, standard in force (`name`, a, b), cell size
      and cell counts (total / covered / meeting), the two percentages, the combined
      score if enabled, last assessment stamp, age since receipt with the staleness
@@ -121,7 +129,7 @@ regresses):
 - `test_store.py`: replay of 100 oldest-first repeats converges to the newest per
   `area.id`; an out-of-order older stamp is dropped; equal stamp last-wins; forget and
   clear; two areas coexisting; a source list that changes shape between messages.
-- `test_staleness.py`: fresh, stale at the boundary (not stale at exactly the timeout,
+- `test_staleness.py`: fresh, aging past the boundary (not aging at exactly the timeout,
   as in `rqt_boat_state`), disabled timeout, never-received; uses an injected clock, and
   a message whose `header.stamp` is hours off wall clock is still FRESH (receipt-time
   rule).
@@ -155,7 +163,7 @@ regresses):
 | Test what breaks | Tests target replay ordering, divide-by-zero, invariant violations, stale data and QoS, the failure modes that matter on the water |
 | Only what's needed | Python, no custom painting library; combined score, forget action and standalone are in the issue or needed for the latched topic |
 | A change includes its consequences | README for package and repo list in the same PR |
-| Human control and transparency | Stale tiles say STALE rather than freezing; clamped data is flagged; weights are visible settings |
+| Human control and transparency | Aging tiles show the time since the last assessment rather than looking live; clamped data is flagged; weights are visible settings |
 | Workspace vs. project separation | Nothing project-specific in the workspace repo; no BizzyBoat names in the package |
 | Improve incrementally | One package, one PR |
 
@@ -186,7 +194,7 @@ regresses):
 - Global score: pooled area-weighted (planned) or mean of per-area percentages? Pooled is proposed because per-area means over-weight tiny areas.
 - Combined score definition: planned as `w_spec*to_spec + w_covered*(covered - to_spec)` with 1.0 / 0.5; confirm that scale (percent of area, 0-100) is what the scoreboard wants.
 - Default view: glance for the scoreboard, or detail? Planned default glance.
-- Stale timeout default 5 s (scorer period default 1 s): acceptable?
+- Aging default 60 s because the scorer publishes only on change. Would a scorer heartbeat (periodic republish or a status topic) be wanted so silence can mean "dead"? That is a cube_bathymetry change, not this PR.
 - Package name `rqt_coverage` vs `rqt_survey_coverage`: planned the shorter name.
 - Should the plugin offer a "Reset scorer" button (lifecycle calls)? Planned NO: out of scope, README points at `reset_cube_nodes.sh`.
 
