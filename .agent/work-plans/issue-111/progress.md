@@ -53,3 +53,33 @@ Independence uncertain: this review ran in the same context that authored the pl
 - [x] (must-fix, folded) Pooled score double-counts cells in overlapping areas and mixes standards; now stated in the plan and labelled "sum of areas" in the UI — `plan.md` Approach 1
 - [ ] (suggestion) Python lint (flake8/pep257) runs inside colcon test per CI; keep modules docstring-complete — `plan.md` Approach
 - [ ] (suggestion) Per-area selection by id when areas have no friendly name: show `area.id` as the title fallback — `plan.md` Approach 2
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-10-14 12:53 -04:00
+**By**: Claude Code Agent (Claude Sonnet 5.5)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-111 at `9e14656`
+**Mode**: pre-push
+**Depth**: Deep (reason: 21 files, +2110 lines, new package)
+**Must-fix**: 8 | **Suggestions**: 6
+**Round**: 1 | **Ship**: continue — several correctness and stale-data must-fixes, one a layout defect
+
+Specialists: static analysis (ament_flake8/pep257: style only, repo does not enforce), 2 Claude adversarial passes (Lens A, Lens B), cross-model gemini + codex (both ran). Cross-model findings corroborated Claude Lens A and B on items 1, 2, 4.
+
+### Findings
+- [ ] (must-fix) `AreaScore.cells` raises ZeroDivisionError/OverflowError for extreme cell_size and the detail redraw repeats it every second (Lens B, gemini, codex) — `score_model.py:115`
+- [ ] (must-fix) Topic change keeps the old topic's areas on screen as live data (Lens A, Lens B, codex) — `coverage_widget.py:260`
+- [ ] (must-fix) A failing `create_subscription` leaves the panel looking live and a re-apply is skipped (Lens B, codex) — `coverage_widget.py:259`
+- [ ] (must-fix) Pooled glance tile and detail heading take their status from the newest area, hiding a stale area (Lens A, Lens B, gemini) — `coverage_widget.py:388`
+- [ ] (must-fix) Hidden combined column keeps a third of the row (gemini) — `coverage_widget.py:100`
+- [ ] (must-fix) Source covered clamped against area total, not against the assessment's covered as the message contract says (gemini) — `score_model.py:141`
+- [ ] (must-fix) Stamp comparison with a 2 s replay window freezes or overwrites with stale data in both directions (gemini) — `score_model.py:200`
+- [ ] (must-fix) A rendering exception escapes a Qt slot (Lens B) — `coverage_widget.py:469`
+- [ ] (suggestion) Detail setHtml resets the scroll position every second (gemini) — `coverage_widget.py:458` (to verify)
+- [ ] (suggestion) Late joiner's latched assessment shows as freshly updated (Lens A) — `coverage_widget.py:316`
+- [ ] (suggestion) Pooled title silent about selected areas still waiting (Lens A, Lens B) — `coverage_widget.py:363`
+- [ ] (suggestion) QLabel rich-text detection mangles ids with markup; menu text mnemonic (Lens A, Lens B) — `coverage_widget.py:91`
+- [ ] (suggestion) Per-message full redraw during a 100-message replay (Lens B) — `coverage_widget.py:428`
+- [ ] (suggestion) Standalone: unreadable --config not reported, ros_args without program name, message class not re-imported after marine_interfaces is built (Lens B, gemini) — `coverage_standalone.py:79`
