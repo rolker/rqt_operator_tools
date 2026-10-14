@@ -17,6 +17,7 @@ from python_qt_binding.QtCore import Qt, QTimer, Signal
 from python_qt_binding.QtGui import QColor, QFont, QPalette
 from python_qt_binding.QtWidgets import (
     QFrame,
+    QScrollArea,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -27,6 +28,10 @@ from python_qt_binding.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+try:
+    from rclpy.event_handler import SubscriptionEventCallbacks
+except ImportError:  # older distros
+    from rclpy.qos_event import SubscriptionEventCallbacks
 from rclpy.qos import (
     DurabilityPolicy,
     HistoryPolicy,
@@ -59,6 +64,7 @@ _COVERED = '#5ab0ff'
 _SPEC = '#5ed68a'
 _COMBINED = '#f0c050'
 _AMBER = '#ffb000'
+_MIN_TILE_HEIGHT = 110   # px; below this the tiles scroll instead of shrinking
 
 # The scorer publishes reliable + transient_local with a fixed history of 100
 # (see the coverage_assessment README).  A volatile subscription would never
@@ -120,7 +126,7 @@ class GlanceTile(QFrame):
         col.setContentsMargins(0, 0, 0, 0)
         value = QLabel('--')
         value.setAlignment(Qt.AlignCenter)
-        value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+        value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         value.setProperty('color', color)
         cap = QLabel(caption)
         cap.setAlignment(Qt.AlignCenter)
@@ -172,12 +178,14 @@ class CoverageWidget(QWidget):
 
     # (subscription generation, message): ROS thread -> Qt thread hand-off.
     _msg_received = Signal(int, object)
+    # (subscription generation): the publisher's QoS does not match ours.
+    _qos_incompatible = Signal(int)
 
-    def __init__(self, node, parent=None, clock=time.monotonic):
+    def __init__(self, node, parent=None, clock=time.monotonic, config=None):
         super().__init__(parent)
         self._node = node
         self._clock = clock
-        self._config = CoverageConfig()
+        self._config = config.normalized() if config else CoverageConfig()
         self._store = Store()
         self._subscription = None
         self._generation = 0
@@ -195,6 +203,7 @@ class CoverageWidget(QWidget):
 
         self._build_ui()
         self._msg_received.connect(self._handle_message)
+        self._qos_incompatible.connect(self._handle_qos_incompatible)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
@@ -227,15 +236,22 @@ class CoverageWidget(QWidget):
         bar.addWidget(self._areas_button)
         bar.addStretch(1)
         self._notice = QLabel()
+        self._notice.setTextFormat(Qt.PlainText)
         self._notice.setStyleSheet(f'color: {_AMBER};')
         bar.addWidget(self._notice)
         layout.addLayout(bar)
 
+        # Scrolls when there are more areas than fit at a readable tile height.
+        self._glance_scroll = QScrollArea()
+        self._glance_scroll.setWidgetResizable(True)
+        self._glance_scroll.setFrameShape(QFrame.NoFrame)
+        self._glance_scroll.setStyleSheet('background: transparent;')
         self._glance_panel = QWidget()
         self._glance_layout = QVBoxLayout(self._glance_panel)
         self._glance_layout.setContentsMargins(0, 0, 0, 0)
         self._glance_layout.setSpacing(4)
-        layout.addWidget(self._glance_panel, 1)
+        self._glance_scroll.setWidget(self._glance_panel)
+        layout.addWidget(self._glance_scroll, 1)
 
         self._detail = QTextBrowser()
         self._detail.setStyleSheet(
@@ -318,7 +334,10 @@ class CoverageWidget(QWidget):
             self._subscription = self._node.create_subscription(
                 self._msg_class, self._config.topic,
                 lambda msg, g=generation: self._msg_received.emit(g, msg),
-                ASSESSMENT_QOS)
+                ASSESSMENT_QOS,
+                event_callbacks=SubscriptionEventCallbacks(
+                    incompatible_qos=lambda _event, g=generation:
+                    self._qos_incompatible.emit(g)))
         except Exception as exc:  # e.g. InvalidTopicNameException
             self._subscription = None
             self._subscribe_error = f'cannot subscribe to {self._config.topic}: {exc}'
@@ -334,9 +353,19 @@ class CoverageWidget(QWidget):
 
     # -- Qt-thread message handling ---------------------------------------------
 
+    def _handle_qos_incompatible(self, generation):
+        if generation != self._generation:
+            return
+        self._subscribe_error = (
+            f'QoS mismatch: a publisher on {self._config.topic} does not offer '
+            'reliable + transient_local')
+        self._node.get_logger().error(self._subscribe_error)
+        self._schedule_refresh()
+
     def _handle_message(self, generation, msg):
         if generation != self._generation:
             return
+        self._subscribe_error = ''   # a message arrived: the QoS matched
         try:
             score = AreaScore.from_msg(msg)
         except Exception as exc:  # a malformed message must not kill the panel
@@ -416,7 +445,7 @@ class CoverageWidget(QWidget):
 
     def _refresh_unguarded(self):
         glance = self._config.view == VIEW_GLANCE
-        self._glance_panel.setVisible(glance)
+        self._glance_scroll.setVisible(glance)
         self._detail.setVisible(not glance)
         self._view_button.setText('Detail' if glance else 'Glance')
         entries = self._visible()
@@ -472,6 +501,7 @@ class CoverageWidget(QWidget):
         self._tiles = []
         for _ in range(count):
             tile = GlanceTile()
+            tile.setMinimumHeight(_MIN_TILE_HEIGHT)
             self._glance_layout.addWidget(tile, 1)
             self._tiles.append(tile)
 
@@ -479,9 +509,10 @@ class CoverageWidget(QWidget):
         """Size the numbers to the space available, times the font scale."""
         if not self._tiles:
             return
-        width = max(self._glance_panel.width(), 1)
-        height = max(self._glance_panel.height(), 1)
-        tile_h = height / len(self._tiles)
+        viewport = self._glance_scroll.viewport()
+        width = max(viewport.width(), 1)
+        height = max(viewport.height(), 1)
+        tile_h = max(height / len(self._tiles), _MIN_TILE_HEIGHT)
         columns = 3 if self._config.show_combined else 2
         big = min(tile_h * 0.45, width / (columns * 5.0))
         scale = self._config.font_scale

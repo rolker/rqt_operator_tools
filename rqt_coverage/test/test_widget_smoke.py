@@ -42,7 +42,9 @@ class StubNode:
         self.destroyed = []
         self.logger = StubLogger()
 
-    def create_subscription(self, msg_class, topic, callback, qos):
+    def create_subscription(self, msg_class, topic, callback, qos,
+                            event_callbacks=None):
+        self.event_callbacks = event_callbacks
         if topic in self.fail_topics:
             raise ValueError(f'invalid topic name: {topic}')
         sub = (msg_class, topic, callback, qos)
@@ -338,3 +340,56 @@ def test_detail_scroll_position_survives_the_refresh_timer(env):
     clock.now += 3          # the age text changes, so the HTML changes
     widget._refresh()
     assert abs(bar.value() - wanted) <= 2
+
+
+def test_qos_mismatch_is_reported_and_cleared_by_data(env):
+    widget, node, _clock = env
+    generation = widget._generation
+    widget._qos_incompatible.emit(generation)
+    QApplication.processEvents()
+    assert 'QoS mismatch' in widget._notice.text()
+    assert node.logger.errors
+    feed(widget, node, assessment('a'))
+    assert widget._notice.text() == ''
+
+
+def test_qos_mismatch_from_a_torn_down_subscription_is_ignored(env):
+    widget, node, _clock = env
+    old = widget._generation
+    widget.load_config(CoverageConfig(topic='/other'))
+    widget._qos_incompatible.emit(old)
+    QApplication.processEvents()
+    assert 'QoS mismatch' not in widget._notice.text()
+
+
+def test_subscription_registers_an_incompatible_qos_callback(env):
+    _widget, node, _clock = env
+    assert node.event_callbacks is not None
+    assert node.event_callbacks.incompatible_qos is not None
+
+
+def test_notice_is_plain_text(env):
+    widget, _node, _clock = env
+    assert widget._notice.textFormat() == Qt.PlainText
+
+
+def test_many_areas_scroll_instead_of_squeezing_or_growing_the_window(env):
+    widget, node, _clock = env
+    for i in range(20):
+        feed(widget, node, assessment(f'area{i:02d}'))
+    widget.show()
+    QApplication.processEvents()
+    scroll = widget._glance_scroll
+    assert widget.height() < 800                       # the window did not balloon
+    assert scroll.verticalScrollBar().maximum() > 0     # the rest is reachable
+    assert all(t.minimumHeight() >= 100 for t in widget._tiles)
+
+
+def test_duplicate_selected_areas_are_shown_and_counted_once(env):
+    widget, node, _clock = env
+    feed(widget, node, assessment('a', total=100, covered=100, meeting=100))
+    feed(widget, node, assessment('b', total=100, covered=0, meeting=0))
+    widget.load_config(CoverageConfig(selected_areas=['a', 'a', 'b']))
+    rows = texts(widget)
+    assert [r[0] for r in rows] == ['All areas (sum of 2)', 'a', 'b']
+    assert rows[0][1] == '50.0 %'
