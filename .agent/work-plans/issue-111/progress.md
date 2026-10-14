@@ -148,3 +148,30 @@ Fresh Claude Lens A and Lens B plus gemini and codex re-read the diff cold. Clau
 - [x] notice label plain text; QoS mismatch reported — `coverage_widget.py:229`
 - [x] standalone drains ready callbacks and starts with its config; aging box keeps a decimal
 - [x] source meeting above the assessment's — (deferred: dismissed, legal per CoverageContribution.msg)
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-10-14 13:11 -04:00
+**By**: Claude Code Agent (Claude Sonnet 5.5)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-111 at `2628f42`
+**Mode**: pre-push
+**Depth**: Deep (reason: new package, 2400+ lines)
+**Must-fix**: 3 | **Suggestions**: 8
+**Round**: 3 | **Ship**: recommended — three mechanical must-fixes, not rising; fixed in the same pass
+
+Fresh Lens A and Lens B plus gemini and codex re-read the branch with attention on the round-2 commits and the executor thread. Claude found no must-fix. Two gemini must-fixes dismissed after testing (button/action slots with the checked argument work in PyQt5; test added).
+
+### Findings
+- [ ] (must-fix) A compatible publisher's data clears the QoS-mismatch notice for an incompatible one (codex) — `coverage_widget.py:368`
+- [ ] (must-fix) Huge integers in settings raise OverflowError from normalisation; the standalone exits (codex) — `score_model.py:357`
+- [ ] (must-fix) A long notice widens the whole panel (codex) — `coverage_widget.py:238`
+- [ ] (suggestion) show_combined: "false" becomes true (codex) — `score_model.py:379`
+- [ ] (suggestion) Standalone destroys the subscription while the executor still spins; no try/finally (gemini, Lens A, Lens B) — `coverage_standalone.py:63`
+- [ ] (suggestion) Glance numbers not rescaled when only the viewport resizes (Lens A) — `coverage_widget.py:477`
+- [ ] (suggestion) Aggregate unique-credit flag reads "clamped" though values are left as sent (Lens A) — `coverage_widget.py:403`
+- [ ] (suggestion) Unreadable messages log every time and show nothing (Lens B) — `coverage_widget.py:367`
+- [ ] (suggestion) Real-rclpy tests lack QoS-mismatch and topic-switch cases (Lens B) — `test_ros_integration.py:33`
+- [ ] (suggestion) Rebuilt tiles stay visible until deferred deletion (gemini) — `coverage_widget.py:502`
+- [ ] (suggestion) clicked(bool) and triggered(bool) connected to no-argument slots would raise TypeError (gemini) — `coverage_widget.py:228` (dismissed: not reproduced)
