@@ -192,3 +192,19 @@ Fresh Lens A and Lens B plus gemini and codex re-read the branch with attention 
 - [x] standalone stops the executor first and tears down in a finally — `coverage_standalone.py:63`
 - [x] viewport rescale, status wording, unreadable-message notice and log throttle, hidden rebuilt tiles, real-rclpy tests
 - [x] button and action slot signatures — (deferred: dismissed, covered by a click test)
+
+## Local Review (Pre-Push)
+**Status**: complete
+**When**: 2026-10-14 13:17 -04:00
+**By**: Claude Code Agent (Claude Sonnet 5.5)
+**Verdict**: changes-requested
+
+**Branch**: feature/issue-111 at `73ae282`
+**Mode**: pre-push (reduced: round-3 fix commits a59f050..73ae282; codex plus one fresh Claude lens)
+**Depth**: Standard (reason: reduced scope by request)
+**Must-fix**: 1 | **Suggestions**: 1
+**Round**: 4 | **Ship**: recommended — the one must-fix is a two-line reset with a test; no further round without a request
+
+### Findings
+- [x] (must-fix) Unreadable-message state survives a topic change and hides the new topic's waiting notice (codex, Claude) — `coverage_widget.py:379`
+- [x] (suggestion) The viewport-rescale test passes with the event filter removed (Claude) — `test_widget_smoke.py:428`
