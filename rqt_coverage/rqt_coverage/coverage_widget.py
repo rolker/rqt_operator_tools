@@ -48,6 +48,7 @@ from .score_model import (
     format_pct,
     format_score,
     fraction,
+    oldest_received,
     pool,
 )
 
@@ -89,6 +90,7 @@ class GlanceTile(QFrame):
         layout.setSpacing(2)
 
         self.title_label = QLabel()
+        self.title_label.setTextFormat(Qt.PlainText)   # ids may contain '<'
         self.title_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.title_label)
 
@@ -96,13 +98,14 @@ class GlanceTile(QFrame):
         row.setSpacing(12)
         self.covered_value, covered_col = self._column('covered', _COVERED)
         self.spec_value, spec_col = self._column('to standard', _SPEC)
-        self.combined_value, self.combined_col = self._column('combined', _COMBINED)
-        row.addLayout(covered_col, 1)
-        row.addLayout(spec_col, 1)
-        row.addLayout(self.combined_col, 1)
+        self.combined_value, self._combined_col = self._column('combined', _COMBINED)
+        row.addWidget(covered_col, 1)
+        row.addWidget(spec_col, 1)
+        row.addWidget(self._combined_col, 1)
         layout.addLayout(row, 1)
 
         self.status_label = QLabel()
+        self.status_label.setTextFormat(Qt.PlainText)
         self.status_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.status_label)
 
@@ -110,7 +113,11 @@ class GlanceTile(QFrame):
         self._show_combined(False)
 
     def _column(self, caption, color):
-        col = QVBoxLayout()
+        # A widget, not a nested layout: a hidden widget gives up its share of
+        # the row, an empty nested layout keeps its stretch.
+        box = QWidget()
+        col = QVBoxLayout(box)
+        col.setContentsMargins(0, 0, 0, 0)
         value = QLabel('--')
         value.setAlignment(Qt.AlignCenter)
         value.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
@@ -121,11 +128,10 @@ class GlanceTile(QFrame):
         col.addWidget(value, 1)
         col.addWidget(cap)
         value._caption = cap
-        return value, col
+        return value, box
 
     def _show_combined(self, visible: bool):
-        self.combined_value.setVisible(visible)
-        self.combined_value._caption.setVisible(visible)
+        self._combined_col.setVisible(visible)
 
     def set_content(self, title, covered, spec, combined, status, status_color,
                     aging):
@@ -178,6 +184,9 @@ class CoverageWidget(QWidget):
         self._tiles: List[GlanceTile] = []
         self._tile_keys: Optional[tuple] = None
         self._msg_class = load_assessment_class()
+        self._subscribe_error = ''
+        self._display_error = ''
+        self._refresh_pending = False
 
         self.setAutoFillBackground(True)
         palette = self.palette()
@@ -240,7 +249,8 @@ class CoverageWidget(QWidget):
             self._areas_menu.addAction('No areas received yet').setEnabled(False)
             return
         for area_id in ids:
-            action = self._areas_menu.addAction(f'Forget area {area_id}')
+            action = self._areas_menu.addAction(
+                f'Forget area {area_id}'.replace('&', '&&'))
             action.triggered.connect(
                 lambda _checked=False, a=area_id: self.forget_area(a))
         self._areas_menu.addSeparator()
@@ -257,8 +267,13 @@ class CoverageWidget(QWidget):
         new = config.normalized()
         topic_changed = new.topic != self._config.topic
         self._config = new
-        if topic_changed:
+        # Retry also when the last attempt failed, so applying the settings
+        # again recovers from a bad topic name.
+        if topic_changed or (self._subscription is None and self._msg_class):
             self._teardown_subscription()
+            if topic_changed:
+                # Areas of the old topic must not sit beside the new topic's.
+                self._store.clear()
             self._setup_subscription()
         self._tile_keys = None
         self._refresh()
@@ -298,10 +313,16 @@ class CoverageWidget(QWidget):
                 'build marine_interfaces to use the coverage view')
             return
         generation = self._generation
-        self._subscription = self._node.create_subscription(
-            self._msg_class, self._config.topic,
-            lambda msg, g=generation: self._msg_received.emit(g, msg),
-            ASSESSMENT_QOS)
+        self._subscribe_error = ''
+        try:
+            self._subscription = self._node.create_subscription(
+                self._msg_class, self._config.topic,
+                lambda msg, g=generation: self._msg_received.emit(g, msg),
+                ASSESSMENT_QOS)
+        except Exception as exc:  # e.g. InvalidTopicNameException
+            self._subscription = None
+            self._subscribe_error = f'cannot subscribe to {self._config.topic}: {exc}'
+            self._node.get_logger().error(self._subscribe_error)
 
     def _teardown_subscription(self):
         # Bumping the generation drops messages already queued for the Qt
@@ -322,10 +343,16 @@ class CoverageWidget(QWidget):
             self._node.get_logger().warning(
                 f'Ignoring unreadable CoverageAssessment: {exc!r}')
             return
-        if self._store.update(score, self._clock()):
-            self._refresh()
+        self._store.update(score, self._clock())
+        self._schedule_refresh()
 
     # -- Rendering -------------------------------------------------------------
+
+    def _schedule_refresh(self):
+        """Redraw once per burst: a latched replay delivers up to 100 at once."""
+        if not self._refresh_pending:
+            self._refresh_pending = True
+            QTimer.singleShot(0, self._refresh)
 
     def _visible(self):
         """``[(area_id, StoredArea or None)]`` for the selected (else all) areas."""
@@ -342,11 +369,31 @@ class CoverageWidget(QWidget):
         if state == AGING:
             text, color, aging = f'no new assessment for {age}', _AMBER, True
         else:
-            text, color, aging = f'updated {age} ago', _DIM, False
+            text, color, aging = f'received {age} ago', _DIM, False
         if held.score.clamped:
             text += ' | scorer values inconsistent, clamped'
             color = _AMBER
         return text, color, aging
+
+    def _pooled_status(self, entries, now):
+        """Status of the roll-up: that of its oldest area, so one stale area shows."""
+        held = [h for _, h in entries if h is not None]
+        text, color, aging = self._status(oldest_received(held), now)
+        if any(h.score.clamped for h in held) and 'clamped' not in text:
+            text += ' | scorer values inconsistent, clamped'
+            color = _AMBER
+        waiting = len(entries) - len(held)
+        if waiting:
+            color = _AMBER
+        return text, color, aging
+
+    @staticmethod
+    def _pooled_title(pooled, entries, received):
+        title = f'All areas (sum of {pooled.count}'
+        waiting = len(entries) - len(received)
+        if waiting:
+            title += f', {waiting} waiting'
+        return title + ')'
 
     def _combined(self, covered, spec):
         if not self._config.show_combined:
@@ -355,13 +402,28 @@ class CoverageWidget(QWidget):
             covered, spec, self._config.weight_spec, self._config.weight_covered))
 
     def _refresh(self):
+        """Redraw; a rendering error is shown and logged, never raised."""
+        self._refresh_pending = False
+        try:
+            self._refresh_unguarded()
+            self._display_error = ''
+        except Exception as exc:  # a Qt slot must not raise
+            text = f'display error: {exc!r}'
+            if text != self._display_error:
+                self._node.get_logger().error(text)
+            self._display_error = text
+            self._notice.setText(text)
+
+    def _refresh_unguarded(self):
         glance = self._config.view == VIEW_GLANCE
         self._glance_panel.setVisible(glance)
         self._detail.setVisible(not glance)
         self._view_button.setText('Detail' if glance else 'Glance')
         entries = self._visible()
         received = [h.score for _, h in entries if h is not None]
-        if self._msg_class is None:
+        if self._subscribe_error:
+            self._notice.setText(self._subscribe_error)
+        elif self._msg_class is None:
             self._notice.setText('marine_interfaces not available')
         elif not entries:
             self._notice.setText(f'waiting for {self._config.topic}')
@@ -377,11 +439,9 @@ class CoverageWidget(QWidget):
         rows = []
         if len(received) > 1:
             pooled = pool(received)
-            latest = max((h for _, h in entries if h is not None),
-                         key=lambda h: h.received)
-            text, color, aging = self._status(latest, now)
+            text, color, aging = self._pooled_status(entries, now)
             rows.append((
-                f'All areas (sum of {pooled.count})',
+                self._pooled_title(pooled, entries, received),
                 format_pct(pooled.pct_covered), format_pct(pooled.pct_to_spec),
                 self._combined(pooled.pct_covered, pooled.pct_to_spec),
                 text, color, aging))
@@ -439,13 +499,16 @@ class CoverageWidget(QWidget):
         parts = [f'<body style="font-size:{int(14 * cfg.font_scale)}px">']
         if len(received) > 1:
             pooled = pool(received)
-            line = (f'<h3>All areas (sum of {pooled.count}; overlapping areas '
-                    f'count a shared cell twice)</h3>'
+            title = self._pooled_title(pooled, entries, received)
+            status, status_color, _aging = self._pooled_status(entries, now)
+            line = (f'<h3>{e(title)}; overlapping areas count a shared cell '
+                    f'twice</h3>'
                     f'<p>covered {format_pct(pooled.pct_covered)} &nbsp; '
                     f'to standard {format_pct(pooled.pct_to_spec)}')
             comb = self._combined(pooled.pct_covered, pooled.pct_to_spec)
             if comb is not None:
                 line += f' &nbsp; combined {comb}'
+            line += (f'<br><span style="color:{status_color}">{e(status)}</span>')
             parts.append(line + '</p>')
         for area_id, held in entries:
             if held is None:
