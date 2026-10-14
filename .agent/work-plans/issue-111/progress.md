@@ -20,3 +20,20 @@ issue: 111
 - [ ] Watch: areas never disappear from a latched topic; after a scorer reset a removed area lingers. Plan needs a clear/forget control and a per-area staleness mark.
 - [ ] Watch: sources order is stable per message but a source set can change between runs; key on source string, not index.
 - [ ] Recommendation: no repo PRINCIPLES.md or .agents/README.md exists; plan should add the plugin to the root README and note the gap, not fill it here.
+
+## Plan Authored
+**Status**: complete
+**When**: 2026-10-14 12:28 -04:00
+**By**: Claude Code Agent (Claude Sonnet 5.5)
+
+**Plan**: `.agent/work-plans/issue-111/plan.md` at `ad878d2`
+**Branch**: feature/issue-111 at `ad878d2`
+**Phases**: single
+
+### Open questions
+- [ ] Global score: pooled area-weighted vs mean of per-area percentages
+- [ ] Combined score scale and default weights (1.0 / 0.5)
+- [ ] Default view (glance planned)
+- [ ] Stale timeout default 5 s
+- [ ] Package name rqt_coverage
+- [ ] Reset-scorer button (planned no)
