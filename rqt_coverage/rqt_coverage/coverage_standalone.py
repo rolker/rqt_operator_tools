@@ -3,22 +3,16 @@
 import argparse
 import signal
 import sys
-import time
+import threading
 
 import rclpy
 import yaml
-from python_qt_binding.QtCore import Qt, QTimer
+from rclpy.executors import SingleThreadedExecutor
+from python_qt_binding.QtCore import Qt
 from python_qt_binding.QtWidgets import QApplication
 
 from .coverage_widget import CoverageWidget
 from .score_model import CoverageConfig, VIEWS
-
-
-def _drain(node, budget_s=0.003):
-    """Run ready callbacks for up to ``budget_s``; one spin_once runs only one."""
-    deadline = time.monotonic() + budget_s
-    while time.monotonic() < deadline:
-        rclpy.spin_once(node, timeout_sec=0)
 
 
 def main(argv=None):
@@ -57,15 +51,19 @@ def main(argv=None):
     widget.resize(900, 360)
     widget.show()
 
-    # Spin ROS from the Qt thread so callbacks and widgets share one thread.
-    spin_timer = QTimer()
-    spin_timer.timeout.connect(lambda: _drain(node))
-    spin_timer.start(33)
+    # Spin ROS on its own thread, as rqt_gui_py does.  The subscription
+    # callback only emits a queued Qt signal, so widgets stay on the Qt thread.
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    spin_thread = threading.Thread(target=executor.spin, name='survey_coverage_spin',
+                                   daemon=True)
+    spin_thread.start()
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     exit_code = app.exec_()
-    spin_timer.stop()
     widget.shutdown()
+    executor.shutdown()
+    spin_thread.join(timeout=2.0)
     node.destroy_node()
     rclpy.shutdown()
     sys.exit(exit_code)
