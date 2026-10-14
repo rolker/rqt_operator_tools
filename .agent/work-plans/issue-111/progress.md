@@ -37,3 +37,19 @@ issue: 111
 - [ ] Aging window default 60 s; scorer heartbeat wanted? (scorer publishes only on change)
 - [ ] Package name rqt_coverage
 - [ ] Reset-scorer button (planned no)
+
+## Plan Review
+**Status**: complete
+**When**: 2026-10-14 12:28 -04:00
+**By**: Claude Code Agent (Claude Sonnet 5.5) (in-context — author self-review)
+
+**Plan**: `.agent/work-plans/issue-111/plan.md` at `6d2d69f`
+Independence uncertain: this review ran in the same context that authored the plan, and no dispatch header was present.
+**PR**: PR-less
+**Verdict**: approve-with-suggestions (must-fix items folded into the plan at `6d2d69f`)
+
+### Findings
+- [x] (must-fix, folded) Staleness assumed the scorer republishes every period; `assessAndPublish` is gated on grids/surface change, so a stopped boat or finished survey would read as a dead scorer. Indicator redefined as "no new assessment for N s", default 60 s, README caveat, heartbeat raised as an open question — `plan.md` Approach 1
+- [x] (must-fix, folded) Pooled score double-counts cells in overlapping areas and mixes standards; now stated in the plan and labelled "sum of areas" in the UI — `plan.md` Approach 1
+- [ ] (suggestion) Python lint (flake8/pep257) runs inside colcon test per CI; keep modules docstring-complete — `plan.md` Approach
+- [ ] (suggestion) Per-area selection by id when areas have no friendly name: show `area.id` as the title fallback — `plan.md` Approach 2
