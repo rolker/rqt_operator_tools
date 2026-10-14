@@ -122,12 +122,12 @@ Specialists: static analysis (ament_flake8/pep257: style only, repo does not enf
 Fresh Claude Lens A and Lens B plus gemini and codex re-read the diff cold. Claude found no must-fix; codex found the three below. Two gemini must-fixes dismissed: source meeting above the assessment's is legal per CoverageContribution.msg, and Forget with an explicit area selection leaving a waiting tile is the selection working.
 
 ### Findings
-- [ ] (must-fix) Repeated ids in selected_areas are shown and counted twice in the roll-up (codex, gemini, Lens A) — `score_model.py:364`
-- [ ] (must-fix) Twenty areas force the glance panel past 3000 px with no scrolling (codex) — `coverage_widget.py:475`
-- [ ] (must-fix) Sum of sources' unique areas above the assessment's covered is not flagged (codex) — `score_model.py:144`
-- [ ] (suggestion) Notice label is rich text (gemini, Lens B) — `coverage_widget.py:229`
-- [ ] (suggestion) A QoS mismatch with the publisher looks like "waiting" (Lens B) — `coverage_widget.py:66`
-- [ ] (suggestion) Standalone spin_once handles one callback per 33 ms tick (Lens A, Lens B) — `coverage_standalone.py:55`
-- [ ] (suggestion) Standalone subscribes to the default topic before applying its config (gemini) — `coverage_standalone.py:45`
-- [ ] (suggestion) Aging spin box rounds to whole seconds (Lens A) — `config_dialog.py:73`
-- [ ] (suggestion) Source meeting above the assessment's flagged as inconsistent (gemini) — `score_model.py:143` (dismissed: legal per CoverageContribution.msg)
+- [x] (must-fix) Repeated ids in selected_areas are shown and counted twice in the roll-up (codex, gemini, Lens A) — `score_model.py:364`
+- [x] (must-fix) Twenty areas force the glance panel past 3000 px with no scrolling (codex) — `coverage_widget.py:475`
+- [x] (must-fix) Sum of sources' unique areas above the assessment's covered is not flagged (codex) — `score_model.py:144`
+- [x] (suggestion) Notice label is rich text (gemini, Lens B) — `coverage_widget.py:229`
+- [x] (suggestion) A QoS mismatch with the publisher looks like "waiting" (Lens B) — `coverage_widget.py:66`
+- [x] (suggestion) Standalone spin_once handles one callback per 33 ms tick (Lens A, Lens B) — `coverage_standalone.py:55`
+- [x] (suggestion) Standalone subscribes to the default topic before applying its config (gemini) — `coverage_standalone.py:45`
+- [x] (suggestion) Aging spin box rounds to whole seconds (Lens A) — `config_dialog.py:73`
+- [x] (suggestion) Source meeting above the assessment's flagged as inconsistent (gemini) — `score_model.py:143` (deferred: dismissed, legal per CoverageContribution.msg: one source can meet the standard over more cells than the union does)
