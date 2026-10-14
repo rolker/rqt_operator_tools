@@ -50,12 +50,15 @@ is 0 the percentages show `--`.
   back to the default.
 
 If the scorer breaks the message's invariant (`meeting <= covered <= total`, a source covering more than the assessment, unique credit summing to more than what is covered, or a
-non-finite or negative area), the plugin clamps the values and the status line says so
+non-finite or negative area), the plugin clamps the values (the unique-credit sum is flagged but left as sent) and the status line says `scorer values inconsistent`
 instead of showing a clean-looking number.
 
 With many areas the glance tiles keep a readable minimum height and the panel scrolls.
 If a publisher on the topic does not offer reliable + transient_local, the notice line says
-`QoS mismatch` (otherwise that looks the same as "waiting for the scorer"). Repeated ids in
+`QoS mismatch` and keeps saying it until the subscription is recreated (a topic change or
+restart), because the middleware reports the mismatch once and data from a compatible
+publisher does not make the other one go away; otherwise that looks the same as "waiting
+for the scorer". Repeated ids in
 `selected_areas` are dropped.
 
 ## "No new assessment for N s"
