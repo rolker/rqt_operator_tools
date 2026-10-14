@@ -35,7 +35,7 @@ def _clean_area(value) -> Tuple[float, bool]:
     """Return ``(m^2 value, changed)``; non-finite or negative becomes 0."""
     try:
         v = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0.0, True
     if not math.isfinite(v) or v < 0.0:
         return 0.0, True
@@ -152,7 +152,7 @@ class AreaScore:
 
         try:
             cell_size = float(msg.cell_size)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             cell_size = float('nan')
 
         std = msg.area.standard
@@ -271,7 +271,7 @@ def valid_weight(value, default: float) -> float:
     """Return the weight if finite and in 0..1, else ``default``."""
     try:
         w = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     if not math.isfinite(w) or w < 0.0 or w > 1.0:
         return default
@@ -354,14 +354,14 @@ class CoverageConfig:
         view = self.view if self.view in VIEWS else defaults.view
         try:
             scale = float(self.font_scale)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             scale = defaults.font_scale
         if not math.isfinite(scale):
             scale = defaults.font_scale
         scale = min(max(scale, FONT_SCALE_MIN), FONT_SCALE_MAX)
         try:
             timeout = float(self.aging_timeout)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             timeout = defaults.aging_timeout
         if not math.isfinite(timeout) or timeout < 0.0:
             timeout = defaults.aging_timeout
@@ -376,7 +376,8 @@ class CoverageConfig:
             view=view,
             selected_areas=areas,
             font_scale=scale,
-            show_combined=bool(self.show_combined),
+            show_combined=(self.show_combined if isinstance(self.show_combined, bool)
+                           else defaults.show_combined),
             weight_spec=valid_weight(self.weight_spec, DEFAULT_WEIGHT_SPEC),
             weight_covered=valid_weight(self.weight_covered, DEFAULT_WEIGHT_COVERED),
             aging_timeout=timeout,

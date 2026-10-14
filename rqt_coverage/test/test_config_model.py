@@ -56,3 +56,16 @@ def test_non_numeric_font_scale():
 def test_selected_areas_are_deduplicated_keeping_order():
     c = CoverageConfig.from_yaml('selected_areas: [b, a, b, a, c]')
     assert c.selected_areas == ['b', 'a', 'c']
+
+
+@pytest.mark.parametrize('key', ['font_scale', 'aging_timeout', 'weight_spec',
+                                 'weight_covered'])
+def test_huge_integers_fall_back_instead_of_raising(key):
+    c = CoverageConfig.from_yaml(f'{key}: 1' + '0' * 400)
+    assert getattr(c, key) == getattr(CoverageConfig(), key)
+
+
+def test_show_combined_must_be_a_real_boolean():
+    assert CoverageConfig.from_yaml('show_combined: "false"').show_combined is False
+    assert CoverageConfig.from_yaml('show_combined: true').show_combined is True
+    assert CoverageConfig.from_yaml('show_combined: 1').show_combined is False
