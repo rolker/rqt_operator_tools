@@ -1,0 +1,17 @@
+<library path="rqt_coverage">
+  <class name="rqt_coverage/CoveragePlugin"
+         type="rqt_coverage.coverage_plugin.CoveragePlugin"
+         base_class_type="rqt_gui_py::Plugin">
+    <description>
+      Survey-area coverage and quality scoreboard fed by the coverage_assessment node.
+    </description>
+    <qtgui>
+      <group>
+        <label>Robot Tools</label>
+      </group>
+      <label>Survey Coverage</label>
+      <icon type="theme">applications-graphics</icon>
+      <statustip>Percent of each survey area covered, and covered to the survey standard, with per-source credit.</statustip>
+    </qtgui>
+  </class>
+</library>
