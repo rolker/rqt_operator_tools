@@ -262,7 +262,7 @@ DEFAULT_WEIGHT_COVERED = 0.5
 
 
 def valid_weight(value, default: float) -> float:
-    """A finite weight in 0..1, else ``default``."""
+    """Return the weight if finite and in 0..1, else ``default``."""
     try:
         w = float(value)
     except (TypeError, ValueError):
@@ -276,7 +276,7 @@ def combined_score(pct_covered: Optional[float], pct_to_spec: Optional[float],
                    weight_spec: float = DEFAULT_WEIGHT_SPEC,
                    weight_covered: float = DEFAULT_WEIGHT_COVERED
                    ) -> Optional[float]:
-    """Combined score in percent of the area, or ``None`` if a ratio is missing.
+    """Return the combined score in percent of the area, or ``None``.
 
     Cells that meet the standard count ``weight_spec``; cells covered but below
     the standard count ``weight_covered``.
