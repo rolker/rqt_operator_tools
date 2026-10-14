@@ -138,8 +138,8 @@ regresses):
 - `test_widget_smoke.py` (offscreen Qt, same pattern as `rqt_annunciator`'s
   `test_resize_invariants.py`, `QT_QPA_PLATFORM=offscreen` already set in CI): build the
   widget against a minimal stub node, feed fabricated messages through `_handle_message`
-  (no ROS graph), check both views show the expected strings for 1 and 3 areas, stale
-  styling appears after the timer tick with an injected clock, and the stub node records
+  (no ROS graph), check both views show the expected strings for 1 and 3 areas, the aging
+  indicator appears after the timer tick with an injected clock, and the stub node records
   a subscription with exactly the reliable / transient_local / depth-100 QoS.
 - Messages are fabricated with the real `marine_interfaces` types where importable,
   else duck-typed namespaces, so the logic tests do not need the message package built.
@@ -191,12 +191,14 @@ regresses):
 
 ## Open Questions
 
-- Global score: pooled area-weighted (planned) or mean of per-area percentages? Pooled is proposed because per-area means over-weight tiny areas.
-- Combined score definition: planned as `w_spec*to_spec + w_covered*(covered - to_spec)` with 1.0 / 0.5; confirm that scale (percent of area, 0-100) is what the scoreboard wants.
-- Default view: glance for the scoreboard, or detail? Planned default glance.
-- Aging default 60 s because the scorer publishes only on change. Would a scorer heartbeat (periodic republish or a status topic) be wanted so silence can mean "dead"? That is a cube_bathymetry change, not this PR.
-- Package name `rqt_coverage` vs `rqt_survey_coverage`: planned the shorter name.
-- Should the plugin offer a "Reset scorer" button (lifecycle calls)? Planned NO: out of scope, README points at `reset_cube_nodes.sh`.
+Resolved by the owner (all as planned): global score is pooled, area-weighted; combined
+score 1.0 (to spec) and 0.5 (covered below spec), percent of area; default view glance;
+aging window default 60 s; package name `rqt_coverage`; no reset button (README points at
+`reset_cube_nodes.sh`). Scorer heartbeat is filed separately as
+https://github.com/rolker/cube_bathymetry/issues/169 and is not part of this PR.
+
+Review suggestions adopted: modules and public classes carry docstrings (flake8/pep257
+runs inside `colcon test`); a tile or row with no area name titles itself with `area.id`.
 
 ## Estimated Scope
 
