@@ -44,28 +44,33 @@ def main(argv=None):
     if args.topic:
         config.topic = args.topic
 
-    widget = CoverageWidget(node, config=config)
-    if args.always_on_top:
-        widget.setWindowFlags(widget.windowFlags() | Qt.WindowStaysOnTopHint)
-    widget.setWindowTitle('Survey Coverage')
-    widget.resize(900, 360)
-    widget.show()
-
     # Spin ROS on its own thread, as rqt_gui_py does.  The subscription
     # callback only emits a queued Qt signal, so widgets stay on the Qt thread.
     executor = SingleThreadedExecutor()
     executor.add_node(node)
     spin_thread = threading.Thread(target=executor.spin, name='survey_coverage_spin',
                                    daemon=True)
-    spin_thread.start()
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
-
-    exit_code = app.exec_()
-    widget.shutdown()
-    executor.shutdown()
-    spin_thread.join(timeout=2.0)
-    node.destroy_node()
-    rclpy.shutdown()
+    widget = None
+    exit_code = 1
+    try:
+        widget = CoverageWidget(node, config=config)
+        if args.always_on_top:
+            widget.setWindowFlags(widget.windowFlags() | Qt.WindowStaysOnTopHint)
+        widget.setWindowTitle('Survey Coverage')
+        widget.resize(900, 360)
+        widget.show()
+        spin_thread.start()
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        exit_code = app.exec_()
+    finally:
+        # Stop the executor before destroying the subscription it may be waiting on.
+        executor.shutdown()
+        if spin_thread.is_alive():
+            spin_thread.join(timeout=2.0)
+        if widget is not None:
+            widget.shutdown()
+        node.destroy_node()
+        rclpy.shutdown()
     sys.exit(exit_code)
 
 

@@ -83,3 +83,40 @@ def test_latched_assessment_reaches_a_late_joining_widget(ros):
         assert tile.spec_value.text() == '30.0 %'
     finally:
         widget.shutdown()
+
+
+def test_qos_mismatch_with_a_volatile_publisher_is_reported(ros):
+    app = QApplication.instance() or QApplication([])
+    assert app
+    qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
+                     durability=DurabilityPolicy.VOLATILE,
+                     history=HistoryPolicy.KEEP_LAST, depth=10)
+    ros.create_publisher(msgs.CoverageAssessment, 'coverage_test_mismatch', qos)
+    widget = CoverageWidget(ros, config=CoverageConfig(topic='coverage_test_mismatch'))
+    try:
+        assert wait_for(lambda: 'QoS mismatch' in widget._notice.text()), \
+            widget._notice.text()
+    finally:
+        widget.shutdown()
+
+
+def test_topic_switch_while_the_executor_spins(ros):
+    app = QApplication.instance() or QApplication([])
+    assert app
+    qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
+                     durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                     history=HistoryPolicy.KEEP_LAST, depth=100)
+    pub_a = ros.create_publisher(msgs.CoverageAssessment, 'coverage_test_a', qos)
+    pub_b = ros.create_publisher(msgs.CoverageAssessment, 'coverage_test_b', qos)
+    for pub, area in ((pub_a, 'from_a'), (pub_b, 'from_b')):
+        msg = msgs.CoverageAssessment()
+        msg.area.id = area
+        msg.area_total = 100.0
+        pub.publish(msg)
+    widget = CoverageWidget(ros, config=CoverageConfig(topic='coverage_test_a'))
+    try:
+        assert wait_for(lambda: widget.seen_area_ids() == ['from_a'])
+        widget.load_config(CoverageConfig(topic='coverage_test_b'))
+        assert wait_for(lambda: widget.seen_area_ids() == ['from_b'])
+    finally:
+        widget.shutdown()
