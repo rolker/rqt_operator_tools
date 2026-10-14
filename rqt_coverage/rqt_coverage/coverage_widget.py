@@ -337,6 +337,8 @@ class CoverageWidget(QWidget):
             return
         generation = self._generation
         self._subscribe_error = ''
+        self._unreadable = ''             # diagnostics belong to one subscription
+        self._last_unreadable_log = None
         try:
             self._subscription = self._node.create_subscription(
                 self._msg_class, self._config.topic,

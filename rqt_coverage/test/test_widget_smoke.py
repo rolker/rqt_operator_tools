@@ -12,6 +12,7 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
 from fake_msgs import assessment, source  # noqa: E402
 from python_qt_binding.QtCore import Qt  # noqa: E402
+from python_qt_binding.QtGui import QResizeEvent  # noqa: E402
 from python_qt_binding.QtWidgets import QApplication  # noqa: E402
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, ReliabilityPolicy  # noqa: E402
 
@@ -429,15 +430,19 @@ def test_long_notice_wraps_instead_of_widening_the_panel(env):
     assert widget.minimumSizeHint().width() < 600
 
 
-def test_glance_numbers_follow_the_viewport_not_just_the_window(env):
+def test_viewport_resize_event_triggers_a_rescale(env):
+    # A scrollbar appearing or a view switch resizes the viewport without the
+    # widget's own resizeEvent; the viewport's resize event must rescale.
     widget, node, _clock = env
     feed(widget, node, assessment('a'))
     widget.show()
     QApplication.processEvents()
-    before = widget._tiles[0].covered_value.font().pixelSize()
-    widget.resize(widget.width() * 2, widget.height() * 2)
-    QApplication.processEvents()
-    assert widget._tiles[0].covered_value.font().pixelSize() > before
+    calls = []
+    original = widget._rescale
+    widget._rescale = lambda: (calls.append(1), original())[1]
+    viewport = widget._glance_scroll.viewport()
+    QApplication.sendEvent(viewport, QResizeEvent(viewport.size(), viewport.size()))
+    assert calls
 
 
 def test_unreadable_messages_are_shown_and_logged_at_a_throttle(env):
@@ -451,3 +456,13 @@ def test_unreadable_messages_are_shown_and_logged_at_a_throttle(env):
     assert len(node.logger.warnings) == 2
     feed(widget, node, assessment('a'))               # a good one clears the notice
     assert 'unreadable' not in widget._notice.text()
+
+
+def test_unreadable_notice_does_not_follow_a_topic_change(env):
+    widget, node, _clock = env
+    feed(widget, node, object())
+    assert 'unreadable' in widget._notice.text()
+    widget.load_config(CoverageConfig(topic='/quiet'))
+    assert widget._notice.text() == 'waiting for /quiet'
+    feed(widget, node, object())            # logging restarts for the new topic
+    assert len(node.logger.warnings) == 2
