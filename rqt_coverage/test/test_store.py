@@ -1,7 +1,7 @@
 """Keep-latest-per-area behaviour, including the latched replay."""
 
 from fake_msgs import assessment, source
-from rqt_coverage.score_model import REPLAY_WINDOW_S, AreaScore, Store
+from rqt_coverage.score_model import AreaScore, Store
 
 
 def score(area_id='a', sec=100, covered=10.0, **kw):
@@ -9,7 +9,7 @@ def score(area_id='a', sec=100, covered=10.0, **kw):
         assessment(area_id, total=100.0, covered=covered, meeting=0.0, sec=sec, **kw))
 
 
-def test_replay_of_100_repeats_converges_to_newest():
+def test_replay_of_100_repeats_ends_on_the_newest():
     store = Store()
     # Late joiner: 100 messages, oldest first, five repeats of each of 20 areas.
     for i in range(100):
@@ -21,19 +21,14 @@ def test_replay_of_100_repeats_converges_to_newest():
         assert store.get(f'area{k}').score.covered == float(newest)
 
 
-def test_out_of_order_older_stamp_is_dropped_inside_the_window():
-    store = Store()
-    assert store.update(score(sec=50, covered=50.0), now=10.0)
-    assert not store.update(score(sec=40, covered=40.0), now=10.5)
-    assert store.get('a').score.covered == 50.0
-    assert store.get('a').received == 10.0
-
-
-def test_backwards_stamp_after_the_window_is_a_clock_restart():
+def test_arrival_order_wins_over_stamp():
+    # Reliable single publisher: the last one to arrive is the newest, even if
+    # its stamp is earlier (a sim restart makes stamps go backwards).
     store = Store()
     store.update(score(sec=5000, covered=50.0), now=10.0)
-    assert store.update(score(sec=3, covered=7.0), now=10.0 + REPLAY_WINDOW_S + 1)
+    assert store.update(score(sec=3, covered=7.0), now=10.1)
     assert store.get('a').score.covered == 7.0
+    assert store.get('a').received == 10.1
 
 
 def test_equal_stamp_last_received_wins():

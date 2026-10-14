@@ -31,13 +31,6 @@ FRESH = 'fresh'
 AGING = 'aging'
 NEVER = 'never'
 
-# A message older (by header.stamp) than the held one is treated as a replay or
-# an out-of-order delivery only when it arrives this soon after the held one.
-# Later than that, a backwards stamp means the scorer's clock restarted (a sim
-# restart), and the message is the newest information we have.
-REPLAY_WINDOW_S = 2.0
-
-
 def _clean_area(value) -> Tuple[float, bool]:
     """Return ``(m^2 value, changed)``; non-finite or negative becomes 0."""
     try:
@@ -113,9 +106,14 @@ class AreaScore:
         if not (math.isfinite(self.cell_size) and self.cell_size > 0.0):
             return None
         cell_area = self.cell_size * self.cell_size
-        return (round(self.total / cell_area),
-                round(self.covered / cell_area),
-                round(self.meeting / cell_area))
+        if not (math.isfinite(cell_area) and cell_area > 0.0):
+            return None   # a tiny cell size underflows its square
+        try:
+            return (round(self.total / cell_area),
+                    round(self.covered / cell_area),
+                    round(self.meeting / cell_area))
+        except (OverflowError, ValueError):
+            return None
 
     @classmethod
     def from_msg(cls, msg) -> 'AreaScore':
@@ -138,9 +136,10 @@ class AreaScore:
             changed |= bad
             s_uniq, bad = _clean_area(src.area_unique)
             changed |= bad
-            # A source cannot cover more than the area; its meeting and unique
-            # parts are both subsets of what it covers.
-            s_cov_c = min(s_cov, total)
+            # The message contract: a source's area_covered is at most the
+            # assessment's area_covered; its meeting and unique parts are
+            # subsets of what it covers.
+            s_cov_c = min(s_cov, covered)
             s_meet_c = min(s_meet, s_cov_c)
             s_uniq_c = min(s_uniq, s_cov_c)
             changed |= (s_cov_c, s_meet_c, s_uniq_c) != (s_cov, s_meet, s_uniq)
@@ -181,25 +180,22 @@ class Store:
     """Keep the latest assessment per ``area.id``.
 
     The topic is latched with depth 100, so a late joiner gets up to 100
-    assessments oldest first, with older repeats of an area before its newest.
+    assessments oldest first, with older repeats of an area before its newest;
+    arriving in that order, the newest ends up held.
     """
 
     def __init__(self):
         self._areas: Dict[str, StoredArea] = {}
 
     def update(self, score: AreaScore, now: float) -> bool:
-        """Offer a score; return True when it became the held one for its area.
+        """Hold ``score`` as the latest for its area; always returns True.
 
-        A newer or equal ``header.stamp`` replaces the held score (equal: the
-        last received wins, as for ``SurveyArea``).  An older stamp is dropped
-        when it arrives within ``REPLAY_WINDOW_S`` of the held score, which is
-        replay or reordering; later than that, a backwards stamp means the
-        scorer's clock restarted and the message is accepted.
+        Arrival order decides, not ``header.stamp``: the topic is reliable from
+        one scorer, the latched replay is oldest first, and the stamp is on the
+        scorer's clock, which goes backwards when a sim restarts.  A stamp
+        comparison would freeze the display on old data after such a restart.
+        The stamp is kept for display.
         """
-        held = self._areas.get(score.area_id)
-        if held is not None and score.stamp_ns < held.score.stamp_ns:
-            if now - held.received <= REPLAY_WINDOW_S:
-                return False
         self._areas[score.area_id] = StoredArea(score, now)
         return True
 
@@ -236,6 +232,11 @@ class Pooled:
     @property
     def pct_to_spec(self) -> Optional[float]:
         return fraction(self.meeting, self.total)
+
+
+def oldest_received(stored: Iterable['StoredArea']) -> Optional['StoredArea']:
+    """Return the entry received longest ago, or ``None`` for an empty input."""
+    return min(stored, key=lambda h: h.received, default=None)
 
 
 def pool(scores: Iterable[AreaScore]) -> Pooled:

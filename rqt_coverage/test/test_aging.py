@@ -38,6 +38,14 @@ def test_header_stamp_far_from_wall_clock_is_still_fresh():
     assert aging_state(held.received, 1010.0, 60.0) == FRESH
 
 
+def test_oldest_received():
+    from rqt_coverage.score_model import StoredArea, oldest_received
+    a = StoredArea(AreaScore.from_msg(assessment('a')), received=5.0)
+    b = StoredArea(AreaScore.from_msg(assessment('b')), received=2.0)
+    assert oldest_received([a, b]) is b
+    assert oldest_received([]) is None
+
+
 def test_format_age():
     assert format_age(75) == '75 s'
     assert format_age(119.9) == '119 s'

@@ -53,12 +53,20 @@ class TestSanitising:
         assert s.clamped
         assert math.isfinite(s.pct_covered)
 
-    def test_source_clamped_to_area_and_to_its_own_covered(self):
+    def test_source_clamped_to_assessment_covered_and_to_its_own_covered(self):
         msg = assessment(total=100, covered=80, meeting=20,
                          sources=[source('b1', covered=500, meeting=900, unique=700)])
         s = AreaScore.from_msg(msg)
         src = s.sources[0]
-        assert (src.covered, src.meeting, src.unique) == (100, 100, 100)
+        assert (src.covered, src.meeting, src.unique) == (80, 80, 80)
+        assert s.clamped
+
+    def test_source_covering_more_than_the_union_is_flagged(self):
+        # Contract: a source's covered area is at most the assessment's.
+        msg = assessment(total=100, covered=50, meeting=10,
+                         sources=[source('b1', covered=60, meeting=5, unique=0)])
+        s = AreaScore.from_msg(msg)
+        assert s.sources[0].covered == 50
         assert s.clamped
 
     def test_clean_message_is_not_flagged(self):
@@ -72,6 +80,13 @@ class TestCells:
         s = AreaScore.from_msg(assessment(total=400, covered=200, meeting=100,
                                           cell_size=2.0))
         assert s.cells == (100, 50, 25)
+
+    @pytest.mark.parametrize('cs', [1e-160, 1e-200, 5e-324, 1e160])
+    def test_extreme_cell_sizes_do_not_raise(self, cs):
+        # cs*cs underflows to 0 or overflows to inf; the counts are unavailable.
+        s = AreaScore.from_msg(assessment(total=400, covered=200, meeting=100,
+                                          cell_size=cs))
+        assert s.cells is None or all(isinstance(n, int) for n in s.cells)
 
     @pytest.mark.parametrize('cs', [0.0, -1.0, float('nan')])
     def test_no_usable_cell_size(self, cs):
