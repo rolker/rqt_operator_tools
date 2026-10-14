@@ -145,6 +145,11 @@ class AreaScore:
             changed |= (s_cov_c, s_meet_c, s_uniq_c) != (s_cov, s_meet, s_uniq)
             sources.append(SourceScore(str(src.source), s_cov_c, s_meet_c, s_uniq_c))
 
+        # Contract: the sum of the sources' unique areas is at most the
+        # assessment's covered area.  Flag a violation; the values stay as sent.
+        if sum(x.unique for x in sources) > covered * (1.0 + 1e-9) + 1e-9:
+            changed = True
+
         try:
             cell_size = float(msg.cell_size)
         except (TypeError, ValueError):
@@ -361,7 +366,9 @@ class CoverageConfig:
         if not math.isfinite(timeout) or timeout < 0.0:
             timeout = defaults.aging_timeout
         if isinstance(self.selected_areas, (list, tuple)):
-            areas = [str(a) for a in self.selected_areas if str(a)]
+            # De-duplicated, order kept: a repeated id would be shown and
+            # counted twice in the roll-up.
+            areas = list(dict.fromkeys(str(a) for a in self.selected_areas if str(a)))
         else:
             areas = []
         return CoverageConfig(

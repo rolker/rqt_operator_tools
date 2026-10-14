@@ -69,6 +69,21 @@ class TestSanitising:
         assert s.sources[0].covered == 50
         assert s.clamped
 
+    def test_unique_credit_summing_above_covered_is_flagged(self):
+        # Contract: the sum of the sources' unique areas is at most covered.
+        msg = assessment(total=200, covered=100, meeting=0,
+                         sources=[source('b1', 90, 0, 80), source('b2', 90, 0, 80)])
+        s = AreaScore.from_msg(msg)
+        assert s.clamped
+        assert [x.unique for x in s.sources] == [80, 80]   # shown as sent
+
+    def test_source_meeting_above_the_assessments_is_legal(self):
+        # The union takes depth from the smallest uncertainty, so one source can
+        # meet the standard over more cells than the assessment does.
+        msg = assessment(total=100, covered=80, meeting=10,
+                         sources=[source('b1', 70, 40, 0)])
+        assert not AreaScore.from_msg(msg).clamped
+
     def test_clean_message_is_not_flagged(self):
         msg = assessment(total=100, covered=80, meeting=20,
                          sources=[source('b1', 80, 20, 10)])

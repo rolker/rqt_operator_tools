@@ -51,3 +51,8 @@ def test_font_scale_lower_clamp():
 
 def test_non_numeric_font_scale():
     assert CoverageConfig.from_yaml('font_scale: big').font_scale == 1.0
+
+
+def test_selected_areas_are_deduplicated_keeping_order():
+    c = CoverageConfig.from_yaml('selected_areas: [b, a, b, a, c]')
+    assert c.selected_areas == ['b', 'a', 'c']
