@@ -3,6 +3,7 @@
 import argparse
 import signal
 import sys
+import time
 
 import rclpy
 import yaml
@@ -11,6 +12,13 @@ from python_qt_binding.QtWidgets import QApplication
 
 from .coverage_widget import CoverageWidget
 from .score_model import CoverageConfig, VIEWS
+
+
+def _drain(node, budget_s=0.003):
+    """Run ready callbacks for up to ``budget_s``; one spin_once runs only one."""
+    deadline = time.monotonic() + budget_s
+    while time.monotonic() < deadline:
+        rclpy.spin_once(node, timeout_sec=0)
 
 
 def main(argv=None):
@@ -42,8 +50,7 @@ def main(argv=None):
     if args.topic:
         config.topic = args.topic
 
-    widget = CoverageWidget(node)
-    widget.load_config(config)
+    widget = CoverageWidget(node, config=config)
     if args.always_on_top:
         widget.setWindowFlags(widget.windowFlags() | Qt.WindowStaysOnTopHint)
     widget.setWindowTitle('Survey Coverage')
@@ -52,7 +59,7 @@ def main(argv=None):
 
     # Spin ROS from the Qt thread so callbacks and widgets share one thread.
     spin_timer = QTimer()
-    spin_timer.timeout.connect(lambda: rclpy.spin_once(node, timeout_sec=0))
+    spin_timer.timeout.connect(lambda: _drain(node))
     spin_timer.start(33)
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 

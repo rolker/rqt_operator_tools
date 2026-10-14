@@ -72,7 +72,7 @@ class ConfigDialog(QDialog):
 
         self._aging = QDoubleSpinBox()
         self._aging.setRange(0.0, 86400.0)
-        self._aging.setDecimals(0)
+        self._aging.setDecimals(1)
         self._aging.setSuffix(' s')
         self._aging.setValue(config.aging_timeout)
         form.addRow('Mark "no new assessment" after (0 = never)', self._aging)
