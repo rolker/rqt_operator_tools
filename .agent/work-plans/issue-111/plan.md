@@ -40,13 +40,12 @@ label "Survey Coverage". Modules:
      a clean number.
    - Cell counts for the detail view = area / cell_size^2, rounded; `None` if cell_size
      is not positive.
-   - `Store`: latest per `area.id`. Replacement rule: a message replaces the held one
-     if its `header.stamp` is newer or equal (equal: last received wins, mirroring the
-     `SurveyArea` rule); an older stamp is dropped only when it arrives within 2 s of the
-     held one (replay or reordering), which makes the replayed history (oldest first,
-     repeats of an area) converge to the newest. A backwards stamp after that window is a
-     scorer clock restart (a sim restart resets sim time) and is accepted; dropping it
-     would freeze the display until the plugin was cleared.
+   - `Store`: latest per `area.id`. Replacement rule: the last message to arrive
+     replaces the held one: the topic is reliable from one scorer
+     and the latched replay is oldest first, so arrival order is the truth, while
+     `header.stamp` is on the scorer's clock and goes backwards on a sim restart (a stamp
+     comparison, with or without a time window, froze the display on old data). The
+     stamp is kept for display.
      Records wall-clock receipt time per area. `forget(area_id)` and `clear()`.
    - Global roll-up over a chosen set of areas: pooled, area-weighted
      (`sum covered / sum total`, `sum meeting / sum total`), so a big area counts more
@@ -130,7 +129,7 @@ regresses):
   small ones and skips zero-total ones; combined score with default and custom weights
   and with invalid weights falling back; cell counts.
 - `test_store.py`: replay of 100 oldest-first repeats converges to the newest per
-  `area.id`; an out-of-order older stamp is dropped; equal stamp last-wins; forget and
+  `area.id`; a backwards stamp (sim restart) is accepted; last arrival wins; forget and
   clear; two areas coexisting; a source list that changes shape between messages.
 - `test_aging.py`: fresh, aging past the boundary (not aging at exactly the timeout,
   as in `rqt_boat_state`), disabled timeout, never-received; uses an injected clock, and
@@ -209,7 +208,8 @@ Single PR (about 7 modules, 5 test files).
 
 ## Implementation Notes
 
-- A replay-window rule replaced "always drop an older stamp": sim-time restarts make the stamp go backwards while the live scorer is fine.
+- Arrival order replaced the stamp comparison in `Store` (and the interim replay-window rule): sim-time restarts make the stamp go backwards while the live scorer is fine.
 - `AGING` replaced `STALE` in all names and strings: the scorer publishes only on change, so silence is not proof of a fault.
 - The widget takes an injectable clock (monotonic seconds) so aging is tested without sleeping.
 - Lint: `ament_flake8`/`ament_pep257` are not part of this repo's test run (`rqt_boat_state` fails the strict import-order and D213 rules too); docstrings are complete, import order is not rearranged.
+- Review-code round 1 changes: topic change clears the store and a failed subscribe shows a retryable notice; the pooled tile and heading take the oldest area's status; redraws are coalesced to one per event-loop turn; a rendering error is shown and logged, not raised; source coverage is clamped to the assessment's; cell counts survive extreme cell sizes; area ids render as plain text; status reads "received N s ago" because a late joiner's first picture is a latched assessment of unknown age; the combined column is a widget so hiding it frees its width.

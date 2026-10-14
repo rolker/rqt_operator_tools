@@ -22,10 +22,14 @@ together**, and the detail view a heading with the same numbers.
 | `coverage_assessment` | `marine_interfaces/CoverageAssessment` | reliable, transient_local, keep last 100 (what the scorer offers; a volatile or best_effort subscription would not receive the latched areas) |
 
 The plugin keeps the latest assessment per `area.id`. A late joiner is replayed up to the
-last 100 assessments oldest first, so repeats of an area arrive before its newest; a
-message with an older `header.stamp` than the one held is dropped when it arrives within
-2 s of it (replay or reordering). A backwards stamp later than that is taken as the
-scorer's clock restarting (a sim restart) and is accepted.
+last 100 assessments oldest first, so repeats of an area arrive before its newest; the last
+one to arrive is held. Arrival order decides, not `header.stamp`, which is on the scorer's
+clock and goes backwards when a sim restarts. Changing the topic clears the areas of the old
+one.
+
+A late joiner's first picture is the scorer's latched last assessment, whose true age is
+unknown here: the status line counts from when it arrived (`received 3 s ago`), and the
+detail view shows `header.stamp` as the last assessment time on the scorer's clock.
 
 ## Scores
 
@@ -34,7 +38,9 @@ is 0 the percentages show `--`.
 
 - **covered** = `area_covered / area_total`.
 - **to standard** = `area_meeting_standard / area_total`, so it never exceeds covered.
-- **All areas** = the sum over the areas in view: `sum(covered) / sum(total)` and the same
+- **All areas** = the sum over the areas in view (its title says how many areas are in the
+  sum and how many selected ones are still waiting; its status line is that of the oldest
+  area, so one stale area marks the roll-up): `sum(covered) / sum(total)` and the same
   for the standard, so a big area weighs more than a small one. Areas with no total are
   skipped. The message carries no overlap between areas, so a cell inside two overlapping
   areas is counted twice, and each area is judged against its own standard.
@@ -43,7 +49,7 @@ is 0 the percentages show `--`.
   0.5` (covered below the standard count half). Weights are 0 to 1; anything else falls
   back to the default.
 
-If the scorer breaks the message's invariant (`meeting <= covered <= total`, or a
+If the scorer breaks the message's invariant (`meeting <= covered <= total`, a source covering more than the assessment, or a
 non-finite or negative area), the plugin clamps the values and the status line says so
 instead of showing a clean-looking number.
 
