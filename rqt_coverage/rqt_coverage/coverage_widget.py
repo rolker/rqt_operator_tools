@@ -13,7 +13,7 @@ import importlib
 import time
 from typing import List, Optional
 
-from python_qt_binding.QtCore import Qt, QTimer, Signal
+from python_qt_binding.QtCore import QEvent, Qt, QTimer, Signal
 from python_qt_binding.QtGui import QColor, QFont, QPalette
 from python_qt_binding.QtWidgets import (
     QFrame,
@@ -194,6 +194,8 @@ class CoverageWidget(QWidget):
         self._msg_class = load_assessment_class()
         self._subscribe_error = ''
         self._display_error = ''
+        self._unreadable = ''
+        self._last_unreadable_log = None
         self._refresh_pending = False
 
         self.setAutoFillBackground(True)
@@ -237,8 +239,10 @@ class CoverageWidget(QWidget):
         bar.addStretch(1)
         self._notice = QLabel()
         self._notice.setTextFormat(Qt.PlainText)
+        self._notice.setWordWrap(True)
+        self._notice.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self._notice.setStyleSheet(f'color: {_AMBER};')
-        bar.addWidget(self._notice)
+        bar.addWidget(self._notice, 1)
         layout.addLayout(bar)
 
         # Scrolls when there are more areas than fit at a readable tile height.
@@ -251,6 +255,9 @@ class CoverageWidget(QWidget):
         self._glance_layout.setContentsMargins(0, 0, 0, 0)
         self._glance_layout.setSpacing(4)
         self._glance_scroll.setWidget(self._glance_panel)
+        # The viewport changes size without the widget resizing (view switch,
+        # scrollbar appearing), so rescale on its own resize events.
+        self._glance_scroll.viewport().installEventFilter(self)
         layout.addWidget(self._glance_scroll, 1)
 
         self._detail = QTextBrowser()
@@ -358,20 +365,28 @@ class CoverageWidget(QWidget):
             return
         self._subscribe_error = (
             f'QoS mismatch: a publisher on {self._config.topic} does not offer '
-            'reliable + transient_local')
+            'reliable + transient_local, so its assessments are not received')
         self._node.get_logger().error(self._subscribe_error)
         self._schedule_refresh()
 
     def _handle_message(self, generation, msg):
         if generation != self._generation:
             return
-        self._subscribe_error = ''   # a message arrived: the QoS matched
         try:
             score = AreaScore.from_msg(msg)
         except Exception as exc:  # a malformed message must not kill the panel
-            self._node.get_logger().warning(
-                f'Ignoring unreadable CoverageAssessment: {exc!r}')
+            now = self._clock()
+            self._unreadable = f'receiving unreadable assessments: {exc!r}'
+            # Log the first and then at most one in ten seconds: a misbehaving
+            # publisher at scorer rate must not flood the log.
+            if (self._last_unreadable_log is None
+                    or now - self._last_unreadable_log >= 10.0):
+                self._last_unreadable_log = now
+                self._node.get_logger().warning(
+                    f'Ignoring unreadable CoverageAssessment: {exc!r}')
+            self._schedule_refresh()
             return
+        self._unreadable = ''
         self._store.update(score, self._clock())
         self._schedule_refresh()
 
@@ -400,7 +415,7 @@ class CoverageWidget(QWidget):
         else:
             text, color, aging = f'received {age} ago', _DIM, False
         if held.score.clamped:
-            text += ' | scorer values inconsistent, clamped'
+            text += ' | scorer values inconsistent'
             color = _AMBER
         return text, color, aging
 
@@ -408,8 +423,8 @@ class CoverageWidget(QWidget):
         """Status of the roll-up: that of its oldest area, so one stale area shows."""
         held = [h for _, h in entries if h is not None]
         text, color, aging = self._status(oldest_received(held), now)
-        if any(h.score.clamped for h in held) and 'clamped' not in text:
-            text += ' | scorer values inconsistent, clamped'
+        if any(h.score.clamped for h in held) and 'inconsistent' not in text:
+            text += ' | scorer values inconsistent'
             color = _AMBER
         waiting = len(entries) - len(held)
         if waiting:
@@ -452,6 +467,8 @@ class CoverageWidget(QWidget):
         received = [h.score for _, h in entries if h is not None]
         if self._subscribe_error:
             self._notice.setText(self._subscribe_error)
+        elif self._unreadable:
+            self._notice.setText(self._unreadable)
         elif self._msg_class is None:
             self._notice.setText('marine_interfaces not available')
         elif not entries:
@@ -497,6 +514,7 @@ class CoverageWidget(QWidget):
     def _rebuild_tiles(self, count):
         for tile in self._tiles:
             self._glance_layout.removeWidget(tile)
+            tile.hide()
             tile.deleteLater()
         self._tiles = []
         for _ in range(count):
@@ -518,6 +536,12 @@ class CoverageWidget(QWidget):
         scale = self._config.font_scale
         for tile in self._tiles:
             tile.set_pixel_sizes(big * scale, max(big * 0.22, 11) * min(scale, 1.5))
+
+    def eventFilter(self, obj, event):
+        """Rescale the numbers whenever the glance viewport is resized."""
+        if event.type() == QEvent.Resize and obj is self._glance_scroll.viewport():
+            self._rescale()
+        return super().eventFilter(obj, event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

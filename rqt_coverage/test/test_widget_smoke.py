@@ -222,7 +222,7 @@ def test_malformed_message_is_ignored_not_fatal(env):
 def test_inconsistent_scorer_values_are_flagged(env):
     widget, node, _clock = env
     feed(widget, node, assessment('a', total=100, covered=40, meeting=70))
-    assert 'clamped' in widget._tiles[0].status_label.text()
+    assert 'inconsistent' in widget._tiles[0].status_label.text()
 
 
 def test_zero_total_area_shows_dashes(env):
@@ -342,15 +342,18 @@ def test_detail_scroll_position_survives_the_refresh_timer(env):
     assert abs(bar.value() - wanted) <= 2
 
 
-def test_qos_mismatch_is_reported_and_cleared_by_data(env):
+def test_qos_mismatch_is_reported_and_not_hidden_by_other_publishers_data(env):
     widget, node, _clock = env
     generation = widget._generation
     widget._qos_incompatible.emit(generation)
     QApplication.processEvents()
     assert 'QoS mismatch' in widget._notice.text()
     assert node.logger.errors
+    # A compatible publisher's data must not make the incompatible one vanish.
     feed(widget, node, assessment('a'))
-    assert widget._notice.text() == ''
+    assert 'QoS mismatch' in widget._notice.text()
+    widget.load_config(CoverageConfig(topic='/other'))      # resubscribing clears it
+    assert 'QoS mismatch' not in widget._notice.text()
 
 
 def test_qos_mismatch_from_a_torn_down_subscription_is_ignored(env):
@@ -393,3 +396,58 @@ def test_duplicate_selected_areas_are_shown_and_counted_once(env):
     rows = texts(widget)
     assert [r[0] for r in rows] == ['All areas (sum of 2)', 'a', 'b']
     assert rows[0][1] == '50.0 %'
+
+
+def test_view_button_and_clear_action_work_when_clicked(env):
+    # Qt passes the 'checked' bool to clicked/triggered; the slots must cope.
+    widget, node, _clock = env
+    feed(widget, node, assessment('a'))
+    widget._view_button.click()
+    assert widget.get_config().view == 'detail'
+    widget._view_button.click()
+    assert widget.get_config().view == 'glance'
+    widget._areas_menu.aboutToShow.emit()
+    clear = [a for a in widget._areas_menu.actions() if a.text() == 'Clear all areas'][0]
+    clear.trigger()
+    assert widget._tiles == []
+    feed(widget, node, assessment('b'))
+    widget._areas_menu.aboutToShow.emit()
+    forget = [a for a in widget._areas_menu.actions() if a.text() == 'Forget area b'][0]
+    forget.trigger()
+    assert widget._tiles == []
+
+
+def test_long_notice_wraps_instead_of_widening_the_panel(env):
+    widget, node, _clock = env
+    node.fail_topics.add('bad')
+    widget.load_config(CoverageConfig(topic='bad'))
+    widget._notice.setText('cannot subscribe to ' + 'x' * 400)
+    widget.resize(600, 300)
+    widget.show()
+    QApplication.processEvents()
+    assert widget.width() == 600
+    assert widget.minimumSizeHint().width() < 600
+
+
+def test_glance_numbers_follow_the_viewport_not_just_the_window(env):
+    widget, node, _clock = env
+    feed(widget, node, assessment('a'))
+    widget.show()
+    QApplication.processEvents()
+    before = widget._tiles[0].covered_value.font().pixelSize()
+    widget.resize(widget.width() * 2, widget.height() * 2)
+    QApplication.processEvents()
+    assert widget._tiles[0].covered_value.font().pixelSize() > before
+
+
+def test_unreadable_messages_are_shown_and_logged_at_a_throttle(env):
+    widget, node, clock = env
+    for _ in range(50):
+        feed(widget, node, object())
+    assert 'unreadable' in widget._notice.text()
+    assert len(node.logger.warnings) == 1            # not 50
+    clock.now += 11
+    feed(widget, node, object())
+    assert len(node.logger.warnings) == 2
+    feed(widget, node, assessment('a'))               # a good one clears the notice
+    assert 'unreadable' not in widget._notice.text()
