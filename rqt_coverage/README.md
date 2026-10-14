@@ -49,9 +49,14 @@ is 0 the percentages show `--`.
   0.5` (covered below the standard count half). Weights are 0 to 1; anything else falls
   back to the default.
 
-If the scorer breaks the message's invariant (`meeting <= covered <= total`, a source covering more than the assessment, or a
+If the scorer breaks the message's invariant (`meeting <= covered <= total`, a source covering more than the assessment, unique credit summing to more than what is covered, or a
 non-finite or negative area), the plugin clamps the values and the status line says so
 instead of showing a clean-looking number.
+
+With many areas the glance tiles keep a readable minimum height and the panel scrolls.
+If a publisher on the topic does not offer reliable + transient_local, the notice line says
+`QoS mismatch` (otherwise that looks the same as "waiting for the scorer"). Repeated ids in
+`selected_areas` are dropped.
 
 ## "No new assessment for N s"
 
