@@ -1,0 +1,17 @@
+<library path="rqt_ping_profile">
+  <class name="rqt_ping_profile/PingProfilePlugin"
+         type="rqt_ping_profile.ping_profile_plugin.PingProfilePlugin"
+         base_class_type="rqt_gui_py::Plugin">
+    <description>
+      The latest multibeam ping of one boat seen from the front: swath lines and the bathymetry profile under the boat.
+    </description>
+    <qtgui>
+      <group>
+        <label>Robot Tools</label>
+      </group>
+      <label>Ping Profile</label>
+      <icon type="theme">applications-graphics</icon>
+      <statustip>Latest multibeam ping seen from the front of the boat, depth below the transducer in metres.</statustip>
+    </qtgui>
+  </class>
+</library>
