@@ -102,3 +102,14 @@ def test_absurd_range_is_dropped_not_drawn():
 
 def test_stamp_is_read_when_present():
     assert Ping.from_msg(detections([0.03], [0.0], sec=5, nanosec=7)).stamp_ns == 5_000_000_007
+
+
+def test_all_beams_invalid_is_a_bad_ping():
+    with pytest.raises(BadPing, match='no usable beams'):
+        Ping.from_msg(detections([float('nan')] * 2, [0.0, 0.1]))
+
+
+def test_sideways_and_upward_beams_are_dropped():
+    msg = detections([0.03] * 4, [0.0, math.pi / 2, -math.pi / 2, 2.0])
+    ping = Ping.from_msg(msg)
+    assert len(ping.beams) == 1 and ping.dropped == 3

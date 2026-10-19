@@ -25,7 +25,7 @@ New ament_python package `rqt_ping_profile`, laid out like `rqt_coverage`. Plugi
      `BadPing(reason)`. Per beam: range = twtt * sound_speed / 2, across = range * sin(rx),
      depth = range * cos(rx). Across is positive to starboard (the message convention:
      `rx_angles` + to starboard, - to port; mbes_sim agrees). Beams with a non-finite or
-     negative travel time or a non-finite angle are dropped and counted. Beams are sorted by
+     negative travel time, a non-finite angle or an angle of 90 degrees or more are dropped and counted; a ping with no usable beam is a `BadPing`. Beams are sorted by
      across-track so the polyline is ordered whatever the sonar's beam order. `tx_angles`
      (along-track steering) is ignored: depth below the transducer is range * cos(rx).
    - Swath edges = the outermost OK beams. Profile = OK beams. Flagged beams are kept
@@ -43,9 +43,10 @@ New ament_python package `rqt_ping_profile`, laid out like `rqt_coverage`. Plugi
      depth_min, depth_max, stale_timeout (5 s), history (0), show_flagged; `normalized`,
      `to_yaml`, `from_yaml` lenient like `CoverageConfig`.
 2. `ping_profile_widget.py`: a QWidget that paints the view; ROS callback only emits a
-   queued Qt signal (generation-stamped), best_effort keep-last-1 subscription, coalesced
+   Qt signal that wakes the Qt thread, the message itself going through a one-slot
+   newest-wins mailbox stamped with its receipt time (generation-checked), best_effort keep-last-1 subscription, coalesced
    redraw, 0.5 s timer for staleness, painting guarded so an error is logged once and never
-   raised. Bad messages: log once per distinct reason (at most one in 10 s), draw nothing.
+   raised. Bad messages: one log line per 10 s whatever the reason, draw nothing.
 3. `config_dialog.py`, `ping_profile_plugin.py`, `ping_profile_standalone.py`
    (`ros2 run rqt_ping_profile ping_profile`), `plugin.xml`, `package.xml`, `setup.py`.
 4. Tests: geometry (angles, sign, scaling), scale (auto, hysteresis, fixed clipping), store
@@ -100,3 +101,15 @@ Single PR: about 5 modules, 5 test files.
 
 None; the display conventions were fixed by the owner (settings, fixed 0-30 m default,
 port on the viewer's right, last-N history default 0).
+
+## Implementation Notes
+
+- Review-code round 1 (two Claude lenses + codex; gemini timed out) changes: one-slot
+  mailbox with receipt time taken on the ROS thread; an all-invalid ping is rejected instead
+  of erasing the last good one; the title elides so the status stays on screen; log limit is
+  global (one per 10 s); auto-scale resets on a topic change and never zooms in past 1 m;
+  beams at 90 degrees or more are dropped; history dims when stale; paint save/restore is
+  exception-safe and a paint error is shown; bool settings rejected; `_closed` guard.
+- Not done: per-side fallback of an inverted fixed depth range (both sides reset to the
+  default, documented); a sound-speed fallback for sonars that leave it 0 (ping rejected,
+  reason shown).

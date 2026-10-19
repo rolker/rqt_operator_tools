@@ -10,6 +10,7 @@ a Qt signal; every store and widget access happens on the Qt thread.
 
 import importlib
 import math
+import threading
 import time
 from typing import List
 
@@ -56,7 +57,7 @@ _MARGIN_RIGHT = 12
 _MARGIN_TOP = 26
 _MARGIN_BOTTOM = 30
 _MAX_PIXEL = 1.0e5     # coordinates beyond this are clamped before reaching Qt
-_ERROR_LOG_INTERVAL = 10.0   # s; one log line per distinct reason, at most this often
+_ERROR_LOG_INTERVAL = 10.0   # s; at most one 'unusable ping' log line per this
 
 # Detections are a sensor stream: best_effort matches both reliable and
 # best_effort publishers; only the newest ping matters.
@@ -85,8 +86,9 @@ def _clamp(value: float) -> float:
 class PingProfileWidget(QWidget):
     """Paints the latest ping of one topic; staleness and errors are shown on it."""
 
-    # (subscription generation, message): ROS thread -> Qt thread hand-off.
-    _msg_received = Signal(int, object)
+    # Wake-up: ROS thread -> Qt thread.  The message itself goes through a
+    # one-slot mailbox (newest wins), so a stalled GUI cannot build a queue.
+    _msg_received = Signal()
 
     def __init__(self, node, parent=None, clock=time.monotonic, config=None):
         super().__init__(parent)
@@ -100,13 +102,15 @@ class PingProfileWidget(QWidget):
         self._generation = 0
         self._msg_class = load_message_class()
         self._subscribe_error = ''
-        self._last_logged_reason = None
         self._last_error_log = None
         self._paint_error = ''
         self._refresh_pending = False
+        self._closed = False
+        self._mailbox_lock = threading.Lock()
+        self._mailbox = None            # (generation, msg, receipt clock) or None
         self.setMinimumSize(160, 120)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._msg_received.connect(self._handle_message)
+        self._msg_received.connect(self._take_message)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.update)    # staleness is time, not messages
@@ -127,7 +131,9 @@ class PingProfileWidget(QWidget):
         self._scale.configure(new.depth_mode, new.depth_min, new.depth_max)
         if topic_changed:
             self._store.clear()          # a ping of the old topic is not this boat's
-            self._last_logged_reason = None
+            self._scale.reset()
+            with self._mailbox_lock:
+                self._mailbox = None
         self._scale.observe(self._store.latest)
         # Retry also when the last attempt failed, so applying the settings
         # again recovers from a bad topic name.
@@ -137,6 +143,7 @@ class PingProfileWidget(QWidget):
         self.update()
 
     def shutdown(self):
+        self._closed = True
         self._timer.stop()
         self._teardown_subscription()
 
@@ -155,12 +162,27 @@ class PingProfileWidget(QWidget):
         try:
             self._subscription = self._node.create_subscription(
                 self._msg_class, self._config.topic,
-                lambda msg, g=generation: self._msg_received.emit(g, msg),
+                lambda msg, g=generation: self._on_ros_message(g, msg),
                 DETECTIONS_QOS)
         except Exception as exc:  # e.g. InvalidTopicNameException
             self._subscription = None
             self._subscribe_error = f'cannot subscribe to {self._config.topic}: {exc}'
             self._node.get_logger().error(self._subscribe_error)
+
+    def _on_ros_message(self, generation, msg):
+        """ROS thread: park the newest message and wake the Qt thread.
+
+        The receipt time is taken here, so a message that waits for a busy GUI
+        is not made to look fresh when it is finally handled.
+        """
+        with self._mailbox_lock:
+            wake = self._mailbox is None
+            self._mailbox = (generation, msg, self._clock())
+        if wake and not self._closed:
+            try:
+                self._msg_received.emit()
+            except RuntimeError:        # the widget was deleted during shutdown
+                pass
 
     def _teardown_subscription(self):
         # Bumping the generation drops messages already queued for the Qt
@@ -172,24 +194,33 @@ class PingProfileWidget(QWidget):
 
     # -- Qt-thread message handling ---------------------------------------------
 
-    def _handle_message(self, generation, msg):
+    def _take_message(self):
+        with self._mailbox_lock:
+            item, self._mailbox = self._mailbox, None
+        if item is None:
+            return
+        generation, msg, received = item
         if generation != self._generation:
             return
-        now = self._clock()
-        ping = self._store.update(msg, now)
-        if ping is None:
+        self._handle_message(msg, received)
+
+    def _handle_message(self, msg, now):
+        try:
+            ping = self._store.update(msg, now)
             reason = self._store.last_error
-            # Log a new reason at once; the same reason at most every 10 s, so
-            # a sonar publishing garbage at ping rate cannot flood the log.
-            if (reason != self._last_logged_reason or self._last_error_log is None
+        except Exception as exc:  # a Qt slot must not raise (PyQt aborts)
+            ping, reason = None, f'unreadable message: {exc!r}'
+            self._store.last_error = reason
+        if ping is None:
+            # One log line per interval whatever the reason: a sonar publishing
+            # garbage at ping rate, or alternating faults, cannot flood the log.
+            if (self._last_error_log is None
                     or now - self._last_error_log >= _ERROR_LOG_INTERVAL):
                 self._node.get_logger().warning(
                     f'Ignoring unusable SonarDetections on {self._config.topic}: '
                     f'{reason}')
-                self._last_logged_reason = reason
                 self._last_error_log = now
         else:
-            self._last_logged_reason = None
             self._scale.observe(ping)
         self._schedule_refresh()
 
@@ -201,13 +232,16 @@ class PingProfileWidget(QWidget):
 
     def _refresh(self):
         self._refresh_pending = False
-        self.update()
+        if not self._closed:
+            self.update()
 
     # -- Status ----------------------------------------------------------------
 
     def status_text(self):
         """``(text, is_problem)`` for the line under the title."""
         now = self._clock()
+        if self._paint_error:
+            return self._paint_error, True
         if self._subscribe_error:
             return self._subscribe_error, True
         if self._store.latest is None:
@@ -243,6 +277,11 @@ class PingProfileWidget(QWidget):
             if text != self._paint_error:
                 self._node.get_logger().error(text)
             self._paint_error = text
+            try:    # say so on the display, too, as far as the painter still works
+                painter.setPen(_AMBER)
+                painter.drawText(QPointF(8, 17), text[:120])
+            except Exception:  # noqa: BLE001 - nothing more can be done
+                pass
         finally:
             painter.end()
 
@@ -274,12 +313,14 @@ class PingProfileWidget(QWidget):
         self._paint_grid(p, vp)
 
         p.save()
-        p.setClipRect(plot)
-        self._paint_history(p, vp)
-        ping = self._store.latest
-        if ping is not None:
-            self._paint_ping(p, vp, ping, dim=stale)
-        p.restore()
+        try:
+            p.setClipRect(plot)
+            self._paint_history(p, vp, dim=stale)
+            ping = self._store.latest
+            if ping is not None:
+                self._paint_ping(p, vp, ping, dim=stale)
+        finally:
+            p.restore()
 
         # Transducer: the boat's reference point at depth 0 (when in view).
         if vp.contains_depth(0.0):
@@ -296,14 +337,18 @@ class PingProfileWidget(QWidget):
         big.setBold(True)
         p.setFont(big)
         p.setPen(_TEXT)
-        p.drawText(QPointF(8, 17), title)
-        title_w = QFontMetrics(big).horizontalAdvance(title)
+        # The status line must stay visible: the title gives way (elided to at
+        # most 60 % of the width) and the status takes what is left.
+        width = max(self.width() - 16, 20)
+        shown = QFontMetrics(big).elidedText(title, Qt.ElideRight, int(width * 0.6))
+        p.drawText(QPointF(8, 17), shown)
+        title_w = QFontMetrics(big).horizontalAdvance(shown)
         p.setFont(small)
-        if status and self.width() > 0:
+        if status:
             p.setPen(_AMBER if problem else _AXIS_TEXT)
-            avail = max(self.width() - title_w - 28, 20)
+            avail = max(width - title_w - 12, 20)
             text = QFontMetrics(small).elidedText(status, Qt.ElideRight, int(avail))
-            p.drawText(QPointF(title_w + 20, 17), text)
+            p.drawText(QPointF(8 + title_w + 12, 17), text)
 
     def _paint_grid(self, p: QPainter, vp: Viewport):
         depth_step = nice_step(vp.depth_at_bottom() - vp.depth_top)
@@ -347,11 +392,13 @@ class PingProfileWidget(QWidget):
         p.setBrush(Qt.NoBrush)
         p.drawRect(plot)
 
-    def _paint_history(self, p: QPainter, vp: Viewport):
+    def _paint_history(self, p: QPainter, vp: Viewport, dim: bool = False):
         older = self._store.history()
         n = len(older)
         for i, ping in enumerate(older):
             alpha = int(25 + 85 * (i + 1) / (n + 1))     # oldest faintest
+            if dim:
+                alpha //= 2
             color = QColor(_PROFILE)
             color.setAlpha(alpha)
             p.setPen(QPen(color, 1))

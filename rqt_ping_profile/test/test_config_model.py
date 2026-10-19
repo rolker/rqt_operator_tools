@@ -60,3 +60,8 @@ def test_negative_history_and_bool_history():
 def test_huge_numbers_are_clamped():
     c = ProfileConfig.from_yaml('depth_max: 1e300\ndepth_min: -1e300\n')
     assert c.depth_max == 20000.0 and c.depth_min == -1000.0
+
+
+def test_bool_is_not_a_number():
+    c = ProfileConfig.from_yaml('depth_min: true\ndepth_max: false\nstale_timeout: true\n')
+    assert (c.depth_min, c.depth_max, c.stale_timeout) == (0.0, 30.0, 5.0)

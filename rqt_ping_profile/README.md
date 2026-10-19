@@ -49,7 +49,9 @@ is correct whatever order the sonar reports them in.
 
 ## What is drawn
 
-- The transducer (amber marker) at the top centre, at depth 0.
+- The transducer (amber marker) at the top centre, at depth 0 (when depth 0 is inside the
+  fixed range; with `depth_min` above 0 the marker is not drawn and the swath lines enter
+  from the top edge).
 - A swath line from the transducer to the port-most and starboard-most OK beams.
 - The OK detections joined as the profile, with a dot per beam.
 - Beams flagged not OK are left out of the profile and the swath. With `show_flagged` they
@@ -59,7 +61,7 @@ is correct whatever order the sonar reports them in.
 - The title (the `title` setting, else the topic) top left, and a status line beside it
   that is empty while all is well.
 - With `history` above 0, the last N pings fade in behind the current one (oldest
-  faintest), as profile lines only.
+  faintest), as profile lines only; they dim with the current ping when it goes stale.
 
 Both axes use the **same metres per pixel**, so a beam at 30 degrees looks like 30 degrees.
 The widget's shape decides how much across-track is visible.
@@ -70,7 +72,7 @@ The widget's shape decides how much across-track is visible.
   with the same range are directly comparable. Anything deeper is cut off at the bottom of
   the plot; across-track beyond the width is cut off at the sides.
 - **auto**: the scale follows the ping, from the transducer (0 m) to the deepest OK
-  detection plus 10 % headroom. It also widens, if needed, so the **whole swath is always
+  detection plus 10 % headroom (never zoomed in past 1 m). It also widens, if needed, so the **whole swath is always
   visible** (the larger of what depth and width require). To keep it from jumping with
   every ping, it grows at once but shrinks only when the need falls below 70 % of the
   current extent. History pings do not take part in the scaling and may be cut off.
@@ -81,9 +83,9 @@ The widget's shape decides how much across-track is visible.
 |---|---|
 | `waiting for the first ping on <topic>` | Subscribed, nothing received yet. |
 | `NO PING FOR 7 s` | No usable ping for more than `stale_timeout`; the picture dims. Measured on this machine's monotonic clock from the last good ping, not from `header.stamp`, which is on the sonar's clock (sim time in the demo). |
-| `unusable ping: <why>` / `unusable ping ignored: <why>` | The last message could not be drawn: no beams, arrays of different lengths, or no usable sound speed. Nothing is drawn from it; the last good ping stays on screen, and goes stale in the normal way. Logged once per distinct reason, then at most every 10 s. |
+| `unusable ping: <why>` / `unusable ping ignored: <why>` | The last message could not be drawn: no beams, arrays of different lengths, or no usable sound speed. Nothing is drawn from it; the last good ping stays on screen, and goes stale in the normal way. Logged at most once every 10 s, whatever the reason. |
 | `no OK detections in the last ping` | Every beam was flagged. |
-| `N invalid beams dropped` | Beams with a non-finite or negative travel time or a non-finite angle were left out. |
+| `N invalid beams dropped` | Beams left out: non-finite or negative travel time, non-finite angle, an angle of 90 degrees or more either side of straight down (not a downlooking beam), or an absurd range (over 1000 km). A ping with no usable beam at all is an unusable ping. |
 | `cannot subscribe to <topic>: ...` | The topic name is not valid; fix it in the settings. |
 
 ## Settings
@@ -123,3 +125,11 @@ thread.
 store, settings) need no display or ROS graph; the widget smoke test runs with
 `QT_QPA_PLATFORM=offscreen` (set by the test), and the integration test runs real rclpy on
 a private DDS domain.
+
+## Threading and message hand-off
+
+The subscription callback runs on the ROS thread. It stamps the receipt time, parks the
+message in a one-slot mailbox (a newer message replaces an older one that the GUI has not
+taken yet) and wakes the Qt thread; the store and every widget are touched on the Qt thread
+only. A busy GUI therefore skips pings instead of queueing them, and a late-handled ping
+does not look fresh.

@@ -51,6 +51,7 @@ AUTO_SHRINK_BELOW = 0.70
 DETECT_OK = 0
 
 _MIN_EXTENT = 1e-3     # m; keeps scales positive
+_AUTO_MIN_EXTENT = 1.0  # m; the auto scale never zooms in past this
 _MAX_METRES = 1e6      # m; beyond this a value is nonsense, not a depth
 
 
@@ -138,12 +139,17 @@ class Ping:
             if not (math.isfinite(t) and math.isfinite(a)) or t < 0.0:
                 dropped += 1
                 continue
+            if abs(a) >= math.pi / 2.0:   # not a downlooking beam: no depth below
+                dropped += 1
+                continue
             rng = t * speed / 2.0
             if rng > _MAX_METRES:
                 dropped += 1
                 continue
             beams.append(Beam(across=rng * math.sin(a), depth=rng * math.cos(a),
                               ok=(f == DETECT_OK)))
+        if not beams:
+            raise BadPing(f'no usable beams (all {n} had invalid values)')
         beams.sort(key=lambda b: b.across)
         stamp = getattr(getattr(msg, 'header', None), 'stamp', None)
         try:
@@ -242,13 +248,18 @@ class DepthScale:
             self._half = 0.0
         self.mode, self.fixed_min, self.fixed_max = mode, depth_min, depth_max
 
+    def reset(self):
+        """Forget the auto-scale memory (a topic change: another boat's ping)."""
+        self._depth = None
+        self._half = 0.0
+
     def observe(self, ping: Optional[Ping]):
         """Feed the latest ping (auto mode only; a ping without OK beams is ignored)."""
         if self.mode != DEPTH_AUTO or ping is None or not ping.ok_beams:
             return
         if self._depth is None:                 # the first ping sets the scale
             self._depth, self._half = 0.0, 0.0
-        self._depth = self._track(self._depth, ping.max_depth)
+        self._depth = self._track(self._depth, max(ping.max_depth, _AUTO_MIN_EXTENT))
         self._half = self._track(self._half, ping.half_width)
 
     @staticmethod
@@ -364,6 +375,8 @@ def format_age(seconds: float) -> str:
 
 
 def _finite(value, default, lo=None, hi=None):
+    if isinstance(value, bool):
+        return default
     try:
         v = float(value)
     except (TypeError, ValueError, OverflowError):

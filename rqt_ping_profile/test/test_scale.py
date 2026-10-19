@@ -141,3 +141,32 @@ def test_ticks():
 def test_format_metres():
     assert format_metres(10.0, 5.0) == '10'
     assert format_metres(0.5, 0.5) == '0.5'
+
+
+def test_auto_scale_never_zooms_in_past_one_metre():
+    s = DepthScale(DEPTH_AUTO)
+    s.observe(Ping.from_msg(flat_bottom(depth=0.001, half_angle_deg=1.0)))
+    assert s.depth_range[1] >= 1.0
+
+
+def test_auto_scale_reset_forgets_the_extent():
+    s = DepthScale(DEPTH_AUTO)
+    s.observe(Ping.from_msg(flat_bottom(depth=100.0)))
+    s.reset()
+    assert s.depth_range == (0.0, 30.0)
+    s.observe(Ping.from_msg(flat_bottom(depth=10.0, half_angle_deg=10.0)))
+    assert s.depth_range[1] == pytest.approx(11.0, rel=1e-3)
+
+
+def test_auto_half_width_has_hysteresis_and_widens_the_plot():
+    s = DepthScale(DEPTH_AUTO)
+    s.observe(Ping.from_msg(flat_bottom(depth=10.0, half_angle_deg=60.0)))
+    wide = s.half_width_needed
+    s.observe(Ping.from_msg(flat_bottom(depth=10.0, half_angle_deg=55.0)))   # within 70 %
+    assert s.half_width_needed == pytest.approx(wide)
+    s.observe(Ping.from_msg(flat_bottom(depth=10.0, half_angle_deg=20.0)))
+    assert s.half_width_needed < wide
+    # width-bound: a narrow plot needs a coarser scale than the depth alone
+    s2 = DepthScale(DEPTH_AUTO)
+    s2.observe(Ping.from_msg(flat_bottom(depth=10.0, half_angle_deg=70.0)))
+    assert s2.metres_per_pixel(100, 1000) > (s2.depth_range[1] / 1000)

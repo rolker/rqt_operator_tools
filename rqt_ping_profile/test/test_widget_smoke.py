@@ -161,17 +161,74 @@ def test_bad_message_draws_nothing_and_does_not_raise(env, bad):
     render(widget)
 
 
-def test_bad_message_is_logged_once_per_reason_not_per_ping(env):
+def test_bad_messages_are_logged_at_most_once_per_interval(env):
     widget, node, clock = env
-    for _ in range(20):
-        feed(widget, node, detections([], []))
+    for i in range(40):
+        # alternating faults and good pings must not get around the limit
+        feed(widget, node, detections([], []) if i % 2 else
+             detections([0.03, 0.03], [0.0] * (1 + i % 3)))
+        feed(widget, node, flat_bottom()) if i % 4 == 0 else None
         clock.now += 0.1
     assert len(node.logger.warnings) == 1
     clock.now += 11.0
     feed(widget, node, detections([], []))
     assert len(node.logger.warnings) == 2
-    feed(widget, node, detections([0.03, 0.03], [0.0]))      # a new reason at once
-    assert len(node.logger.warnings) == 3
+
+
+def test_only_the_newest_message_is_handled_and_keeps_its_receipt_time(env):
+    widget, node, clock = env
+    callback = node.subscriptions[-1][2]
+    widget.blockSignals(True)               # the GUI thread is "busy"
+    callback(flat_bottom(depth=10.0))
+    clock.now += 3.0
+    callback(flat_bottom(depth=25.0))
+    clock.now += 4.0
+    widget.blockSignals(False)
+    widget._take_message()
+    assert widget._store.count == 1         # one slot: the older ping was replaced
+    assert widget.latest_profile()[0][1] == pytest.approx(25.0, abs=1e-3)
+    assert widget._store.received == 1003.0  # when it arrived, not when handled
+
+
+def test_all_nan_ping_does_not_erase_the_last_good_one(env):
+    widget, node, clock = env
+    feed(widget, node, flat_bottom(depth=20.0))
+    clock.now += 4.0
+    nan = float('nan')
+    feed(widget, node, detections([nan] * 3, [0.0, 0.1, 0.2]))
+    assert len(widget.latest_profile()) == 11
+    assert widget._store.received == 1000.0        # not refreshed
+    assert 'no usable beams' in widget.status_text()[0]
+
+
+def test_long_title_does_not_push_the_status_off_screen(env):
+    widget, node, clock = env
+    widget.load_config(ProfileConfig(title='x' * 300))
+    widget.resize(200, 150)
+    feed(widget, node, flat_bottom())
+    clock.now += 30.0
+    assert widget.status_text()[1]
+    render(widget)
+
+
+def test_topic_change_resets_the_auto_scale(env):
+    widget, node, _clock = env
+    widget.load_config(ProfileConfig(depth_mode='auto'))
+    feed(widget, node, flat_bottom(depth=200.0))
+    assert widget._scale.depth_range[1] > 200
+    widget.load_config(ProfileConfig(depth_mode='auto', topic='/b/sensors/mbes/detections'))
+    feed(widget, node, flat_bottom(depth=20.0))
+    assert widget._scale.depth_range[1] == pytest.approx(22.0, rel=1e-3)
+
+
+def test_stale_dims_history_and_renders(env):
+    widget, node, clock = env
+    widget.load_config(ProfileConfig(history=3))
+    for _ in range(4):
+        feed(widget, node, flat_bottom())
+    clock.now += 10.0
+    render(widget)
+    assert widget._paint_error == ''
 
 
 def test_bad_message_after_a_good_one_keeps_the_picture_and_says_so(env):
