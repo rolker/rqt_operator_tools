@@ -77,7 +77,36 @@ def test_published_ping_reaches_the_widget(ros, reliability):
             return len(widget.latest_profile()) == 7
         assert wait_for(delivered)
         assert all(abs(d - 20.0) < 1e-3 for _a, d in widget.latest_profile())
-        assert widget.status_text()[0] == ''
+        assert widget._ping_status()[0] == ''
+    finally:
+        widget.shutdown()
+        ros.destroy_publisher(pub)
+
+
+def test_platform_list_from_a_lifecycle_style_publisher_reaches_the_widget(ros):
+    """Reliable/volatile/depth-5 like platform_send.py; one boat per list, two boats."""
+    interfaces = pytest.importorskip('marine_interfaces.msg')
+    app = QApplication.instance() or QApplication([])   # noqa: F841
+    widget = PingProfileWidget(
+        ros, config=ProfileConfig(topic='/urchin/sensors/mbes/detections'))
+    pub = ros.create_publisher(interfaces.PlatformList, '/marine/platforms',
+                               QoSProfile(depth=5, reliability=ReliabilityPolicy.RELIABLE))
+
+    def boat(name, r, g, b):
+        p = interfaces.Platform()
+        p.name, p.platform_namespace = name, name.lower()
+        p.color.r, p.color.g, p.color.b, p.color.a = r, g, b, 1.0
+        return interfaces.PlatformList(platforms=[p])
+
+    try:
+        def coloured():
+            pub.publish(boat('Urchin', 1.0, 0.0, 0.0))
+            pub.publish(boat('Bluefin', 0.0, 0.0, 1.0))
+            return widget.effective_color() is not None
+        assert wait_for(coloured)
+        assert widget.effective_color().red() == 255
+        assert widget.display_title() == 'Urchin'
+        assert widget.status_text()[0].endswith('colour: platform Urchin')
     finally:
         widget.shutdown()
         ros.destroy_publisher(pub)
