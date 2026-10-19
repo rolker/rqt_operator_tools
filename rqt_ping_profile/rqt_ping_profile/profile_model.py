@@ -31,6 +31,8 @@ from typing import Deque, List, Optional, Tuple
 
 import yaml
 
+from .platform_lookup import normalize_hex_color
+
 DEFAULT_TOPIC = 'sensors/mbes/detections'
 
 DEPTH_FIXED = 'fixed'
@@ -402,6 +404,7 @@ class ProfileConfig:
     stale_timeout: float = DEFAULT_STALE_TIMEOUT   # seconds; 0 disables
     history: int = 0                 # earlier pings faded behind the current one
     show_flagged: bool = False       # draw not-OK beams as dim dots
+    color: str = ''                  # '#rrggbb' override of the platform colour; empty = off
 
     def normalized(self) -> 'ProfileConfig':
         """Return a copy with every field coerced to something usable."""
@@ -435,6 +438,7 @@ class ProfileConfig:
             history=history,
             show_flagged=(self.show_flagged if isinstance(self.show_flagged, bool)
                           else d.show_flagged),
+            color=normalize_hex_color(self.color),     # not a hex colour: override off
         )
 
     def to_yaml(self) -> str:
