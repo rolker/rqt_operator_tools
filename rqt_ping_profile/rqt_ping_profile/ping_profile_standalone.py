@@ -12,6 +12,7 @@ from python_qt_binding.QtCore import Qt
 from python_qt_binding.QtWidgets import QApplication
 
 from .ping_profile_widget import PingProfileWidget
+from .platform_lookup import normalize_hex_color
 from .profile_model import DEPTH_MODES, ProfileConfig
 
 
@@ -21,6 +22,8 @@ def main(argv=None):
     parser.add_argument('--config', '-c', help='Path to a YAML settings file')
     parser.add_argument('--topic', help='Override the SonarDetections topic')
     parser.add_argument('--title', help='Override the title')
+    parser.add_argument('--color', help='Override the colour, #rrggbb (else the '
+                        'platform colour from /marine/platforms)')
     parser.add_argument('--depth-mode', choices=DEPTH_MODES,
                         help='Override the depth axis mode')
     parser.add_argument('--always-on-top', action='store_true',
@@ -45,6 +48,11 @@ def main(argv=None):
         config.topic = args.topic
     if args.title:
         config.title = args.title
+    if args.color is not None:      # --color '' clears a colour from the settings file
+        config.color = args.color
+        if args.color and not normalize_hex_color(args.color):
+            node.get_logger().error(
+                f'--color {args.color!r} is not #rrggbb; using the platform colour')
     if args.depth_mode:
         config.depth_mode = args.depth_mode
 

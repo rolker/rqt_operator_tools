@@ -14,12 +14,14 @@ def test_defaults_match_the_owner_decisions():
     assert c.history == 0
     assert c.title == ''
     assert not c.show_flagged
+    assert c.color == ''
 
 
 def test_round_trip():
     c = ProfileConfig(topic='/boat2/sensors/mbes/detections', title='Boat 2',
                       depth_mode='auto', depth_min=2.0, depth_max=80.0,
-                      stale_timeout=0.0, history=7, show_flagged=True)
+                      stale_timeout=0.0, history=7, show_flagged=True,
+                      color='#ff8800')
     assert ProfileConfig.from_yaml(c.to_yaml()) == c
 
 
@@ -65,3 +67,16 @@ def test_huge_numbers_are_clamped():
 def test_bool_is_not_a_number():
     c = ProfileConfig.from_yaml('depth_min: true\ndepth_max: false\nstale_timeout: true\n')
     assert (c.depth_min, c.depth_max, c.stale_timeout) == (0.0, 30.0, 5.0)
+
+
+def test_colour_override_round_trips_and_is_canonical():
+    c = ProfileConfig(color=' #FF8800 ')
+    assert c.normalized().color == '#ff8800'
+    assert ProfileConfig.from_yaml(c.to_yaml()).color == '#ff8800'
+    assert ProfileConfig.from_yaml('color: "00ff00"').color == '#00ff00'
+
+
+@pytest.mark.parametrize('bad', ['red', '#fff', '#12345g', '#1234567', '5', '[1]', 'null'])
+def test_bad_colour_override_is_rejected_to_off(bad):
+    assert ProfileConfig.from_yaml(f'color: {bad}\n').color == ''
+    assert ProfileConfig(color=bad).normalized().color == ''

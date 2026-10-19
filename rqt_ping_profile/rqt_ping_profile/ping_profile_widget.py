@@ -4,14 +4,17 @@ The widget subscribes to one ``SonarDetections`` topic, keeps the latest ping
 (and optionally a few earlier ones) in a ``profile_model.PingStore`` and paints
 it: the transducer at the top centre, a line to each outermost OK beam (the
 swath), the OK detections joined as the bathymetry profile, depth downwards.
-Port is on the viewer's right (see ``profile_model``).  ROS callbacks only emit
-a Qt signal; every store and widget access happens on the Qt thread.
+Port is on the viewer's right (see ``profile_model``).  The swath, profile and
+title use the colour of the platform that owns the topic (``/marine/platforms``,
+see ``platform_lookup``) or the ``color`` setting.  ROS callbacks only emit a Qt
+signal; every store and widget access happens on the Qt thread.
 """
 
 import importlib
 import math
 import threading
 import time
+from types import SimpleNamespace as NS
 from typing import List
 
 from python_qt_binding.QtCore import QPointF, QRectF, Qt, QTimer, Signal
@@ -31,6 +34,11 @@ from rclpy.qos import (
     ReliabilityPolicy,
 )
 
+from .platform_lookup import (
+    normalize_namespace,
+    parse_hex_color,
+    PlatformDirectory,
+)
 from .profile_model import (
     DepthScale,
     format_age,
@@ -68,6 +76,26 @@ DETECTIONS_QOS = QoSProfile(
     depth=1,
 )
 
+PLATFORMS_TOPIC = '/marine/platforms'
+
+# platform_send.py publishes /marine/platforms reliable and volatile, depth 5
+# (once a second, so a late joiner waits at most that long); CAMP subscribes
+# the same way.
+PLATFORMS_QOS = QoSProfile(
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.VOLATILE,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=5,
+)
+
+
+def load_platforms_class():
+    """Import ``PlatformList``; ``None`` when marine_interfaces is not built."""
+    try:
+        return importlib.import_module('marine_interfaces.msg').PlatformList
+    except (ImportError, AttributeError):
+        return None
+
 
 def load_message_class():
     """Import ``SonarDetections``; ``None`` when marine_acoustic_msgs lacks it."""
@@ -89,6 +117,7 @@ class PingProfileWidget(QWidget):
     # Wake-up: ROS thread -> Qt thread.  The message itself goes through a
     # one-slot mailbox (newest wins), so a stalled GUI cannot build a queue.
     _msg_received = Signal()
+    _platforms_received = Signal()
 
     def __init__(self, node, parent=None, clock=time.monotonic, config=None):
         super().__init__(parent)
@@ -108,14 +137,23 @@ class PingProfileWidget(QWidget):
         self._closed = False
         self._mailbox_lock = threading.Lock()
         self._mailbox = None            # (generation, msg, receipt clock) or None
+        self._platforms = PlatformDirectory()
+        self._platforms_sub = None
+        self._platforms_error = ''
+        # Pending platforms by namespace, newest per namespace (same lock).  Not
+        # 'newest list wins': each boat publishes its own one-platform list on
+        # the shared topic, so a burst of lists must not drop any boat.
+        self._platforms_mailbox = {}
         self.setMinimumSize(160, 120)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._msg_received.connect(self._take_message)
+        self._platforms_received.connect(self._take_platforms)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.update)    # staleness is time, not messages
         self._timer.start(500)
         self._setup_subscription()
+        self._setup_platforms_subscription()
 
     # -- Config ----------------------------------------------------------------
 
@@ -146,6 +184,9 @@ class PingProfileWidget(QWidget):
         self._closed = True
         self._timer.stop()
         self._teardown_subscription()
+        if self._platforms_sub is not None:
+            self._node.destroy_subscription(self._platforms_sub)
+            self._platforms_sub = None
 
     # -- Subscription ----------------------------------------------------------
 
@@ -192,6 +233,41 @@ class PingProfileWidget(QWidget):
             self._node.destroy_subscription(self._subscription)
             self._subscription = None
 
+    def _setup_platforms_subscription(self):
+        """Follow /marine/platforms for the colour and name; failure leaves the defaults."""
+        msg_class = load_platforms_class()
+        if msg_class is None:
+            self._platforms_error = 'marine_interfaces is not importable'
+            self._node.get_logger().warning(
+                'marine_interfaces/PlatformList is not importable; the ping profile '
+                'cannot take the platform colour (use the colour setting)')
+            return
+        try:
+            self._platforms_sub = self._node.create_subscription(
+                msg_class, PLATFORMS_TOPIC, self._on_platforms_message, PLATFORMS_QOS)
+        except Exception as exc:  # noqa: BLE001 - the plot works without the colour
+            self._platforms_error = f'cannot subscribe to {PLATFORMS_TOPIC}: {exc}'
+            self._node.get_logger().error(self._platforms_error)
+
+    def _on_platforms_message(self, msg):
+        """ROS thread: park the platforms (newest per namespace) and wake the Qt thread."""
+        try:
+            platforms = [(normalize_namespace(p.platform_namespace), p)
+                         for p in msg.platforms]
+        except Exception:  # noqa: BLE001 - unusable list; nothing to take from it
+            platforms = []
+        with self._mailbox_lock:
+            wake = not self._platforms_mailbox
+            for key, platform in platforms:
+                if key:
+                    self._platforms_mailbox[key] = platform
+            wake = wake and bool(self._platforms_mailbox)
+        if wake and not self._closed:
+            try:
+                self._platforms_received.emit()
+            except RuntimeError:        # the widget was deleted during shutdown
+                pass
+
     # -- Qt-thread message handling ---------------------------------------------
 
     def _take_message(self):
@@ -203,6 +279,64 @@ class PingProfileWidget(QWidget):
         if generation != self._generation:
             return
         self._handle_message(msg, received)
+
+    def _take_platforms(self):
+        with self._mailbox_lock:
+            pending, self._platforms_mailbox = self._platforms_mailbox, {}
+        if not pending:
+            return
+        try:
+            changed = self._platforms.update(NS(platforms=list(pending.values())))
+        except Exception as exc:  # a Qt slot must not raise (PyQt aborts)
+            self._node.get_logger().warning(f'Ignoring unusable PlatformList: {exc!r}')
+            return
+        if changed:
+            self.update()
+
+    # -- Platform identity -------------------------------------------------------
+
+    def resolved_topic(self):
+        """The topic actually subscribed (remaps and the node namespace applied).
+
+        Identity must follow the live data, not the setting: with a remap the
+        setting names one boat and the data comes from another.
+        """
+        name = getattr(self._subscription, 'topic_name', None)
+        return name if isinstance(name, str) and name else self._config.topic
+
+    def platform_match(self):
+        """The platform owning the topic (a ``PlatformMatch``) or ``None``."""
+        return self._platforms.lookup(self.resolved_topic())
+
+    def effective_color(self):
+        """The colour to draw in (a ``QColor``): the override, else the platform's, else ``None``."""
+        rgba = parse_hex_color(self._config.color)
+        if rgba is None:
+            match = self.platform_match()
+            rgba = match.color if match else None
+        if rgba is None:
+            return None
+        return QColor.fromRgbF(rgba[0], rgba[1], rgba[2])
+
+    def color_note(self):
+        """Where the colour comes from, for the status line."""
+        if parse_hex_color(self._config.color) is not None:
+            return 'colour: manual override'
+        match = self.platform_match()
+        if match and match.color:
+            return f'colour: platform {match.name or match.namespace}'
+        if match:
+            return f'colour: default (platform {match.name or match.namespace} has no colour)'
+        if self._platforms_error:
+            return f'colour: default ({self._platforms_error})'
+        return 'colour: default (no platform match)'
+
+    def display_title(self):
+        """The title setting, else the platform's name, else the topic."""
+        if self._config.title:
+            return self._config.title
+        match = self.platform_match()
+        return match.name if match and match.name else self._config.topic
 
     def _handle_message(self, msg, now):
         try:
@@ -238,7 +372,12 @@ class PingProfileWidget(QWidget):
     # -- Status ----------------------------------------------------------------
 
     def status_text(self):
-        """``(text, is_problem)`` for the line under the title."""
+        """``(text, is_problem)`` for the line under the title; the colour source comes last."""
+        text, problem = self._ping_status()
+        note = self.color_note()
+        return (f'{text} | {note}' if text else note), problem
+
+    def _ping_status(self):
         now = self._clock()
         if self._paint_error:
             return self._paint_error, True
@@ -331,12 +470,13 @@ class PingProfileWidget(QWidget):
                                      QPointF(c.x() + 6, c.y() - 8),
                                      QPointF(c.x(), c.y() + 2)]))
 
-        title = self._config.title or self._config.topic
+        accent = self.effective_color()
+        title = self.display_title()
         big = QFont(self.font())
         big.setPixelSize(14)
         big.setBold(True)
         p.setFont(big)
-        p.setPen(_TEXT)
+        p.setPen(accent or _TEXT)
         # The status line must stay visible: the title gives way (elided to at
         # most 60 % of the width) and the status takes what is left.
         width = max(self.width() - 16, 20)
@@ -399,14 +539,16 @@ class PingProfileWidget(QWidget):
             alpha = int(25 + 85 * (i + 1) / (n + 1))     # oldest faintest
             if dim:
                 alpha //= 2
-            color = QColor(_PROFILE)
+            color = QColor(self.effective_color() or _PROFILE)
             color.setAlpha(alpha)
             p.setPen(QPen(color, 1))
             self._polyline(p, vp, ping.ok_beams)
 
     def _paint_ping(self, p: QPainter, vp: Viewport, ping, dim: bool):
         alpha = _STALE_ALPHA if dim else 255
-        swath, profile, flagged = QColor(_SWATH), QColor(_PROFILE), QColor(_FLAGGED)
+        accent = self.effective_color()
+        swath, profile, flagged = (QColor(accent or _SWATH), QColor(accent or _PROFILE),
+                                   QColor(_FLAGGED))
         for c in (swath, profile, flagged):
             c.setAlpha(alpha)
         if self._config.show_flagged:

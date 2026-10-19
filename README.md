@@ -5,7 +5,7 @@ ROS 2 rqt plugins for operator station tools.
 ## Packages
 
 - **rqt_coverage** — Survey-area coverage and quality scoreboard (percent covered, percent to standard, per-source credit) from `marine_interfaces/CoverageAssessment`
-- **rqt_ping_profile** — A boat's latest multibeam ping seen from the front: swath lines and the bottom profile under the boat, fixed or auto depth scale, from `marine_acoustic_msgs/SonarDetections`
+- **rqt_ping_profile** — A boat's latest multibeam ping seen from the front: swath lines and the bottom profile under the boat, fixed or auto depth scale, drawn in the platform colour from `/marine/platforms`, from `marine_acoustic_msgs/SonarDetections`
 - **rqt_annunciator** — Dark-until-problem annunciator panel for status monitoring
 - **rqt_operator_log** — Operator logbook and checklist plugin
 - **rqt_camera_grid** — Multi-stream `image_transport` grid view with per-pane staleness border (C++)

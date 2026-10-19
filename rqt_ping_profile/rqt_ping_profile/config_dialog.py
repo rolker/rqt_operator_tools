@@ -19,10 +19,11 @@ from .profile_model import (
     HISTORY_MAX,
     ProfileConfig,
 )
+from .platform_lookup import normalize_hex_color
 
 
 class ConfigDialog(QDialog):
-    """Dialog for the topic, title, depth axis, staleness, history and flagged beams."""
+    """Dialog for the topic, title, colour override, depth axis, staleness, history and flagged beams."""
 
     def __init__(self, config: ProfileConfig, parent=None):
         """Fill the form from ``config``."""
@@ -37,6 +38,10 @@ class ConfigDialog(QDialog):
         self._title = QLineEdit(config.title)
         self._title.setPlaceholderText('empty = show the topic')
         form.addRow('Title', self._title)
+
+        self._color = QLineEdit(config.color)
+        self._color.setPlaceholderText('empty = the platform colour from /marine/platforms')
+        form.addRow('Colour override (#rrggbb)', self._color)
 
         self._mode = QComboBox()
         self._mode.addItem('Fixed range', DEPTH_FIXED)
@@ -70,6 +75,10 @@ class ConfigDialog(QDialog):
         note.setWordWrap(True)
         layout.addWidget(note)
 
+        self._error = QLabel('')
+        self._error.setStyleSheet('color: #c03030')
+        layout.addWidget(self._error)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -90,6 +99,14 @@ class ConfigDialog(QDialog):
         self._dmin.setEnabled(fixed)
         self._dmax.setEnabled(fixed)
 
+    def accept(self):
+        """Refuse a colour override that is not ``#rrggbb`` instead of silently dropping it."""
+        text = self._color.text().strip()
+        if text and not normalize_hex_color(text):
+            self._error.setText(f'"{text}" is not a colour: use #rrggbb, or leave it empty')
+            return
+        super().accept()
+
     def get_config(self) -> ProfileConfig:
         """Return the edited settings as a normalised configuration."""
         return ProfileConfig(
@@ -101,4 +118,5 @@ class ConfigDialog(QDialog):
             stale_timeout=self._stale.value(),
             history=self._history.value(),
             show_flagged=self._flagged.isChecked(),
+            color=self._color.text(),
         ).normalized()
