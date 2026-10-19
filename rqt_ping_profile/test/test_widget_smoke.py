@@ -39,8 +39,13 @@ class DummyPlatforms:
     """Stands in for the PlatformList class passed to create_subscription."""
 
 
+class Sub(tuple):
+    """A subscription handle: the 4-tuple, plus the resolved ``topic_name``."""
+
+
 class StubNode:
     def __init__(self):
+        self.remap = {}
         self.fail_topics = set()
         self.subscriptions = []         # detections subscriptions only
         self.platform_subs = []
@@ -50,7 +55,8 @@ class StubNode:
     def create_subscription(self, msg_class, topic, callback, qos):
         if topic in self.fail_topics:
             raise ValueError(f'invalid topic name: {topic}')
-        sub = (msg_class, topic, callback, qos)
+        sub = Sub((msg_class, topic, callback, qos))
+        sub.topic_name = self.remap.get(topic, topic)
         (self.platform_subs if msg_class is DummyPlatforms else self.subscriptions).append(sub)
         return sub
 
@@ -531,3 +537,14 @@ def test_dialog_round_trips_the_colour_and_refuses_a_bad_one(qapp):
     dialog._color.setText('#FF8800')
     dialog.accept()
     assert dialog.result() == 1 and dialog.get_config().color == '#ff8800'
+
+
+def test_identity_follows_the_resolved_remapped_topic(env):
+    widget, node, _clock = env
+    node.remap[URCHIN] = '/bluefin/sensors/mbes/detections'
+    widget.load_config(ProfileConfig(topic=URCHIN))      # resubscribes: remapped
+    feed_platforms(node, plist(('Urchin', 'urchin', MAGENTA),
+                               ('Bluefin', 'bluefin', (0.0, 0.0, 1.0, 1.0))))
+    assert widget.resolved_topic() == '/bluefin/sensors/mbes/detections'
+    assert widget.display_title() == 'Bluefin'
+    assert widget.effective_color().rgb() == QColor(0, 0, 255).rgb()

@@ -295,9 +295,18 @@ class PingProfileWidget(QWidget):
 
     # -- Platform identity -------------------------------------------------------
 
+    def resolved_topic(self):
+        """The topic actually subscribed (remaps and the node namespace applied).
+
+        Identity must follow the live data, not the setting: with a remap the
+        setting names one boat and the data comes from another.
+        """
+        name = getattr(self._subscription, 'topic_name', None)
+        return name if isinstance(name, str) and name else self._config.topic
+
     def platform_match(self):
         """The platform owning the topic (a ``PlatformMatch``) or ``None``."""
-        return self._platforms.lookup(self._config.topic)
+        return self._platforms.lookup(self.resolved_topic())
 
     def effective_color(self):
         """The colour to draw in (a ``QColor``): the override, else the platform's, else ``None``."""

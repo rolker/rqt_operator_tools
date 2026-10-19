@@ -79,10 +79,12 @@ On a match:
   platform's `color` (flagged beams stay red);
 - an empty `title` setting shows the platform's `name` instead of the topic.
 
-Without a match the colours above are unchanged and the topic is the title. A topic with no
-namespace (the default `sensors/mbes/detections`, or `detections`) never matches, so for the
-platform colour give the full topic, `/urchin/sensors/mbes/detections`. The relative topic is
-not resolved against the rqt node's namespace for this purpose. A platform whose colour has
+Without a match the colours above are unchanged and the topic is the title. The lookup uses
+the topic as actually subscribed (the node's namespace and any remap applied), so a remapped
+view is identified by the data it shows. A topic with no namespace (`detections`) never
+matches, and the default relative `sensors/mbes/detections` only matches in an rqt node whose
+namespace is a platform's: otherwise give the full topic, `/urchin/sensors/mbes/detections`.
+A platform whose colour has
 `a == 0` has no colour (as in CAMP): the name is still used, the colours stay default. Other
 alpha values are ignored; the colour is drawn opaque.
 
@@ -154,7 +156,7 @@ In rqt: *Plugins > Robot Tools > Ping Profile*. As its own window (wall display)
 
 ```bash
 ros2 run rqt_ping_profile ping_profile --topic /boat2/sensors/mbes/detections --title "Boat 2" --depth-mode auto
-# --color '#ff8800'           colour override
+# --color '#ff8800'          colour override ('' = none, clears one from --config)
 # --config <settings.yaml>   the same keys as the settings table
 # --always-on-top
 ```

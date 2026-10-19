@@ -48,9 +48,9 @@ def main(argv=None):
         config.topic = args.topic
     if args.title:
         config.title = args.title
-    if args.color:
+    if args.color is not None:      # --color '' clears a colour from the settings file
         config.color = args.color
-        if not normalize_hex_color(args.color):
+        if args.color and not normalize_hex_color(args.color):
             node.get_logger().error(
                 f'--color {args.color!r} is not #rrggbb; using the platform colour')
     if args.depth_mode:
