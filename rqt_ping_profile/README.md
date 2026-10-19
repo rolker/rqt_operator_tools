@@ -13,6 +13,7 @@ One plugin instance shows one topic, so an rqt perspective holds one instance pe
 | Topic (default) | Type | QoS |
 |---|---|---|
 | `sensors/mbes/detections` | `marine_acoustic_msgs/SonarDetections` | best_effort, volatile, keep last 1 (matches reliable and best_effort publishers; only the newest ping matters) |
+| `/marine/platforms` | `marine_interfaces/PlatformList` | reliable, volatile, keep last 5 (as `platform_send.py` publishes it and CAMP subscribes) |
 
 The topic is relative, so it resolves in the rqt node's namespace; a full name such as
 `/boat2/sensors/mbes/detections` works too. The fields used:
@@ -58,13 +59,53 @@ is correct whatever order the sonar reports them in.
   are drawn as dim red dots.
 - Grid and labels in metres: depth down the left edge, across-track distance from the
   centre line along the bottom (the same step on both axes).
-- The title (the `title` setting, else the topic) top left, and a status line beside it
-  that is empty while all is well.
+- The title (the `title` setting, else the platform's name, else the topic) top left, in the
+  platform colour when there is one, and a status line beside it (see below).
 - With `history` above 0, the last N pings fade in behind the current one (oldest
   faintest), as profile lines only; they dim with the current ping when it goes stale.
 
 Both axes use the **same metres per pixel**, so a beam at 30 degrees looks like 30 degrees.
 The widget's shape decides how much across-track is visible.
+
+## Platform colour
+
+With four boats on one display, each view should say which boat it shows. The widget
+subscribes to `/marine/platforms` and finds the platform whose `platform_namespace` owns the
+detections topic: `/urchin/sensors/mbes/detections` belongs to the platform with namespace
+`urchin` (a leading slash is optional on either side; the longest matching namespace wins).
+On a match:
+
+- the swath lines, the profile (and its dots and history) and the title are drawn in the
+  platform's `color` (flagged beams stay red);
+- an empty `title` setting shows the platform's `name` instead of the topic.
+
+Without a match the colours above are unchanged and the topic is the title. A topic with no
+namespace (the default `sensors/mbes/detections`, or `detections`) never matches, so for the
+platform colour give the full topic, `/urchin/sensors/mbes/detections`. The relative topic is
+not resolved against the rqt node's namespace for this purpose. A platform whose colour has
+`a == 0` has no colour (as in CAMP): the name is still used, the colours stay default. Other
+alpha values are ignored; the colour is drawn opaque.
+
+Each boat's `platform_send` publishes its own one-platform list on the shared topic, so the
+widget keeps every platform it has seen, by namespace (the newest entry per namespace wins),
+rather than the last list. It updates live: a changed colour or a newly listed platform is
+used on the next list, and a changed topic is looked up again at once. A boat whose list stops
+arriving keeps its last colour. The lists arrive about once a second, so a view started
+before its boat is listed is default-coloured for that long.
+
+The `color` setting (`#rrggbb`, empty = off) overrides the platform colour, for a sonar that
+is not a listed platform. A value that is not `#rrggbb` is dropped to "off" when a saved
+perspective or `--config` file is read, and refused in the settings dialog.
+
+The status line ends with where the colour came from: `colour: platform urchin`,
+`colour: manual override`, `colour: default (no platform match)`,
+`colour: default (platform urchin has no colour)`, or `colour: default (<why /marine/platforms
+cannot be followed>)` when `marine_interfaces` is missing or the subscription fails (the plot
+still works).
+
+The lookup itself is `rqt_ping_profile/platform_lookup.py` (pure Python, no Qt or ROS
+imports) for other per-vehicle plugins to reuse: `match_platform(platform_list, topic)` and
+`PlatformDirectory` for merging lists.
 
 ## Depth axis
 
@@ -81,6 +122,7 @@ The widget's shape decides how much across-track is visible.
 
 | Text | Meaning |
 |---|---|
+| `colour: ...` | Always last: where the colour comes from (see Platform colour). Not a problem; it does not turn the line amber. |
 | `waiting for the first ping on <topic>` | Subscribed, nothing received yet. |
 | `NO PING FOR 7 s` | No usable ping for more than `stale_timeout`; the picture dims. Measured on this machine's monotonic clock from the last good ping, not from `header.stamp`, which is on the sonar's clock (sim time in the demo). |
 | `unusable ping: <why>` / `unusable ping ignored: <why>` | The last message could not be drawn: no beams, arrays of different lengths, or no usable sound speed. Nothing is drawn from it; the last good ping stays on screen, and goes stale in the normal way. Logged at most once every 10 s, whatever the reason. |
@@ -96,7 +138,8 @@ opens the dialog.
 | Setting | Default | Meaning |
 |---|---|---|
 | `topic` | `sensors/mbes/detections` | `SonarDetections` topic (resolved in the rqt node's namespace). |
-| `title` | empty | Name shown in the corner (a boat name); empty shows the topic. |
+| `title` | empty | Name shown in the corner (a boat name); empty shows the matched platform's name, else the topic. |
+| `color` | empty (off) | `#rrggbb` colour override for the swath, profile and title; wins over the platform colour. Empty uses the platform colour from `/marine/platforms`. A value that is not `#rrggbb` is treated as off. |
 | `depth_mode` | `fixed` | `fixed` or `auto`. |
 | `depth_min`, `depth_max` | 0 m, 30 m | Fixed range, metres below the transducer (-1000 to 20000; an empty or inverted range falls back to the default). Ignored in auto. |
 | `stale_timeout` | 5 s | Seconds without a usable ping before the staleness mark; 0 disables. |
@@ -111,6 +154,7 @@ In rqt: *Plugins > Robot Tools > Ping Profile*. As its own window (wall display)
 
 ```bash
 ros2 run rqt_ping_profile ping_profile --topic /boat2/sensors/mbes/detections --title "Boat 2" --depth-mode auto
+# --color '#ff8800'           colour override
 # --config <settings.yaml>   the same keys as the settings table
 # --always-on-top
 ```
@@ -133,3 +177,7 @@ message in a one-slot mailbox (a newer message replaces an older one that the GU
 taken yet) and wakes the Qt thread; the store and every widget are touched on the Qt thread
 only. A busy GUI therefore skips pings instead of queueing them, and a late-handled ping
 does not look fresh.
+
+The `PlatformList` callback uses a mailbox too, but keyed by namespace: a burst of lists
+keeps the newest entry of every boat instead of only the newest list, because each boat
+publishes its own one-boat list on the shared topic and "newest list wins" would drop boats.
