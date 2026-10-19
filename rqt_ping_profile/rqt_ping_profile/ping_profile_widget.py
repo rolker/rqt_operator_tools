@@ -337,7 +337,7 @@ class PingProfileWidget(QWidget):
             x = self._point(vp, a, 0.0).x()
             label = format_metres(abs(a), across_step)
             p.drawText(QPointF(x - fm.horizontalAdvance(label) / 2, base), label)
-        p.drawText(QPointF(vp.left - 40, vp.top - 8), 'm')
+        p.drawText(QPointF(vp.left - 30, base), 'm')   # both axes are in metres
         # Viewed from the front: starboard on the viewer's left, port on the right.
         p.drawText(QPointF(vp.left, base + 12), 'STBD')
         port = 'PORT'
