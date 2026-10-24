@@ -1,9 +1,10 @@
 # AGENTS.md — rqt_operator_tools
 
 Instructions for AI agents working in this repository — including **GitHub
-Copilot code review**, which reads this file when reviewing PRs. There is no
-`.agents/README.md` deep guide yet; start from the top-level `README.md` and
-per-plugin package READMEs.
+Copilot code review**, which reads this file when reviewing PRs. Coding
+agents: the deep guide (packages, layout, pitfalls) is
+[`.agents/README.md`](.agents/README.md); read it before making changes,
+alongside the per-plugin package READMEs.
 
 ## Workspace Rules
 
